@@ -1,0 +1,40 @@
+version: "2"
+
+linters:
+  enable:
+    - govet
+    - godoclint
+    - staticcheck
+    - errcheck
+    - ineffassign
+    - revive
+    - unused
+    - unconvert
+    - copyloopvar
+    - whitespace
+    - nlreturn
+    - wsl_v5
+
+  exclusions:
+    presets:
+      - comments
+  settings:
+    wsl_v5:
+      # allows cuddling if the variable is used anywhere in the following (or nested) block
+      allow-whole-block: true
+
+formatters:
+  enable:
+    - goimports
+    - gofmt
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/vitaliiPsl/crappy-adk
+
+output:
+  sort-order:
+    - file
+
+issues:
+  max-same-issues: 5
