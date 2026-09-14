@@ -114,12 +114,14 @@ func TestEmitReachesEverySubscriber(t *testing.T) {
 
 	t.Cleanup(second.Close)
 
-	event := harnessevent.Event{
-		ExecutionID: "execution-1",
-		Type:        "test.event",
-		Payload:     json.RawMessage(`{"value":1}`),
+	if err := session.Emit(
+		context.Background(),
+		"execution-1",
+		"test.event",
+		map[string]int{"value": 1},
+	); err != nil {
+		t.Fatalf("Emit() error = %v", err)
 	}
-	session.Emit(event)
 
 	for _, subscription := range []*harnessevent.Subscription{first, second} {
 		received := receiveEvent(t, subscription)
@@ -162,15 +164,12 @@ func TestExecutePublishesEntriesAndAgentEvents(t *testing.T) {
 
 	t.Cleanup(subscription.Close)
 
-	_, err = session.Execute(
-		context.Background(),
-		kit.NewUserMessage(kit.NewTextContent("hi")),
-	)
+	executionID, err := session.Execute(kit.NewUserMessage(kit.NewTextContent("hi")))
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
 
-	events := make([]harnessevent.Event, 4)
+	events := make([]harnessevent.Event, 5)
 	for i := range events {
 		events[i] = receiveEvent(t, subscription)
 	}
@@ -202,10 +201,14 @@ func TestExecutePublishesEntriesAndAgentEvents(t *testing.T) {
 		t.Fatalf("fourth event = %#v, want transient agent message", events[3])
 	}
 
-	if events[0].ExecutionID != events[1].ExecutionID ||
-		events[0].ExecutionID != events[2].ExecutionID ||
-		events[0].ExecutionID != events[3].ExecutionID {
-		t.Fatal("execution events have different execution IDs")
+	if events[4].EntryID != 3 || events[4].Type != AgentResultEntryType {
+		t.Fatalf("fifth event = %#v, want agent result entry 3", events[4])
+	}
+
+	for _, event := range events {
+		if event.ExecutionID != executionID {
+			t.Fatalf("ExecutionID = %q, want %q", event.ExecutionID, executionID)
+		}
 	}
 }
 

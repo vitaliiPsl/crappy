@@ -27,11 +27,19 @@ func TestBusEmitReachesEverySubscriber(t *testing.T) {
 
 	t.Cleanup(second.Close)
 
-	want := Event{
-		Type:    "test.event",
-		Payload: json.RawMessage(`{"value":1}`),
+	want := struct {
+		Value int `json:"value"`
+	}{
+		Value: 1,
 	}
-	bus.Emit(want)
+	if err := bus.Emit(
+		context.Background(),
+		"execution-1",
+		"test.event",
+		want,
+	); err != nil {
+		t.Fatalf("Emit() error = %v", err)
+	}
 
 	for _, subscription := range []*Subscription{first, second} {
 		got := receiveEvent(t, subscription)
@@ -39,9 +47,50 @@ func TestBusEmitReachesEverySubscriber(t *testing.T) {
 			t.Fatalf("SessionID = %q, want session-1", got.SessionID)
 		}
 
-		if got.Type != want.Type || string(got.Payload) != string(want.Payload) {
-			t.Fatalf("event = %#v, want %#v", got, want)
+		if got.EntryID != 0 || got.ExecutionID != "execution-1" || got.Type != "test.event" {
+			t.Fatalf("event = %#v, want transient test.event", got)
 		}
+
+		if string(got.Payload) != `{"value":1}` {
+			t.Fatalf("Payload = %s, want encoded value", got.Payload)
+		}
+	}
+}
+
+func TestBusCommitAppendsAndEmits(t *testing.T) {
+	t.Parallel()
+
+	entries := entry.NewMemoryStore()
+	bus := NewBus("session-1", entries)
+
+	subscription, err := bus.Subscribe(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("Subscribe() error = %v", err)
+	}
+
+	t.Cleanup(subscription.Close)
+
+	if err := bus.Commit(
+		context.Background(),
+		"execution-1",
+		"test.entry",
+		map[string]int{"value": 1},
+	); err != nil {
+		t.Fatalf("Commit() error = %v", err)
+	}
+
+	got := receiveEvent(t, subscription)
+	if got.EntryID != 1 || got.SessionID != "session-1" || got.ExecutionID != "execution-1" {
+		t.Fatalf("event = %#v, want durable entry 1", got)
+	}
+
+	stored, err := entries.List(context.Background(), "session-1", 0)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+
+	if len(stored) != 1 || stored[0].Type != "test.entry" || string(stored[0].Payload) != `{"value":1}` {
+		t.Fatalf("entries = %#v, want published entry", stored)
 	}
 }
 

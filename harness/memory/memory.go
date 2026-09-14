@@ -17,10 +17,10 @@ type entryMemory struct {
 	sessionID   string
 	executionID string
 	entries     entry.Store
-	events      event.Emitter
+	events      event.Publisher
 }
 
-func New(sessionID, executionID string, entries entry.Store, events event.Emitter) kit.Memory {
+func New(sessionID, executionID string, entries entry.Store, events event.Publisher) kit.Memory {
 	return &entryMemory{
 		sessionID:   sessionID,
 		executionID: executionID,
@@ -68,31 +68,12 @@ func (m *entryMemory) History(ctx context.Context) ([]kit.Message, error) {
 }
 
 func (m *entryMemory) Record(ctx context.Context, messages ...kit.Message) error {
-	entries := make([]entry.Entry, len(messages))
+	payloads := make([]any, len(messages))
 	for i, message := range messages {
-		payload, err := json.Marshal(message)
-		if err != nil {
-			return fmt.Errorf("encode message: %w", err)
-		}
-
-		entries[i] = entry.Entry{
-			SessionID:   m.sessionID,
-			ExecutionID: m.executionID,
-			Type:        messageEntryType,
-			Payload:     payload,
-		}
+		payloads[i] = message
 	}
 
-	appended, err := m.entries.Append(ctx, entries...)
-	if err != nil {
-		return err
-	}
-
-	for _, value := range appended {
-		m.events.Emit(event.FromEntry(value))
-	}
-
-	return nil
+	return m.events.Commit(ctx, m.executionID, messageEntryType, payloads...)
 }
 
 func hasSummary(message kit.Message) bool {

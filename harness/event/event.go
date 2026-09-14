@@ -1,13 +1,15 @@
 package event
 
 import (
+	"context"
 	"encoding/json"
 
 	"github.com/vitaliipsl/crappy/harness/entry"
 )
 
-type Emitter interface {
-	Emit(Event)
+type Publisher interface {
+	Emit(ctx context.Context, executionID, eventType string, payload any) error
+	Commit(ctx context.Context, executionID, entryType string, payloads ...any) error
 }
 
 type Event struct {
