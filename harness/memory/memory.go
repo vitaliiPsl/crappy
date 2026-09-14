@@ -8,24 +8,24 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
 	"github.com/vitaliipsl/crappy/harness/entry"
+	"github.com/vitaliipsl/crappy/harness/event"
 )
 
-const (
-	messageEntryType    = "message"
-	messageEntryVersion = 1
-)
+const messageEntryType = "message"
 
 type entryMemory struct {
 	sessionID   string
 	executionID string
 	entries     entry.Store
+	events      event.Emitter
 }
 
-func New(sessionID, executionID string, entries entry.Store) kit.Memory {
+func New(sessionID, executionID string, entries entry.Store, events event.Emitter) kit.Memory {
 	return &entryMemory{
 		sessionID:   sessionID,
 		executionID: executionID,
 		entries:     entries,
+		events:      events,
 	}
 }
 
@@ -56,10 +56,6 @@ func (m *entryMemory) History(ctx context.Context) ([]kit.Message, error) {
 			continue
 		}
 
-		if entry.Version != messageEntryVersion {
-			return nil, fmt.Errorf("unsupported message entry version %d", entry.Version)
-		}
-
 		var message kit.Message
 		if err := json.Unmarshal(entry.Payload, &message); err != nil {
 			return nil, fmt.Errorf("decode message entry %d: %w", entry.ID, err)
@@ -83,14 +79,20 @@ func (m *entryMemory) Record(ctx context.Context, messages ...kit.Message) error
 			SessionID:   m.sessionID,
 			ExecutionID: m.executionID,
 			Type:        messageEntryType,
-			Version:     messageEntryVersion,
 			Payload:     payload,
 		}
 	}
 
-	_, err := m.entries.Append(ctx, entries...)
+	appended, err := m.entries.Append(ctx, entries...)
+	if err != nil {
+		return err
+	}
 
-	return err
+	for _, value := range appended {
+		m.events.Emit(event.FromEntry(value))
+	}
+
+	return nil
 }
 
 func hasSummary(message kit.Message) bool {

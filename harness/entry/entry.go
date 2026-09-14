@@ -11,7 +11,6 @@ type Entry struct {
 	ExecutionID string `json:"execution_id,omitempty"`
 
 	Type    string          `json:"type"`
-	Version int             `json:"version"`
 	Payload json.RawMessage `json:"payload"`
 
 	CreatedAt time.Time `json:"created_at"`

@@ -8,13 +8,14 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
 	"github.com/vitaliipsl/crappy/harness/entry"
+	"github.com/vitaliipsl/crappy/harness/event"
 )
 
 func TestRecordAndHistory(t *testing.T) {
 	t.Parallel()
 
 	store := entry.NewMemoryStore()
-	memory := New("session-1", "execution-1", store)
+	memory := New("session-1", "execution-1", store, event.NewBus("session-1", store))
 	messages := []kit.Message{
 		kit.NewUserMessage(kit.NewTextContent("hello")),
 		kit.NewModelMessage(kit.NewTextContent("hi")),
@@ -43,8 +44,8 @@ func TestRecordAndHistory(t *testing.T) {
 			t.Fatalf("ExecutionID = %q, want %q", stored.ExecutionID, "execution-1")
 		}
 
-		if stored.Type != messageEntryType || stored.Version != messageEntryVersion {
-			t.Fatalf("entry encoding = %q v%d", stored.Type, stored.Version)
+		if stored.Type != messageEntryType {
+			t.Fatalf("entry type = %q, want %q", stored.Type, messageEntryType)
 		}
 	}
 }
@@ -52,7 +53,8 @@ func TestRecordAndHistory(t *testing.T) {
 func TestContextStartsAtLatestSummary(t *testing.T) {
 	t.Parallel()
 
-	memory := New("session-1", "execution-1", entry.NewMemoryStore())
+	store := entry.NewMemoryStore()
+	memory := New("session-1", "execution-1", store, event.NewBus("session-1", store))
 	messages := []kit.Message{
 		kit.NewUserMessage(kit.NewTextContent("old")),
 		kit.NewUserMessage(kit.NewSummaryContent("summary")),

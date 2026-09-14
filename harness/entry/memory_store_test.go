@@ -17,14 +17,12 @@ func TestMemoryStoreAppendAndList(t *testing.T) {
 			SessionID:   "session-1",
 			ExecutionID: "execution-1",
 			Type:        "user.message",
-			Version:     1,
 			Payload:     json.RawMessage(`{"text":"hello"}`),
 		},
 		{
 			SessionID:   "session-1",
 			ExecutionID: "execution-1",
 			Type:        "assistant.message",
-			Version:     1,
 			Payload:     json.RawMessage(`{"text":"hi"}`),
 		},
 	}
@@ -67,7 +65,7 @@ func TestMemoryStoreKeepsSessionsSeparate(t *testing.T) {
 
 	store := NewMemoryStore()
 
-	entry := Entry{SessionID: "session-1", Type: "checkpoint", Version: 1, Payload: json.RawMessage(`{}`)}
+	entry := Entry{SessionID: "session-1", Type: "checkpoint", Payload: json.RawMessage(`{}`)}
 	if _, err := store.Append(context.Background(), entry); err != nil {
 		t.Fatalf("Append(session-1) error = %v", err)
 	}
@@ -102,7 +100,6 @@ func TestMemoryStoreOwnsPayloads(t *testing.T) {
 	appended, err := store.Append(context.Background(), Entry{
 		SessionID: "session-1",
 		Type:      "value.changed",
-		Version:   1,
 		Payload:   payload,
 	})
 	if err != nil {
@@ -166,7 +163,6 @@ func TestMemoryStoreConcurrentAppend(t *testing.T) {
 			_, err := store.Append(context.Background(), Entry{
 				SessionID: "session-1",
 				Type:      "test.entry",
-				Version:   1,
 				Payload:   json.RawMessage(`{}`),
 			})
 			if err != nil {
