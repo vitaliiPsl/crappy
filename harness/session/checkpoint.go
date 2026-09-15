@@ -9,16 +9,9 @@ import (
 	"github.com/vitaliipsl/crappy/harness/memory"
 )
 
-var (
-	ErrCheckpointUnavailable = errors.New("checkpoint generator is not configured")
-	ErrNoCheckpointContext   = errors.New("session has no context to checkpoint")
-)
+var ErrNoCheckpointContext = errors.New("session has no context to checkpoint")
 
 func (s *Session) Checkpoint(ctx context.Context) (*checkpoint.Checkpoint, error) {
-	if s.checkpoints == nil {
-		return nil, ErrCheckpointUnavailable
-	}
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -26,7 +19,22 @@ func (s *Session) Checkpoint(ctx context.Context) (*checkpoint.Checkpoint, error
 		return nil, ErrBusy
 	}
 
-	sessionMemory := memory.New(s.state.ID, "", s.entries, s.events)
+	return s.checkpoint(ctx, "")
+}
+
+func (s *Session) checkpointCallback(executionID string) func(context.Context) error {
+	return func(ctx context.Context) error {
+		_, err := s.checkpoint(ctx, executionID)
+
+		return err
+	}
+}
+
+func (s *Session) checkpoint(
+	ctx context.Context,
+	executionID string,
+) (*checkpoint.Checkpoint, error) {
+	sessionMemory := memory.New(s.state.ID, executionID, s.entries, s.events)
 
 	messages, err := sessionMemory.Context(ctx)
 	if err != nil {
@@ -42,7 +50,7 @@ func (s *Session) Checkpoint(ctx context.Context) (*checkpoint.Checkpoint, error
 		return nil, err
 	}
 
-	if err := s.Commit(ctx, "", checkpoint.EntryType, generated); err != nil {
+	if err := s.Commit(ctx, executionID, checkpoint.EntryType, generated); err != nil {
 		return nil, fmt.Errorf("commit checkpoint: %w", err)
 	}
 

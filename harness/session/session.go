@@ -15,7 +15,8 @@ type State struct {
 }
 
 type Session struct {
-	state       State
+	state State
+
 	entries     entry.Store
 	events      *event.Bus
 	agents      *agent.Factory

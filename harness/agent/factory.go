@@ -13,6 +13,7 @@ type BuildRequest struct {
 	SessionID   string
 	ExecutionID string
 	Memory      kit.Memory
+	Checkpoint  func(context.Context) error
 }
 
 type Factory struct {

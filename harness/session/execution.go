@@ -57,10 +57,11 @@ func (s *Session) Execute(input kit.Message) (string, error) {
 	executionID := uuid.NewString()
 	agentMemory := memory.New(s.state.ID, executionID, s.entries, s.events)
 
-	builtAgent, err := s.agents.Build(context.Background(), agent.BuildRequest{
+	agent, err := s.agents.Build(context.Background(), agent.BuildRequest{
 		SessionID:   s.state.ID,
 		ExecutionID: executionID,
 		Memory:      agentMemory,
+		Checkpoint:  s.checkpointCallback(executionID),
 	})
 	if err != nil {
 		return "", fmt.Errorf("build agent: %w", err)
@@ -68,7 +69,8 @@ func (s *Session) Execute(input kit.Message) (string, error) {
 
 	executionContext, cancel := context.WithCancel(context.Background())
 	running := &execution{
-		id: executionID, cancel: cancel,
+		id: executionID,
+		cancel: cancel,
 	}
 
 	if err := s.Commit(
@@ -84,7 +86,7 @@ func (s *Session) Execute(input kit.Message) (string, error) {
 
 	s.active = running
 
-	go s.runExecution(executionContext, running, builtAgent, input)
+	go s.runExecution(executionContext, running, agent, input)
 
 	return executionID, nil
 }
@@ -105,7 +107,7 @@ func (s *Session) Cancel(executionID string) error {
 func (s *Session) runExecution(
 	ctx context.Context,
 	execution *execution,
-	builtAgent kit.Agent,
+	agent kit.Agent,
 	input kit.Message,
 ) {
 	defer func() {
@@ -117,7 +119,7 @@ func (s *Session) runExecution(
 		}
 	}()
 
-	stream := builtAgent.Stream(ctx, input)
+	stream := agent.Stream(ctx, input)
 
 	var runErr error
 	for agentEvent := range stream.Iter() {
