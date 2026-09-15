@@ -12,15 +12,32 @@ import (
 	"github.com/vitaliipsl/crappy/harness/memory"
 )
 
-var ErrBusy = errors.New("session is busy")
+var (
+	ErrBusy = errors.New("session is busy")
+	ErrExecutionNotActive = errors.New("execution is not active")
+)
 
-var ErrExecutionNotActive = errors.New("execution is not active")
+const (
+	ExecutionStartedEntryType  = "execution.started"
+	ExecutionFinishedEntryType = "execution.finished"
+)
 
-const AgentResultEntryType = "agent.result"
+type ExecutionOutcome string
 
-type AgentResult struct {
-	Usage     kit.Usage `json:"usage"`
-	LastUsage kit.Usage `json:"last_usage"`
+const (
+	ExecutionCompleted   ExecutionOutcome = "completed"
+	ExecutionFailed      ExecutionOutcome = "failed"
+	ExecutionCancelled   ExecutionOutcome = "cancelled"
+	ExecutionInterrupted ExecutionOutcome = "interrupted"
+)
+
+type ExecutionStarted struct{}
+
+type ExecutionFinished struct {
+	Outcome   ExecutionOutcome `json:"outcome"`
+	Error     string           `json:"error,omitempty"`
+	Usage     kit.Usage        `json:"usage"`
+	LastUsage kit.Usage        `json:"last_usage"`
 }
 
 type execution struct {
@@ -45,10 +62,24 @@ func (s *Session) Execute(input kit.Message) (string, error) {
 	}
 
 	executionContext, cancel := context.WithCancel(context.Background())
-	execution := &execution{id: executionID, cancel: cancel}
-	s.active = execution
+	running := &execution{
+		id: executionID, cancel: cancel,
+	}
 
-	go s.runExecution(executionContext, execution, builtAgent, input)
+	if err := s.Commit(
+		context.Background(),
+		executionID,
+		ExecutionStartedEntryType,
+		ExecutionStarted{},
+	); err != nil {
+		cancel()
+
+		return "", fmt.Errorf("start execution: %w", err)
+	}
+
+	s.active = running
+
+	go s.runExecution(executionContext, running, builtAgent, input)
 
 	return executionID, nil
 }
@@ -82,20 +113,39 @@ func (s *Session) runExecution(
 	}()
 
 	stream := builtAgent.Stream(ctx, input)
+	var runErr error
 	for agentEvent := range stream.Iter() {
 		eventType := "agent." + string(agentEvent.Type)
 		if err := s.Emit(ctx, execution.id, eventType, agentEvent); err != nil {
-			return
+			runErr = err
+
+			break
 		}
 	}
 
-	response, err := stream.Result()
-	if err != nil {
-		return
+	response, streamErr := stream.Result()
+	if runErr == nil {
+		runErr = streamErr
 	}
 
-	_ = s.Commit(context.WithoutCancel(ctx), execution.id, AgentResultEntryType, AgentResult{
+	finished := ExecutionFinished{
+		Outcome:   ExecutionCompleted,
 		Usage:     response.Usage,
 		LastUsage: response.LastUsage,
-	})
+	}
+	if runErr != nil {
+		if errors.Is(runErr, context.Canceled) {
+			finished.Outcome = ExecutionCancelled
+		} else {
+			finished.Outcome = ExecutionFailed
+			finished.Error = runErr.Error()
+		}
+	}
+
+	_ = s.Commit(
+		context.WithoutCancel(ctx),
+		execution.id,
+		ExecutionFinishedEntryType,
+		finished,
+	)
 }

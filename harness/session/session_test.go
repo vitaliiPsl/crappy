@@ -169,21 +169,25 @@ func TestExecutePublishesEntriesAndAgentEvents(t *testing.T) {
 		t.Fatalf("Execute() error = %v", err)
 	}
 
-	events := make([]harnessevent.Event, 5)
+	events := make([]harnessevent.Event, 6)
 	for i := range events {
 		events[i] = receiveEvent(t, subscription)
 	}
 
-	if events[0].EntryID != 1 || events[0].Type != "message" {
-		t.Fatalf("first event = %#v, want message entry 1", events[0])
+	if events[0].EntryID != 1 || events[0].Type != ExecutionStartedEntryType {
+		t.Fatalf("first event = %#v, want execution started entry 1", events[0])
 	}
 
-	if events[1].EntryID != 0 || events[1].Type != "agent.content_delta" {
-		t.Fatalf("second event = %#v, want transient content delta", events[1])
+	if events[1].EntryID != 2 || events[1].Type != "message" {
+		t.Fatalf("second event = %#v, want message entry 2", events[1])
+	}
+
+	if events[2].EntryID != 0 || events[2].Type != "agent.content_delta" {
+		t.Fatalf("third event = %#v, want transient content delta", events[2])
 	}
 
 	var agentEvent kit.AgentEvent
-	if err := json.Unmarshal(events[1].Payload, &agentEvent); err != nil {
+	if err := json.Unmarshal(events[2].Payload, &agentEvent); err != nil {
 		t.Fatalf("decode content delta: %v", err)
 	}
 
@@ -193,16 +197,16 @@ func TestExecutePublishesEntriesAndAgentEvents(t *testing.T) {
 		t.Fatalf("content delta = %#v, want hello", agentEvent)
 	}
 
-	if events[2].EntryID != 2 || events[2].Type != "message" {
-		t.Fatalf("third event = %#v, want message entry 2", events[2])
+	if events[3].EntryID != 3 || events[3].Type != "message" {
+		t.Fatalf("fourth event = %#v, want message entry 3", events[3])
 	}
 
-	if events[3].EntryID != 0 || events[3].Type != "agent.message" {
-		t.Fatalf("fourth event = %#v, want transient agent message", events[3])
+	if events[4].EntryID != 0 || events[4].Type != "agent.message" {
+		t.Fatalf("fifth event = %#v, want transient agent message", events[4])
 	}
 
-	if events[4].EntryID != 3 || events[4].Type != AgentResultEntryType {
-		t.Fatalf("fifth event = %#v, want agent result entry 3", events[4])
+	if events[5].EntryID != 4 || events[5].Type != ExecutionFinishedEntryType {
+		t.Fatalf("sixth event = %#v, want execution finished entry 4", events[5])
 	}
 
 	for _, event := range events {
