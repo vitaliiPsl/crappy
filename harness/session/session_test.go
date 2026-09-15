@@ -17,7 +17,7 @@ import (
 func TestSessionID(t *testing.T) {
 	t.Parallel()
 
-	session := New(State{ID: "session-1"}, entry.NewMemoryStore(), nil)
+	session := New(State{ID: "session-1"}, entry.NewMemoryStore(), nil, nil)
 
 	if got, want := session.ID(), "session-1"; got != want {
 		t.Fatalf("ID() = %q, want %q", got, want)
@@ -50,7 +50,7 @@ func TestSessionEntries(t *testing.T) {
 		t.Fatalf("Append() error = %v", err)
 	}
 
-	session := New(State{ID: "session-1"}, store, nil)
+	session := New(State{ID: "session-1"}, store, nil, nil)
 
 	entries, err := session.Entries(context.Background(), 1)
 	if err != nil {
@@ -80,7 +80,7 @@ func TestSubscribeReplaysEntries(t *testing.T) {
 		t.Fatalf("Append() error = %v", err)
 	}
 
-	session := New(State{ID: "session-1"}, store, nil)
+	session := New(State{ID: "session-1"}, store, nil, nil)
 
 	subscription, err := session.Subscribe(context.Background(), 0)
 	if err != nil {
@@ -98,7 +98,7 @@ func TestSubscribeReplaysEntries(t *testing.T) {
 func TestEmitReachesEverySubscriber(t *testing.T) {
 	t.Parallel()
 
-	session := New(State{ID: "session-1"}, entry.NewMemoryStore(), nil)
+	session := New(State{ID: "session-1"}, entry.NewMemoryStore(), nil, nil)
 
 	first, err := session.Subscribe(context.Background(), 0)
 	if err != nil {
@@ -155,6 +155,7 @@ func TestExecutePublishesEntriesAndAgentEvents(t *testing.T) {
 		State{ID: "session-1"},
 		entry.NewMemoryStore(),
 		agent.New(model),
+		nil,
 	)
 
 	subscription, err := session.Subscribe(context.Background(), 0)

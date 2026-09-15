@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/vitaliipsl/crappy/harness/agent"
+	"github.com/vitaliipsl/crappy/harness/checkpoint"
 	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/event"
 )
@@ -14,23 +15,30 @@ type State struct {
 }
 
 type Session struct {
-	state   State
-	entries entry.Store
-	events  *event.Bus
-	agents  *agent.Factory
+	state       State
+	entries     entry.Store
+	events      *event.Bus
+	agents      *agent.Factory
+	checkpoints *checkpoint.Generator
 
 	mu     sync.Mutex
 	active *execution
 }
 
-func New(state State, entries entry.Store, agents *agent.Factory) *Session {
+func New(
+	state State,
+	entries entry.Store,
+	agents *agent.Factory,
+	checkpoints *checkpoint.Generator,
+) *Session {
 	events := event.NewBus(state.ID, entries)
 
 	return &Session{
-		state:   state,
-		entries: entries,
-		events:  events,
-		agents:  agents,
+		state:       state,
+		entries:     entries,
+		events:      events,
+		agents:      agents,
+		checkpoints: checkpoints,
 	}
 }
 

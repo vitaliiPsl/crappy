@@ -30,7 +30,7 @@ func TestExecuteMaintainsContext(t *testing.T) {
 		}},
 	)
 	store := entry.NewMemoryStore()
-	session := New(State{ID: "session-1"}, store, agent.New(model))
+	session := New(State{ID: "session-1"}, store, agent.New(model), nil)
 
 	firstID, err := session.Execute(kit.NewUserMessage(kit.NewTextContent("first input")))
 	if err != nil {
@@ -144,6 +144,7 @@ func TestExecuteRejectsConcurrentExecution(t *testing.T) {
 		State{ID: "session-1"},
 		entry.NewMemoryStore(),
 		agent.New(model),
+		nil,
 	)
 
 	executionID, err := session.Execute(kit.NewUserMessage(kit.NewTextContent("first input")))
@@ -182,6 +183,7 @@ func TestExecuteRecordsFailure(t *testing.T) {
 		State{ID: "session-1"},
 		entry.NewMemoryStore(),
 		agent.New(model),
+		nil,
 	)
 
 	executionID, err := session.Execute(kit.NewUserMessage(kit.NewTextContent("input")))
@@ -226,6 +228,7 @@ func TestCancelActiveExecution(t *testing.T) {
 		State{ID: "session-1"},
 		entry.NewMemoryStore(),
 		agent.New(model),
+		nil,
 	)
 
 	executionID, err := session.Execute(kit.NewUserMessage(kit.NewTextContent("input")))
