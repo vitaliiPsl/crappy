@@ -154,7 +154,7 @@ func TestExecutePublishesEntriesAndAgentEvents(t *testing.T) {
 	session := New(
 		State{ID: "session-1"},
 		entry.NewMemoryStore(),
-		agent.New(model, executeToolSet{}),
+		agent.New(model),
 	)
 
 	subscription, err := session.Subscribe(context.Background(), 0)

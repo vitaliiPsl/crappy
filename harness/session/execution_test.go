@@ -14,18 +14,6 @@ import (
 	"github.com/vitaliipsl/crappy/harness/entry"
 )
 
-type executeToolSet struct{}
-
-func (executeToolSet) Add(...kit.Tool) {}
-
-func (executeToolSet) Get(string) (kit.Tool, bool) {
-	return nil, false
-}
-
-func (executeToolSet) List() []kit.Tool {
-	return nil
-}
-
 func TestExecuteMaintainsContext(t *testing.T) {
 	t.Parallel()
 
@@ -42,7 +30,7 @@ func TestExecuteMaintainsContext(t *testing.T) {
 		}},
 	)
 	store := entry.NewMemoryStore()
-	session := New(State{ID: "session-1"}, store, agent.New(model, executeToolSet{}))
+	session := New(State{ID: "session-1"}, store, agent.New(model))
 
 	firstID, err := session.Execute(kit.NewUserMessage(kit.NewTextContent("first input")))
 	if err != nil {
@@ -155,7 +143,7 @@ func TestExecuteRejectsConcurrentExecution(t *testing.T) {
 	session := New(
 		State{ID: "session-1"},
 		entry.NewMemoryStore(),
-		agent.New(model, executeToolSet{}),
+		agent.New(model),
 	)
 
 	executionID, err := session.Execute(kit.NewUserMessage(kit.NewTextContent("first input")))
@@ -193,7 +181,7 @@ func TestExecuteRecordsFailure(t *testing.T) {
 	session := New(
 		State{ID: "session-1"},
 		entry.NewMemoryStore(),
-		agent.New(model, executeToolSet{}),
+		agent.New(model),
 	)
 
 	executionID, err := session.Execute(kit.NewUserMessage(kit.NewTextContent("input")))
@@ -237,7 +225,7 @@ func TestCancelActiveExecution(t *testing.T) {
 	session := New(
 		State{ID: "session-1"},
 		entry.NewMemoryStore(),
-		agent.New(model, executeToolSet{}),
+		agent.New(model),
 	)
 
 	executionID, err := session.Execute(kit.NewUserMessage(kit.NewTextContent("input")))

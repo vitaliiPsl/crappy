@@ -9,11 +9,12 @@ import (
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
+	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/memory"
 )
 
 var (
-	ErrBusy = errors.New("session is busy")
+	ErrBusy               = errors.New("session is busy")
 	ErrExecutionNotActive = errors.New("execution is not active")
 )
 
@@ -56,7 +57,11 @@ func (s *Session) Execute(input kit.Message) (string, error) {
 	executionID := uuid.NewString()
 	agentMemory := memory.New(s.state.ID, executionID, s.entries, s.events)
 
-	builtAgent, err := s.agents.Build(agentMemory)
+	builtAgent, err := s.agents.Build(context.Background(), agent.BuildRequest{
+		SessionID:   s.state.ID,
+		ExecutionID: executionID,
+		Memory:      agentMemory,
+	})
 	if err != nil {
 		return "", fmt.Errorf("build agent: %w", err)
 	}
@@ -113,6 +118,7 @@ func (s *Session) runExecution(
 	}()
 
 	stream := builtAgent.Stream(ctx, input)
+
 	var runErr error
 	for agentEvent := range stream.Iter() {
 		eventType := "agent." + string(agentEvent.Type)
