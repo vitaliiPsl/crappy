@@ -17,7 +17,16 @@ import (
 func TestSessionID(t *testing.T) {
 	t.Parallel()
 
-	session := New(State{ID: "session-1"}, entry.NewMemoryStore(), nil, nil)
+	session, err := New(
+		context.Background(),
+		State{ID: "session-1"},
+		entry.NewMemoryStore(),
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
 
 	if got, want := session.ID(), "session-1"; got != want {
 		t.Fatalf("ID() = %q, want %q", got, want)
@@ -50,7 +59,10 @@ func TestSessionEntries(t *testing.T) {
 		t.Fatalf("Append() error = %v", err)
 	}
 
-	session := New(State{ID: "session-1"}, store, nil, nil)
+	session, err := New(context.Background(), State{ID: "session-1"}, store, nil, nil)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
 
 	entries, err := session.Entries(context.Background(), 1)
 	if err != nil {
@@ -80,7 +92,10 @@ func TestSubscribeReplaysEntries(t *testing.T) {
 		t.Fatalf("Append() error = %v", err)
 	}
 
-	session := New(State{ID: "session-1"}, store, nil, nil)
+	session, err := New(context.Background(), State{ID: "session-1"}, store, nil, nil)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
 
 	subscription, err := session.Subscribe(context.Background(), 0)
 	if err != nil {
@@ -98,7 +113,16 @@ func TestSubscribeReplaysEntries(t *testing.T) {
 func TestEmitReachesEverySubscriber(t *testing.T) {
 	t.Parallel()
 
-	session := New(State{ID: "session-1"}, entry.NewMemoryStore(), nil, nil)
+	session, err := New(
+		context.Background(),
+		State{ID: "session-1"},
+		entry.NewMemoryStore(),
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
 
 	first, err := session.Subscribe(context.Background(), 0)
 	if err != nil {
@@ -151,12 +175,17 @@ func TestExecutePublishesEntriesAndAgentEvents(t *testing.T) {
 			FinishReason: kit.FinishReasonStop,
 		},
 	})
-	session := New(
+
+	session, err := New(
+		context.Background(),
 		State{ID: "session-1"},
 		entry.NewMemoryStore(),
 		agent.New(model),
 		nil,
 	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
 
 	subscription, err := session.Subscribe(context.Background(), 0)
 	if err != nil {

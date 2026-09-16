@@ -30,7 +30,17 @@ func TestExecuteMaintainsContext(t *testing.T) {
 		}},
 	)
 	store := entry.NewMemoryStore()
-	session := New(State{ID: "session-1"}, store, agent.New(model), nil)
+
+	session, err := New(
+		context.Background(),
+		State{ID: "session-1"},
+		store,
+		agent.New(model),
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
 
 	firstID, err := session.Execute(kit.NewUserMessage(kit.NewTextContent("first input")))
 	if err != nil {
@@ -140,12 +150,17 @@ func TestExecuteRejectsConcurrentExecution(t *testing.T) {
 		started: make(chan struct{}),
 		release: make(chan struct{}),
 	}
-	session := New(
+
+	session, err := New(
+		context.Background(),
 		State{ID: "session-1"},
 		entry.NewMemoryStore(),
 		agent.New(model),
 		nil,
 	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
 
 	executionID, err := session.Execute(kit.NewUserMessage(kit.NewTextContent("first input")))
 	if err != nil {
@@ -179,12 +194,17 @@ func TestExecuteRecordsFailure(t *testing.T) {
 
 	wantErr := errors.New("model failed")
 	model := kittest.NewModel(t, kittest.ModelResult{Error: wantErr})
-	session := New(
+
+	session, err := New(
+		context.Background(),
 		State{ID: "session-1"},
 		entry.NewMemoryStore(),
 		agent.New(model),
 		nil,
 	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
 
 	executionID, err := session.Execute(kit.NewUserMessage(kit.NewTextContent("input")))
 	if err != nil {
@@ -224,12 +244,17 @@ func TestCancelActiveExecution(t *testing.T) {
 		started: make(chan struct{}),
 		release: make(chan struct{}),
 	}
-	session := New(
+
+	session, err := New(
+		context.Background(),
 		State{ID: "session-1"},
 		entry.NewMemoryStore(),
 		agent.New(model),
 		nil,
 	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
 
 	executionID, err := session.Execute(kit.NewUserMessage(kit.NewTextContent("input")))
 	if err != nil {
@@ -267,6 +292,73 @@ func TestCancelActiveExecution(t *testing.T) {
 	}
 }
 
+func TestRunExecutionReconcilesToolsBeforeCancellation(t *testing.T) {
+	t.Parallel()
+
+	store := entry.NewMemoryStore()
+
+	session, err := New(context.Background(), State{ID: "session-1"}, store, nil, nil)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	executionID := "execution-1"
+	call := kit.NewToolCall("call-1", "write", nil)
+
+	if err := session.Commit(
+		context.Background(),
+		executionID,
+		ExecutionStartedEntryType,
+		ExecutionStarted{},
+	); err != nil {
+		t.Fatalf("commit execution start: %v", err)
+	}
+
+	if err := session.Commit(
+		context.Background(),
+		executionID,
+		"message",
+		kit.NewModelMessage(kit.NewToolCallContent(call)),
+	); err != nil {
+		t.Fatalf("commit tool call: %v", err)
+	}
+
+	session.runExecution(
+		context.Background(),
+		&execution{id: executionID},
+		interruptedAgent{},
+		kit.Message{},
+	)
+
+	entries, err := session.Entries(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("Entries() error = %v", err)
+	}
+
+	if got, want := len(entries), 4; got != want {
+		t.Fatalf("entries = %d, want %d", got, want)
+	}
+
+	var message kit.Message
+	if err := json.Unmarshal(entries[2].Payload, &message); err != nil {
+		t.Fatalf("decode reconciled message: %v", err)
+	}
+
+	results := message.ToolResults()
+	if len(results) != 1 || results[0].Call.ID != call.ID {
+		t.Fatalf("reconciled results = %+v, want interrupted tool result", results)
+	}
+
+	var finished ExecutionFinished
+	if err := json.Unmarshal(entries[3].Payload, &finished); err != nil {
+		t.Fatalf("decode finished execution: %v", err)
+	}
+
+	if finished.Outcome != ExecutionCancelled {
+		t.Fatalf("execution outcome = %q, want %q", finished.Outcome, ExecutionCancelled)
+	}
+}
+
 func waitSessionIdle(t *testing.T, session *Session) {
 	t.Helper()
 
@@ -296,6 +388,18 @@ func waitSessionIdle(t *testing.T, session *Session) {
 type blockingModel struct {
 	started chan struct{}
 	release chan struct{}
+}
+
+type interruptedAgent struct{}
+
+func (interruptedAgent) Run(context.Context, kit.Message) (kit.AgentResponse, error) {
+	return kit.AgentResponse{}, context.Canceled
+}
+
+func (interruptedAgent) Stream(context.Context, kit.Message) *kit.Stream[kit.AgentEvent, kit.AgentResponse] {
+	return kit.NewStream(func(kit.Emitter[kit.AgentEvent]) (kit.AgentResponse, error) {
+		return kit.AgentResponse{}, context.Canceled
+	})
 }
 
 func (m *blockingModel) Config() kit.ModelConfig {

@@ -61,7 +61,9 @@ func (s *Session) Execute(input kit.Message) (string, error) {
 		SessionID:   s.state.ID,
 		ExecutionID: executionID,
 		Memory:      agentMemory,
-		Checkpoint:  s.checkpointCallback(executionID),
+		Checkpoint: func(ctx context.Context) error {
+			return s.checkpoint(ctx, executionID)
+		},
 	})
 	if err != nil {
 		return "", fmt.Errorf("build agent: %w", err)
@@ -69,7 +71,7 @@ func (s *Session) Execute(input kit.Message) (string, error) {
 
 	executionContext, cancel := context.WithCancel(context.Background())
 	running := &execution{
-		id: executionID,
+		id:     executionID,
 		cancel: cancel,
 	}
 
@@ -134,6 +136,12 @@ func (s *Session) runExecution(
 	response, streamErr := stream.Result()
 	if runErr == nil {
 		runErr = streamErr
+	}
+
+	if runErr != nil {
+		if err := s.reconcileTools(context.WithoutCancel(ctx), execution.id); err != nil {
+			runErr = fmt.Errorf("reconcile tools: %w", err)
+		}
 	}
 
 	finished := ExecutionFinished{

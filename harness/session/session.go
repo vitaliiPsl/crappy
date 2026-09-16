@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/vitaliipsl/crappy/harness/agent"
@@ -27,20 +28,27 @@ type Session struct {
 }
 
 func New(
+	ctx context.Context,
 	state State,
 	entries entry.Store,
 	agents *agent.Factory,
 	checkpoints *checkpoint.Generator,
-) *Session {
+) (*Session, error) {
 	events := event.NewBus(state.ID, entries)
 
-	return &Session{
+	session := &Session{
 		state:       state,
 		entries:     entries,
 		events:      events,
 		agents:      agents,
 		checkpoints: checkpoints,
 	}
+
+	if err := session.reconcileExecutions(ctx); err != nil {
+		return nil, fmt.Errorf("reconcile executions: %w", err)
+	}
+
+	return session, nil
 }
 
 func (s *Session) ID() string {
