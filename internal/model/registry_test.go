@@ -80,7 +80,7 @@ func TestRegistrySeparatesProviders(t *testing.T) {
 		t.Fatalf("NewRegistry() error = %v", err)
 	}
 
-	resolved, err := registry.Resolver("first", "model").Resolve(context.Background())
+	resolved, err := registry.Resolve(context.Background(), "first", "model")
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}

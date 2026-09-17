@@ -21,14 +21,18 @@ type ModelResolver interface {
 }
 
 type Factory struct {
+	config       kit.AgentConfig
 	models       ModelResolver
 	tools        []kit.Tool
 	options      []adkagent.Option
 	contributors []Contributor
 }
 
-func New(models ModelResolver, options ...Option) *Factory {
-	factory := &Factory{models: models}
+func New(config kit.AgentConfig, models ModelResolver, options ...Option) *Factory {
+	factory := &Factory{
+		config: config,
+		models: models,
+	}
 
 	for _, option := range options {
 		option(factory)
@@ -43,7 +47,7 @@ func (f *Factory) Build(ctx context.Context, request BuildRequest) (kit.Agent, e
 		return nil, fmt.Errorf("resolve model: %w", err)
 	}
 
-	options := append([]adkagent.Option(nil), f.options...)
+	options := append(agentOptions(f.config), f.options...)
 	build := BuildContext{
 		Request: request,
 		Model:   resolved,
@@ -69,4 +73,30 @@ func (f *Factory) Build(ctx context.Context, request BuildRequest) (kit.Agent, e
 	tools := adktool.NewSet(f.tools...)
 
 	return adkagent.New(build.Model, build.Request.Memory, tools, options...)
+}
+
+func agentOptions(config kit.AgentConfig) []adkagent.Option {
+	options := make([]adkagent.Option, 0, 5)
+
+	if config.Instructions != "" {
+		options = append(options, adkagent.WithInstructions(config.Instructions))
+	}
+
+	if config.Temperature != nil {
+		options = append(options, adkagent.WithTemperature(*config.Temperature))
+	}
+
+	if config.MaxOutputTokens != nil {
+		options = append(options, adkagent.WithMaxOutputTokens(*config.MaxOutputTokens))
+	}
+
+	if config.Thinking != nil {
+		options = append(options, adkagent.WithThinking(*config.Thinking))
+	}
+
+	if config.OutputSchema != nil {
+		options = append(options, adkagent.WithOutputSchema(*config.OutputSchema))
+	}
+
+	return options
 }

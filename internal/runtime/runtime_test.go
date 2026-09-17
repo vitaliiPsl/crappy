@@ -16,7 +16,7 @@ func TestRuntimeOwnsSession(t *testing.T) {
 
 	runtime := NewRuntime(
 		entry.NewMemoryStore(),
-		agent.New(staticModelResolver{kittest.NewModel(t)}),
+		agent.New(kit.AgentConfig{}, staticModelResolver{kittest.NewModel(t)}),
 		nil,
 	)
 

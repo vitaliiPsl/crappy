@@ -21,10 +21,18 @@ func TestFactoryBuild(t *testing.T) {
 		},
 	})
 	baseTool := kittest.NewTool(t, "base", "Base capability")
+	temperature := float32(0.3)
+	maxOutputTokens := int32(1024)
+	thinking := kit.ThinkingLevelHigh
 	factory := New(
+		kit.AgentConfig{
+			Instructions:    "Be concise.",
+			Temperature:     &temperature,
+			MaxOutputTokens: &maxOutputTokens,
+			Thinking:        &thinking,
+		},
 		staticModelResolver{model},
 		WithTools(baseTool),
-		WithAgentOptions(adkagent.WithInstructions("Be concise.")),
 	)
 
 	built, err := factory.Build(context.Background(), BuildRequest{
@@ -44,6 +52,18 @@ func TestFactoryBuild(t *testing.T) {
 		t.Fatalf("Instructions = %q, want %q", got, want)
 	}
 
+	if request.Config.Temperature == nil || *request.Config.Temperature != temperature {
+		t.Fatalf("Temperature = %v, want %v", request.Config.Temperature, temperature)
+	}
+
+	if request.Config.MaxOutputTokens == nil || *request.Config.MaxOutputTokens != maxOutputTokens {
+		t.Fatalf("MaxOutputTokens = %v, want %v", request.Config.MaxOutputTokens, maxOutputTokens)
+	}
+
+	if request.Config.Thinking == nil || *request.Config.Thinking != thinking {
+		t.Fatalf("Thinking = %v, want %v", request.Config.Thinking, thinking)
+	}
+
 	if got, want := request.Tools, []kit.Tool{baseTool}; len(got) != len(want) || got[0] != want[0] {
 		t.Fatalf("Tools = %v, want %v", got, want)
 	}
@@ -53,7 +73,7 @@ func TestFactoryBuildsFreshAgents(t *testing.T) {
 	t.Parallel()
 
 	model := kittest.NewModel(t)
-	factory := New(staticModelResolver{model})
+	factory := New(kit.AgentConfig{}, staticModelResolver{model})
 
 	first, err := factory.Build(context.Background(), BuildRequest{
 		Memory: memory.NewHistory(),
@@ -120,6 +140,7 @@ func TestFactoryBuildAppliesContributions(t *testing.T) {
 		}, nil
 	})
 	factory := New(
+		kit.AgentConfig{},
 		staticModelResolver{model},
 		WithAgentOptions(adkagent.WithInstructions("Be concise.")),
 		WithContributors(contributor),
@@ -158,6 +179,7 @@ func TestFactoryBuildReturnsContributorError(t *testing.T) {
 
 	wantErr := errors.New("contribution failed")
 	factory := New(
+		kit.AgentConfig{},
 		staticModelResolver{kittest.NewModel(t)},
 		WithContributors(
 			ContributorFunc(func(context.Context, BuildContext) (Contribution, error) {

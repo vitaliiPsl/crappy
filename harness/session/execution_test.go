@@ -35,7 +35,7 @@ func TestExecuteMaintainsContext(t *testing.T) {
 		context.Background(),
 		State{ID: "session-1"},
 		store,
-		agent.New(staticModelResolver{model}),
+		agent.New(kit.AgentConfig{}, staticModelResolver{model}),
 		nil,
 	)
 	if err != nil {
@@ -166,7 +166,7 @@ func TestExecuteRejectsConcurrentExecution(t *testing.T) {
 		context.Background(),
 		State{ID: "session-1"},
 		entry.NewMemoryStore(),
-		agent.New(staticModelResolver{model}),
+		agent.New(kit.AgentConfig{}, staticModelResolver{model}),
 		nil,
 	)
 	if err != nil {
@@ -210,7 +210,7 @@ func TestExecuteRecordsFailure(t *testing.T) {
 		context.Background(),
 		State{ID: "session-1"},
 		entry.NewMemoryStore(),
-		agent.New(staticModelResolver{model}),
+		agent.New(kit.AgentConfig{}, staticModelResolver{model}),
 		nil,
 	)
 	if err != nil {
@@ -260,7 +260,7 @@ func TestCancelActiveExecution(t *testing.T) {
 		context.Background(),
 		State{ID: "session-1"},
 		entry.NewMemoryStore(),
-		agent.New(staticModelResolver{model}),
+		agent.New(kit.AgentConfig{}, staticModelResolver{model}),
 		nil,
 	)
 	if err != nil {

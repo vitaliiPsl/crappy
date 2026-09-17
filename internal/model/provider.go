@@ -7,10 +7,10 @@ import (
 )
 
 type ProviderFactory interface {
-	CreateModel(context.Context, string) (kit.Model, error)
+	CreateModel(ctx context.Context, modelID string) (kit.Model, error)
 }
 
-type ProviderFactoryFunc func(context.Context, string) (kit.Model, error)
+type ProviderFactoryFunc func(ctx context.Context, modelID string) (kit.Model, error)
 
 func (fn ProviderFactoryFunc) CreateModel(
 	ctx context.Context,

@@ -43,6 +43,7 @@ func TestAutomaticCheckpointDuringExecution(t *testing.T) {
 		State{ID: "session-1"},
 		store,
 		agent.New(
+			kit.AgentConfig{},
 			staticModelResolver{agentModel},
 			agent.WithContributors(automatic.New()),
 		),

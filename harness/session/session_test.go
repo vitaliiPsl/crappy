@@ -180,7 +180,7 @@ func TestExecutePublishesEntriesAndAgentEvents(t *testing.T) {
 		context.Background(),
 		State{ID: "session-1"},
 		entry.NewMemoryStore(),
-		agent.New(staticModelResolver{model}),
+		agent.New(kit.AgentConfig{}, staticModelResolver{model}),
 		nil,
 	)
 	if err != nil {

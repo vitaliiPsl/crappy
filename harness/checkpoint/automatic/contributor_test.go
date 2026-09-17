@@ -24,6 +24,7 @@ func TestContributorCheckpointsBeforeModelRequest(t *testing.T) {
 	memory := &testMemory{}
 	checkpointed := 0
 	factory := harnessagent.New(
+		kit.AgentConfig{},
 		staticModelResolver{model},
 		harnessagent.WithContributors(New(
 			WithEstimator(fixedEstimator{request: 80}),
