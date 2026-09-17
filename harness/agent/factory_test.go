@@ -22,7 +22,7 @@ func TestFactoryBuild(t *testing.T) {
 	})
 	baseTool := kittest.NewTool(t, "base", "Base capability")
 	factory := New(
-		model,
+		staticModelResolver{model},
 		WithTools(baseTool),
 		WithAgentOptions(adkagent.WithInstructions("Be concise.")),
 	)
@@ -53,7 +53,7 @@ func TestFactoryBuildsFreshAgents(t *testing.T) {
 	t.Parallel()
 
 	model := kittest.NewModel(t)
-	factory := New(model)
+	factory := New(staticModelResolver{model})
 
 	first, err := factory.Build(context.Background(), BuildRequest{
 		Memory: memory.NewHistory(),
@@ -120,7 +120,7 @@ func TestFactoryBuildAppliesContributions(t *testing.T) {
 		}, nil
 	})
 	factory := New(
-		model,
+		staticModelResolver{model},
 		WithAgentOptions(adkagent.WithInstructions("Be concise.")),
 		WithContributors(contributor),
 	)
@@ -158,7 +158,7 @@ func TestFactoryBuildReturnsContributorError(t *testing.T) {
 
 	wantErr := errors.New("contribution failed")
 	factory := New(
-		kittest.NewModel(t),
+		staticModelResolver{kittest.NewModel(t)},
 		WithContributors(
 			ContributorFunc(func(context.Context, BuildContext) (Contribution, error) {
 				return Contribution{}, wantErr
@@ -172,4 +172,12 @@ func TestFactoryBuildReturnsContributorError(t *testing.T) {
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("Build() error = %v, want %v", err, wantErr)
 	}
+}
+
+type staticModelResolver struct {
+	model kit.Model
+}
+
+func (r staticModelResolver) Resolve(context.Context) (kit.Model, error) {
+	return r.model, nil
 }

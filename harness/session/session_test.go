@@ -180,7 +180,7 @@ func TestExecutePublishesEntriesAndAgentEvents(t *testing.T) {
 		context.Background(),
 		State{ID: "session-1"},
 		entry.NewMemoryStore(),
-		agent.New(model),
+		agent.New(staticModelResolver{model}),
 		nil,
 	)
 	if err != nil {
@@ -244,6 +244,14 @@ func TestExecutePublishesEntriesAndAgentEvents(t *testing.T) {
 			t.Fatalf("ExecutionID = %q, want %q", event.ExecutionID, executionID)
 		}
 	}
+}
+
+type staticModelResolver struct {
+	model kit.Model
+}
+
+func (r staticModelResolver) Resolve(context.Context) (kit.Model, error) {
+	return r.model, nil
 }
 
 func receiveEvent(t *testing.T, subscription *harnessevent.Subscription) harnessevent.Event {

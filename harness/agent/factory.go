@@ -16,15 +16,19 @@ type BuildRequest struct {
 	Checkpoint  func(context.Context) error
 }
 
+type ModelResolver interface {
+	Resolve(context.Context) (kit.Model, error)
+}
+
 type Factory struct {
-	model        kit.Model
+	models       ModelResolver
 	tools        []kit.Tool
 	options      []adkagent.Option
 	contributors []Contributor
 }
 
-func New(model kit.Model, options ...Option) *Factory {
-	factory := &Factory{model: model}
+func New(models ModelResolver, options ...Option) *Factory {
+	factory := &Factory{models: models}
 
 	for _, option := range options {
 		option(factory)
@@ -34,10 +38,15 @@ func New(model kit.Model, options ...Option) *Factory {
 }
 
 func (f *Factory) Build(ctx context.Context, request BuildRequest) (kit.Agent, error) {
+	resolved, err := f.models.Resolve(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolve model: %w", err)
+	}
+
 	options := append([]adkagent.Option(nil), f.options...)
 	build := BuildContext{
 		Request: request,
-		Model:   f.model,
+		Model:   resolved,
 	}
 
 	for i, contributor := range f.contributors {

@@ -24,7 +24,7 @@ func TestContributorCheckpointsBeforeModelRequest(t *testing.T) {
 	memory := &testMemory{}
 	checkpointed := 0
 	factory := harnessagent.New(
-		model,
+		staticModelResolver{model},
 		harnessagent.WithContributors(New(
 			WithEstimator(fixedEstimator{request: 80}),
 		)),
@@ -87,6 +87,14 @@ func TestContributorUsesLastModelUsage(t *testing.T) {
 type fixedEstimator struct {
 	request int
 	message int
+}
+
+type staticModelResolver struct {
+	model kit.Model
+}
+
+func (r staticModelResolver) Resolve(context.Context) (kit.Model, error) {
+	return r.model, nil
 }
 
 func (e fixedEstimator) EstimateRequest(kit.ModelRequest) int {

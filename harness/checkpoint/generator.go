@@ -17,6 +17,10 @@ var DefaultPrompt string
 
 const DefaultMaxOutputTokens int32 = 4096
 
+type ModelResolver interface {
+	Resolve(context.Context) (kit.Model, error)
+}
+
 type GeneratorOption func(*Generator)
 
 func WithPrompt(prompt string) GeneratorOption {
@@ -32,18 +36,18 @@ func WithMaxOutputTokens(limit int32) GeneratorOption {
 }
 
 type Generator struct {
-	model           kit.Model
+	models          ModelResolver
 	prompt          string
 	maxOutputTokens int32
 }
 
-func NewGenerator(model kit.Model, options ...GeneratorOption) (*Generator, error) {
-	if model == nil {
-		return nil, errors.New("checkpoint model is required")
+func NewGenerator(models ModelResolver, options ...GeneratorOption) (*Generator, error) {
+	if models == nil {
+		return nil, errors.New("model resolver is required")
 	}
 
 	generator := &Generator{
-		model:           model,
+		models:          models,
 		prompt:          DefaultPrompt,
 		maxOutputTokens: DefaultMaxOutputTokens,
 	}
@@ -59,20 +63,26 @@ func (g *Generator) Generate(
 	ctx context.Context,
 	messages []kit.Message,
 ) (*Checkpoint, error) {
-	checkpoint, err := g.generate(ctx, nil, messages)
+	resolved, err := g.models.Resolve(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolve model: %w", err)
+	}
+
+	checkpoint, err := g.generate(ctx, resolved, nil, messages)
 	if !errors.Is(err, kit.ErrContextLength) {
 		return checkpoint, err
 	}
 
-	return g.generateChunks(ctx, messages)
+	return g.generateChunks(ctx, resolved, messages)
 }
 
 func (g *Generator) generate(
 	ctx context.Context,
+	model kit.Model,
 	previous *Checkpoint,
 	messages []kit.Message,
 ) (*Checkpoint, error) {
-	response, err := g.model.Generate(ctx, kit.ModelRequest{
+	response, err := model.Generate(ctx, kit.ModelRequest{
 		Instructions: g.prompt,
 		Messages: []kit.Message{
 			kit.NewUserMessage(
@@ -92,6 +102,7 @@ func (g *Generator) generate(
 
 func (g *Generator) generateChunks(
 	ctx context.Context,
+	model kit.Model,
 	messages []kit.Message,
 ) (*Checkpoint, error) {
 	chunkTurns := countTurns(messages) / 2
@@ -107,7 +118,7 @@ func (g *Generator) generateChunks(
 	for len(messages) > 0 {
 		chunk, remaining := firstTurns(messages, chunkTurns)
 
-		generated, err := g.generate(ctx, checkpoint, chunk)
+		generated, err := g.generate(ctx, model, checkpoint, chunk)
 		if err == nil {
 			usage.Add(generated.Usage)
 			generated.Usage = usage

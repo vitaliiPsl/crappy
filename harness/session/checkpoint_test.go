@@ -29,7 +29,9 @@ func TestAutomaticCheckpointDuringExecution(t *testing.T) {
 		FinishReason: kit.FinishReasonStop,
 	}})
 
-	generator, err := checkpoint.NewGenerator(checkpointModel)
+	generator, err := checkpoint.NewGenerator(
+		staticModelResolver{checkpointModel},
+	)
 	if err != nil {
 		t.Fatalf("NewGenerator() error = %v", err)
 	}
@@ -40,7 +42,10 @@ func TestAutomaticCheckpointDuringExecution(t *testing.T) {
 		context.Background(),
 		State{ID: "session-1"},
 		store,
-		agent.New(agentModel, agent.WithContributors(automatic.New())),
+		agent.New(
+			staticModelResolver{agentModel},
+			agent.WithContributors(automatic.New()),
+		),
 		generator,
 	)
 	if err != nil {

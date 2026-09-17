@@ -21,7 +21,7 @@ func TestGeneratorGenerate(t *testing.T) {
 	}}}
 
 	generator, err := NewGenerator(
-		model,
+		staticModelResolver{model},
 		WithPrompt("summarize"),
 		WithMaxOutputTokens(512),
 	)
@@ -92,7 +92,15 @@ func TestGeneratorChunksAtModelTurnBoundaries(t *testing.T) {
 		kit.NewModelMessage(kit.NewTextContent("response four")),
 	}
 
-	generator, err := NewGenerator(model)
+	resolveCalls := 0
+
+	generator, err := NewGenerator(modelResolverFunc(func(
+		_ context.Context,
+	) (kit.Model, error) {
+		resolveCalls++
+
+		return model, nil
+	}))
 	if err != nil {
 		t.Fatalf("NewGenerator() error = %v", err)
 	}
@@ -112,6 +120,10 @@ func TestGeneratorChunksAtModelTurnBoundaries(t *testing.T) {
 
 	if got, want := len(model.requests), 3; got != want {
 		t.Fatalf("model calls = %d, want %d", got, want)
+	}
+
+	if got, want := resolveCalls, 1; got != want {
+		t.Fatalf("Resolve() calls = %d, want %d", got, want)
 	}
 
 	firstChunk := model.requests[1].Messages[0].TextContent().Text
@@ -135,7 +147,7 @@ func TestGeneratorReturnsContextOverflowForSingleTurn(t *testing.T) {
 
 	model := &checkpointModel{results: []modelResult{{err: kit.ErrContextLength}}}
 
-	generator, err := NewGenerator(model)
+	generator, err := NewGenerator(staticModelResolver{model})
 	if err != nil {
 		t.Fatalf("NewGenerator() error = %v", err)
 	}
@@ -161,7 +173,7 @@ func TestGeneratorShrinksRejectedChunks(t *testing.T) {
 		{response: checkpointResponse("four", kit.Usage{InputTokens: 1})},
 	}}
 
-	generator, err := NewGenerator(model)
+	generator, err := NewGenerator(staticModelResolver{model})
 	if err != nil {
 		t.Fatalf("NewGenerator() error = %v", err)
 	}
@@ -207,7 +219,9 @@ func TestGeneratorValidatesInputs(t *testing.T) {
 		t.Fatal("NewGenerator(nil) error = nil")
 	}
 
-	if _, err := NewGenerator(&checkpointModel{}); err != nil {
+	if _, err := NewGenerator(
+		staticModelResolver{&checkpointModel{}},
+	); err != nil {
 		t.Fatalf("NewGenerator() error = %v", err)
 	}
 }
@@ -248,6 +262,20 @@ func (m *checkpointModel) Stream(
 	return kit.NewStream(func(kit.Emitter[kit.ModelEvent]) (kit.ModelResponse, error) {
 		return m.Generate(ctx, request)
 	})
+}
+
+type staticModelResolver struct {
+	model kit.Model
+}
+
+func (r staticModelResolver) Resolve(context.Context) (kit.Model, error) {
+	return r.model, nil
+}
+
+type modelResolverFunc func(context.Context) (kit.Model, error)
+
+func (fn modelResolverFunc) Resolve(ctx context.Context) (kit.Model, error) {
+	return fn(ctx)
 }
 
 func checkpointResponse(summary string, usage kit.Usage) kit.ModelResponse {
