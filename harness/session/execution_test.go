@@ -42,7 +42,9 @@ func TestExecuteMaintainsContext(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	firstID, err := session.Execute(kit.NewUserMessage(kit.NewTextContent("first input")))
+	firstInput := kit.NewUserMessage(kit.NewTextContent("first input"))
+
+	firstID, err := session.Execute(firstInput)
 	if err != nil {
 		t.Fatalf("first Execute() error = %v", err)
 	}
@@ -96,6 +98,15 @@ func TestExecuteMaintainsContext(t *testing.T) {
 		if value.ExecutionID != secondID {
 			t.Fatalf("second execution entry %d ID = %q, want %q", i, value.ExecutionID, secondID)
 		}
+	}
+
+	var firstStarted ExecutionStarted
+	if err := json.Unmarshal(entries[0].Payload, &firstStarted); err != nil {
+		t.Fatalf("decode first started execution: %v", err)
+	}
+
+	if got, want := firstStarted.Input.Content[0].Text.Text, "first input"; got != want {
+		t.Fatalf("first execution input = %q, want %q", got, want)
 	}
 
 	var firstOutput kit.Message

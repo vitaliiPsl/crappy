@@ -32,7 +32,9 @@ const (
 	ExecutionInterrupted ExecutionOutcome = "interrupted"
 )
 
-type ExecutionStarted struct{}
+type ExecutionStarted struct {
+	Input kit.Message `json:"input"`
+}
 
 type ExecutionFinished struct {
 	Outcome   ExecutionOutcome `json:"outcome"`
@@ -79,7 +81,7 @@ func (s *Session) Execute(input kit.Message) (string, error) {
 		context.Background(),
 		executionID,
 		ExecutionStartedEntryType,
-		ExecutionStarted{},
+		ExecutionStarted{Input: input},
 	); err != nil {
 		cancel()
 
