@@ -3,10 +3,48 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
 )
+
+func TestLoadFileSeedsDefaults(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "nested", "config.yaml")
+
+	loaded, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile() error = %v", err)
+	}
+
+	if got, want := loaded.ProviderID, defaultProviderID; got != want {
+		t.Fatalf("ProviderID = %q, want %q", got, want)
+	}
+
+	if got, want := loaded.ModelID, defaultModelID; got != want {
+		t.Fatalf("ModelID = %q, want %q", got, want)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read seeded config: %v", err)
+	}
+
+	if !strings.Contains(string(data), "provider_id: "+defaultProviderID) {
+		t.Fatalf("seeded config = %q, want default provider", data)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat seeded config: %v", err)
+	}
+
+	if got, want := info.Mode().Perm(), os.FileMode(0o600); got != want {
+		t.Fatalf("mode = %o, want %o", got, want)
+	}
+}
 
 func TestLoadFile(t *testing.T) {
 	t.Parallel()

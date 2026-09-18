@@ -3,8 +3,46 @@ package settings
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestLoadFileSeedsDefaults(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "nested", "settings.yaml")
+
+	loaded, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile() error = %v", err)
+	}
+
+	if got, want := len(loaded.Providers), 3; got != want {
+		t.Fatalf("providers = %d, want %d", got, want)
+	}
+
+	if !filepath.IsAbs(loaded.ConfigPath) {
+		t.Fatalf("ConfigPath = %q, want absolute path", loaded.ConfigPath)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read seeded settings: %v", err)
+	}
+
+	if !strings.Contains(string(data), "config_path:") {
+		t.Fatalf("seeded settings = %q, want config path", data)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat seeded settings: %v", err)
+	}
+
+	if got, want := info.Mode().Perm(), os.FileMode(0o600); got != want {
+		t.Fatalf("mode = %o, want %o", got, want)
+	}
+}
 
 func TestLoadFile(t *testing.T) {
 	t.Parallel()

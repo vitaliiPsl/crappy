@@ -9,11 +9,35 @@ import (
 
 	"github.com/go-playground/validator/v10"
 	"gopkg.in/yaml.v3"
+
+	"github.com/vitaliipsl/crappy/internal/utils"
 )
 
 var validatorInstance = validator.New(validator.WithRequiredStructEnabled())
 
 func LoadFile(path string) (Config, error) {
+	value, err := loadFile(path)
+	if err == nil {
+		return value, nil
+	}
+
+	if !errors.Is(err, os.ErrNotExist) {
+		return Config{}, err
+	}
+
+	data, err := yaml.Marshal(defaults())
+	if err != nil {
+		return Config{}, fmt.Errorf("encode default config: %w", err)
+	}
+
+	if err := utils.SeedFile(path, data); err != nil {
+		return Config{}, fmt.Errorf("seed config: %w", err)
+	}
+
+	return loadFile(path)
+}
+
+func loadFile(path string) (Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return Config{}, fmt.Errorf("read config: %w", err)

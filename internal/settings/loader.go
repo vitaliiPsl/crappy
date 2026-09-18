@@ -11,6 +11,8 @@ import (
 
 	"github.com/go-playground/validator/v10"
 	"gopkg.in/yaml.v3"
+
+	"github.com/vitaliipsl/crappy/internal/utils"
 )
 
 var validatorInstance = validator.New(validator.WithRequiredStructEnabled())
@@ -30,6 +32,28 @@ func LoadFile(path string) (Settings, error) {
 		return Settings{}, fmt.Errorf("resolve settings path: %w", err)
 	}
 
+	value, err := loadFile(path)
+	if err == nil {
+		return value, nil
+	}
+
+	if !errors.Is(err, os.ErrNotExist) {
+		return Settings{}, err
+	}
+
+	data, err := yaml.Marshal(defaults())
+	if err != nil {
+		return Settings{}, fmt.Errorf("encode default settings: %w", err)
+	}
+
+	if err := utils.SeedFile(path, data); err != nil {
+		return Settings{}, fmt.Errorf("seed settings: %w", err)
+	}
+
+	return loadFile(path)
+}
+
+func loadFile(path string) (Settings, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return Settings{}, fmt.Errorf("read settings: %w", err)

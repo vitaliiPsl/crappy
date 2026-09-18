@@ -2,6 +2,11 @@ package config
 
 import "github.com/vitaliiPsl/crappy-adk/kit"
 
+const (
+	defaultProviderID = "openai"
+	defaultModelID    = "gpt-5.6-luna"
+)
+
 type Config struct {
 	Instructions string     `yaml:"instructions,omitempty"`
 	ProviderID   string     `yaml:"provider_id" validate:"required"`
@@ -28,4 +33,11 @@ func (c Config) AgentConfig() kit.AgentConfig {
 	}
 
 	return configured
+}
+
+func defaults() Config {
+	return Config{
+		ProviderID: defaultProviderID,
+		ModelID:    defaultModelID,
+	}
 }
