@@ -20,6 +20,8 @@ import (
 	"github.com/vitaliipsl/crappy/internal/model"
 	"github.com/vitaliipsl/crappy/internal/runtime"
 	"github.com/vitaliipsl/crappy/internal/settings"
+	"github.com/vitaliipsl/crappy/internal/tools/bash"
+	"github.com/vitaliipsl/crappy/internal/tools/filesystem"
 )
 
 func main() {
@@ -75,6 +77,8 @@ func newRuntime() (*runtime.Runtime, error) {
 	agents := agent.New(
 		config.AgentConfig(),
 		modelResolver,
+		agent.WithTools(bash.New()),
+		agent.WithTools(filesystem.New()...),
 		agent.WithContributors(automatic.New()),
 	)
 

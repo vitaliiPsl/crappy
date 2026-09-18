@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
-	"strings"
 
 	"github.com/go-playground/validator/v10"
 	"gopkg.in/yaml.v3"
@@ -27,7 +25,7 @@ func Load() (Settings, error) {
 }
 
 func LoadFile(path string) (Settings, error) {
-	path, err := resolvePath(path)
+	path, err := utils.ResolvePath(path)
 	if err != nil {
 		return Settings{}, fmt.Errorf("resolve settings path: %w", err)
 	}
@@ -68,7 +66,7 @@ func loadFile(path string) (Settings, error) {
 		return Settings{}, fmt.Errorf("validate settings: %w", err)
 	}
 
-	value.ConfigPath, err = resolvePathFromFile(path, value.ConfigPath)
+	value.ConfigPath, err = utils.ResolvePathFromFile(path, value.ConfigPath)
 	if err != nil {
 		return Settings{}, fmt.Errorf("resolve config path: %w", err)
 	}
@@ -94,48 +92,4 @@ func decode(data []byte, value any) error {
 	}
 
 	return nil
-}
-
-func resolvePath(path string) (string, error) {
-	path, err := expandHome(path)
-	if err != nil {
-		return "", err
-	}
-
-	path, err = filepath.Abs(path)
-	if err != nil {
-		return "", fmt.Errorf("make path absolute: %w", err)
-	}
-
-	return filepath.Clean(path), nil
-}
-
-func resolvePathFromFile(filePath, path string) (string, error) {
-	path, err := expandHome(path)
-	if err != nil {
-		return "", err
-	}
-
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(filepath.Dir(filePath), path)
-	}
-
-	return filepath.Clean(path), nil
-}
-
-func expandHome(path string) (string, error) {
-	if path != "~" && !strings.HasPrefix(path, "~/") {
-		return path, nil
-	}
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("get user home directory: %w", err)
-	}
-
-	if path == "~" {
-		return home, nil
-	}
-
-	return filepath.Join(home, strings.TrimPrefix(path, "~/")), nil
 }
