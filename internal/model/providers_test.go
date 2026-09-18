@@ -5,18 +5,14 @@ import (
 	"errors"
 	"strings"
 	"testing"
-
-	"github.com/vitaliipsl/crappy/internal/settings"
 )
 
-func TestRegistryFromSettingsPreservesLogicalProviderID(t *testing.T) {
+func TestRegistryPreservesLogicalProviderID(t *testing.T) {
 	t.Parallel()
 
-	registry, err := NewRegistryFromSettings(settings.Settings{
-		Providers: []settings.Provider{{ID: "work", API: "openai"}},
-	})
+	registry, err := NewRegistry([]Provider{{ID: "work", API: "openai"}})
 	if err != nil {
-		t.Fatalf("NewRegistryFromSettings() error = %v", err)
+		t.Fatalf("NewRegistry() error = %v", err)
 	}
 
 	resolved, err := registry.Resolve(context.Background(), "work", "model-id")
@@ -33,14 +29,12 @@ func TestRegistryFromSettingsPreservesLogicalProviderID(t *testing.T) {
 	}
 }
 
-func TestRegistryFromSettingsRejectsUnsupportedAPI(t *testing.T) {
+func TestRegistryRejectsUnsupportedAPI(t *testing.T) {
 	t.Parallel()
 
-	_, err := NewRegistryFromSettings(settings.Settings{
-		Providers: []settings.Provider{{ID: "provider", API: "unsupported"}},
-	})
+	_, err := NewRegistry([]Provider{{ID: "provider", API: "unsupported"}})
 	if err == nil || !strings.Contains(err.Error(), "unsupported API") {
-		t.Fatalf("NewRegistryFromSettings() error = %v, want unsupported API error", err)
+		t.Fatalf("NewRegistry() error = %v, want unsupported API error", err)
 	}
 }
 
@@ -49,15 +43,13 @@ func TestConfiguredAPIKeyEnvironmentVariableIsRequired(t *testing.T) {
 
 	t.Setenv(environmentVariable, "")
 
-	registry, err := NewRegistryFromSettings(settings.Settings{
-		Providers: []settings.Provider{{
-			ID:        "provider",
-			API:       "openai",
-			APIKeyEnv: environmentVariable,
-		}},
-	})
+	registry, err := NewRegistry([]Provider{{
+		ID:        "provider",
+		API:       "openai",
+		APIKeyEnv: environmentVariable,
+	}})
 	if err != nil {
-		t.Fatalf("NewRegistryFromSettings() error = %v", err)
+		t.Fatalf("NewRegistry() error = %v", err)
 	}
 
 	_, err = registry.Resolve(context.Background(), "provider", "model")
@@ -73,16 +65,14 @@ func TestConfiguredAPIKeyEnvironmentVariableIsRequired(t *testing.T) {
 func TestConfiguredAPIKeyTakesPrecedence(t *testing.T) {
 	t.Parallel()
 
-	registry, err := NewRegistryFromSettings(settings.Settings{
-		Providers: []settings.Provider{{
-			ID:        "provider",
-			API:       "openai",
-			APIKey:    "key",
-			APIKeyEnv: "CRAPPY_TEST_MISSING_API_KEY",
-		}},
-	})
+	registry, err := NewRegistry([]Provider{{
+		ID:        "provider",
+		API:       "openai",
+		APIKey:    "key",
+		APIKeyEnv: "CRAPPY_TEST_MISSING_API_KEY",
+	}})
 	if err != nil {
-		t.Fatalf("NewRegistryFromSettings() error = %v", err)
+		t.Fatalf("NewRegistry() error = %v", err)
 	}
 
 	if _, err := registry.Resolve(context.Background(), "provider", "model"); err != nil {

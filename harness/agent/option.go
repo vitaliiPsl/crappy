@@ -13,6 +13,12 @@ func WithTools(tools ...kit.Tool) Option {
 	}
 }
 
+func WithToolMiddleware(middleware ...ToolMiddleware) Option {
+	return func(factory *Factory) {
+		factory.toolMiddleware = append(factory.toolMiddleware, middleware...)
+	}
+}
+
 func WithAgentOptions(options ...adkagent.Option) Option {
 	return func(factory *Factory) {
 		factory.options = append(factory.options, options...)

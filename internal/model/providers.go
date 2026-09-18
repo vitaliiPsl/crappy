@@ -10,8 +10,6 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/providers/anthropic"
 	"github.com/vitaliiPsl/crappy-adk/providers/google"
 	"github.com/vitaliiPsl/crappy-adk/providers/openai"
-
-	"github.com/vitaliipsl/crappy/internal/settings"
 )
 
 type apiFactory func(string, ...adkprovider.ModelOption) (kit.Model, error)
@@ -22,10 +20,10 @@ var apis = map[string]apiFactory{
 	"openai":    openai.New,
 }
 
-func NewRegistryFromSettings(value settings.Settings) (*Registry, error) {
-	configured := make(map[string]ProviderFactory, len(value.Providers))
+func providerFactories(providers []Provider) (map[string]ProviderFactory, error) {
+	configured := make(map[string]ProviderFactory, len(providers))
 
-	for _, provider := range value.Providers {
+	for _, provider := range providers {
 		api, exists := apis[provider.API]
 		if !exists {
 			return nil, fmt.Errorf("provider %q: unsupported API %q", provider.ID, provider.API)
@@ -34,10 +32,10 @@ func NewRegistryFromSettings(value settings.Settings) (*Registry, error) {
 		configured[provider.ID] = newProviderFactory(provider, api)
 	}
 
-	return NewRegistry(configured)
+	return configured, nil
 }
 
-func newProviderFactory(provider settings.Provider, api apiFactory) ProviderFactory {
+func newProviderFactory(provider Provider, api apiFactory) ProviderFactory {
 	return ProviderFactoryFunc(func(
 		_ context.Context,
 		modelID string,

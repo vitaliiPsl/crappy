@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	adkagent "github.com/vitaliiPsl/crappy-adk/agent"
@@ -193,6 +194,43 @@ func TestFactoryBuildReturnsContributorError(t *testing.T) {
 	})
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("Build() error = %v, want %v", err, wantErr)
+	}
+}
+
+func TestFactoryAppliesToolMiddleware(t *testing.T) {
+	t.Parallel()
+
+	base := kittest.NewTool(t, "base", "Base capability")
+	contributed := kittest.NewTool(t, "contributed", "Contributed capability")
+
+	var wrapped []string
+
+	factory := New(
+		kit.AgentConfig{},
+		staticModelResolver{kittest.NewModel(t)},
+		WithTools(base),
+		WithContributors(ContributorFunc(func(
+			context.Context,
+			BuildContext,
+		) (Contribution, error) {
+			return Contribution{Tools: []kit.Tool{contributed}}, nil
+		})),
+		WithToolMiddleware(func(_ BuildContext, tool kit.Tool) (kit.Tool, error) {
+			wrapped = append(wrapped, tool.Definition().Name)
+
+			return tool, nil
+		}),
+	)
+
+	if _, err := factory.Build(context.Background(), BuildRequest{
+		Memory: memory.NewHistory(),
+	}); err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	want := []string{"base", "contributed"}
+	if !slices.Equal(wrapped, want) {
+		t.Fatalf("wrapped tools = %v, want %v", wrapped, want)
 	}
 }
 

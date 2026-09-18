@@ -1,5 +1,10 @@
 package settings
 
+import (
+	"github.com/vitaliipsl/crappy/internal/model"
+	"github.com/vitaliipsl/crappy/internal/tools"
+)
+
 const (
 	EnvPath           = "CRAPPY_SETTINGS"
 	DefaultPath       = "~/.crappy/settings.yaml"
@@ -7,22 +12,16 @@ const (
 )
 
 type Settings struct {
-	ConfigPath string     `yaml:"config_path,omitempty" validate:"required"`
-	Providers  []Provider `yaml:"providers" validate:"min=1,unique=ID,dive"`
-}
-
-type Provider struct {
-	ID        string `yaml:"id" validate:"required"`
-	API       string `yaml:"api" validate:"required"`
-	BaseURL   string `yaml:"base_url,omitempty"`
-	APIKey    string `yaml:"api_key,omitempty"`
-	APIKeyEnv string `yaml:"api_key_env,omitempty"`
+	ConfigPath string           `yaml:"config_path,omitempty" validate:"required"`
+	Tools      tools.Config     `yaml:"tools"`
+	Providers  []model.Provider `yaml:"providers" validate:"min=1,unique=ID,dive"`
 }
 
 func defaults() Settings {
 	return Settings{
 		ConfigPath: DefaultConfigPath,
-		Providers: []Provider{
+		Tools:      tools.DefaultConfig(),
+		Providers: []model.Provider{
 			{ID: "anthropic", API: "anthropic", APIKeyEnv: "ANTHROPIC_API_KEY"},
 			{ID: "google", API: "google", APIKeyEnv: "GOOGLE_API_KEY"},
 			{ID: "openai", API: "openai", APIKeyEnv: "OPENAI_API_KEY"},

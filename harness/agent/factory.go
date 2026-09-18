@@ -21,11 +21,12 @@ type ModelResolver interface {
 }
 
 type Factory struct {
-	config       kit.AgentConfig
-	models       ModelResolver
-	tools        []kit.Tool
-	options      []adkagent.Option
-	contributors []Contributor
+	config         kit.AgentConfig
+	models         ModelResolver
+	tools          []kit.Tool
+	toolMiddleware []ToolMiddleware
+	options        []adkagent.Option
+	contributors   []Contributor
 }
 
 func New(config kit.AgentConfig, models ModelResolver, options ...Option) *Factory {
@@ -48,6 +49,7 @@ func (f *Factory) Build(ctx context.Context, request BuildRequest) (kit.Agent, e
 	}
 
 	options := append(agentOptions(f.config), f.options...)
+	tools := append([]kit.Tool(nil), f.tools...)
 	build := BuildContext{
 		Request: request,
 		Model:   resolved,
@@ -63,16 +65,21 @@ func (f *Factory) Build(ctx context.Context, request BuildRequest) (kit.Agent, e
 			options = append(options, adkagent.WithInstructions(contribution.Instructions...))
 		}
 
-		if len(contribution.Tools) > 0 {
-			options = append(options, adkagent.WithTools(contribution.Tools...))
-		}
-
+		tools = append(tools, contribution.Tools...)
 		options = append(options, contribution.Options...)
 	}
 
-	tools := adktool.NewSet(f.tools...)
+	tools, err = wrapTools(build, tools, f.toolMiddleware)
+	if err != nil {
+		return nil, err
+	}
 
-	return adkagent.New(build.Model, build.Request.Memory, tools, options...)
+	return adkagent.New(
+		build.Model,
+		build.Request.Memory,
+		adktool.NewSet(tools...),
+		options...,
+	)
 }
 
 func agentOptions(config kit.AgentConfig) []adkagent.Option {

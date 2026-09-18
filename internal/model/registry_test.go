@@ -16,7 +16,7 @@ func TestRegistryResolvesProviderModels(t *testing.T) {
 	second := kittest.NewModel(t)
 	calls := make(map[string]int)
 
-	registry, err := NewRegistry(map[string]ProviderFactory{
+	registry, err := newRegistry(map[string]ProviderFactory{
 		"provider": ProviderFactoryFunc(func(
 			_ context.Context,
 			modelID string,
@@ -68,7 +68,7 @@ func TestRegistrySeparatesProviders(t *testing.T) {
 	first := kittest.NewModel(t)
 	second := kittest.NewModel(t)
 
-	registry, err := NewRegistry(map[string]ProviderFactory{
+	registry, err := newRegistry(map[string]ProviderFactory{
 		"first": ProviderFactoryFunc(func(context.Context, string) (kit.Model, error) {
 			return first, nil
 		}),
@@ -102,7 +102,7 @@ func TestRegistrySeparatesProviders(t *testing.T) {
 func TestRegistryRejectsUnknownProvider(t *testing.T) {
 	t.Parallel()
 
-	registry, err := NewRegistry(nil)
+	registry, err := newRegistry(nil)
 	if err != nil {
 		t.Fatalf("NewRegistry() error = %v", err)
 	}

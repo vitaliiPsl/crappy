@@ -20,6 +20,7 @@ import (
 	"github.com/vitaliipsl/crappy/internal/model"
 	"github.com/vitaliipsl/crappy/internal/runtime"
 	"github.com/vitaliipsl/crappy/internal/settings"
+	"github.com/vitaliipsl/crappy/internal/tools"
 	"github.com/vitaliipsl/crappy/internal/tools/bash"
 	"github.com/vitaliipsl/crappy/internal/tools/filesystem"
 )
@@ -62,7 +63,7 @@ func newRuntime() (*runtime.Runtime, error) {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
 
-	models, err := model.NewRegistryFromSettings(settings)
+	models, err := model.NewRegistry(settings.Providers)
 	if err != nil {
 		return nil, fmt.Errorf("create model registry: %w", err)
 	}
@@ -79,6 +80,7 @@ func newRuntime() (*runtime.Runtime, error) {
 		modelResolver,
 		agent.WithTools(bash.New()),
 		agent.WithTools(filesystem.New()...),
+		agent.WithToolMiddleware(tools.Timeout(settings.Tools)),
 		agent.WithContributors(automatic.New()),
 	)
 

@@ -14,7 +14,16 @@ type Registry struct {
 	providers map[string]ProviderFactory
 }
 
-func NewRegistry(providers map[string]ProviderFactory) (*Registry, error) {
+func NewRegistry(providers []Provider) (*Registry, error) {
+	configured, err := providerFactories(providers)
+	if err != nil {
+		return nil, err
+	}
+
+	return newRegistry(configured)
+}
+
+func newRegistry(providers map[string]ProviderFactory) (*Registry, error) {
 	registered := make(map[string]ProviderFactory, len(providers))
 	for id, factory := range providers {
 		if id == "" {

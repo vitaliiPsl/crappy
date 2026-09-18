@@ -14,7 +14,7 @@ func TestResolverUsesBoundModel(t *testing.T) {
 	firstModel := kittest.NewModel(t)
 	secondModel := kittest.NewModel(t)
 
-	registry, err := NewRegistry(map[string]ProviderFactory{
+	registry, err := newRegistry(map[string]ProviderFactory{
 		"first": ProviderFactoryFunc(func(context.Context, string) (kit.Model, error) {
 			return firstModel, nil
 		}),

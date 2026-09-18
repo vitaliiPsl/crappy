@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoadFileSeedsDefaults(t *testing.T) {
@@ -32,6 +33,10 @@ func TestLoadFileSeedsDefaults(t *testing.T) {
 
 	if !strings.Contains(string(data), "config_path:") {
 		t.Fatalf("seeded settings = %q, want config path", data)
+	}
+
+	if !strings.Contains(string(data), "timeout: 30s") {
+		t.Fatalf("seeded settings = %q, want tool timeout", data)
 	}
 
 	info, err := os.Stat(path)
@@ -65,6 +70,10 @@ providers:
 
 	if got, want := len(loaded.Providers), 2; got != want {
 		t.Fatalf("providers = %d, want %d", got, want)
+	}
+
+	if got, want := loaded.Tools.Timeout, 30*time.Second; got != want {
+		t.Fatalf("tool timeout = %v, want %v", got, want)
 	}
 
 	provider := loaded.Providers[0]
@@ -115,6 +124,24 @@ providers:
 
 	if _, err := LoadFile(path); err == nil {
 		t.Fatal("LoadFile() error = nil, want duplicate provider error")
+	}
+}
+
+func TestLoadFileRejectsInvalidToolTimeouts(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "settings.yaml")
+	writeSettings(t, path, `
+tools:
+  timeout: 2m
+  max_timeout: 1m
+providers:
+  - id: provider
+    api: openai
+`)
+
+	if _, err := LoadFile(path); err == nil {
+		t.Fatal("LoadFile() error = nil, want invalid tool timeout error")
 	}
 }
 
