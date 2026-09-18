@@ -53,7 +53,7 @@ providers:
   - id: work
     api: openai
     base_url: https://example.com/v1
-    api_key_env: WORK_API_KEY
+    api_key: work-key
   - id: personal
     api: anthropic
 `)
@@ -80,8 +80,8 @@ providers:
 		t.Fatalf("provider base URL = %q, want %q", got, want)
 	}
 
-	if got, want := provider.APIKeyEnv, "WORK_API_KEY"; got != want {
-		t.Fatalf("provider API key environment variable = %q, want %q", got, want)
+	if got, want := provider.APIKey, "work-key"; got != want {
+		t.Fatalf("provider API key = %q, want %q", got, want)
 	}
 }
 

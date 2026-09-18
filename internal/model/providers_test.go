@@ -69,3 +69,22 @@ func TestConfiguredAPIKeyEnvironmentVariableIsRequired(t *testing.T) {
 		t.Fatalf("Resolve() error = %v, want provider creation error", err)
 	}
 }
+
+func TestConfiguredAPIKeyIsUsedDirectly(t *testing.T) {
+	t.Parallel()
+
+	registry, err := NewRegistryFromSettings(settings.Settings{
+		Providers: []settings.Provider{{
+			ID:     "provider",
+			API:    "openai",
+			APIKey: "key",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("NewRegistryFromSettings() error = %v", err)
+	}
+
+	if _, err := registry.Resolve(context.Background(), "provider", "model"); err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+}

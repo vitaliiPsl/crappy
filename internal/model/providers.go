@@ -53,7 +53,9 @@ func newProviderFactory(provider settings.Provider, api apiFactory) ProviderFact
 			options = append(options, adkprovider.WithBaseURL(provider.BaseURL))
 		}
 
-		if provider.APIKeyEnv != "" {
+		if provider.APIKey != "" {
+			options = append(options, adkprovider.WithAPIKey(provider.APIKey))
+		} else if provider.APIKeyEnv != "" {
 			apiKey := os.Getenv(provider.APIKeyEnv)
 			if apiKey == "" {
 				return nil, fmt.Errorf("environment variable %s is not set", provider.APIKeyEnv)
