@@ -70,14 +70,15 @@ func TestConfiguredAPIKeyEnvironmentVariableIsRequired(t *testing.T) {
 	}
 }
 
-func TestConfiguredAPIKeyIsUsedDirectly(t *testing.T) {
+func TestConfiguredAPIKeyTakesPrecedence(t *testing.T) {
 	t.Parallel()
 
 	registry, err := NewRegistryFromSettings(settings.Settings{
 		Providers: []settings.Provider{{
-			ID:     "provider",
-			API:    "openai",
-			APIKey: "key",
+			ID:        "provider",
+			API:       "openai",
+			APIKey:    "key",
+			APIKeyEnv: "CRAPPY_TEST_MISSING_API_KEY",
 		}},
 	})
 	if err != nil {

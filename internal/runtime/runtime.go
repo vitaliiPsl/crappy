@@ -9,6 +9,7 @@ import (
 	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/checkpoint"
 	"github.com/vitaliipsl/crappy/harness/entry"
+	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/session"
 )
 
@@ -58,6 +59,19 @@ func (r *Runtime) Session(ctx context.Context, sessionID string) (*session.Sessi
 	r.sessions[sessionID] = opened
 
 	return opened, nil
+}
+
+func (r *Runtime) Subscribe(
+	ctx context.Context,
+	sessionID string,
+	afterEntryID uint64,
+) (*event.Subscription, error) {
+	opened, err := r.Session(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	return opened.Subscribe(ctx, afterEntryID)
 }
 
 func (r *Runtime) Execute(

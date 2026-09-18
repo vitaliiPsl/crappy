@@ -2,16 +2,20 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"github.com/google/uuid"
+
 	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/checkpoint"
 	"github.com/vitaliipsl/crappy/harness/checkpoint/automatic"
 	"github.com/vitaliipsl/crappy/harness/entry"
+	"github.com/vitaliipsl/crappy/internal/client/cli"
 	"github.com/vitaliipsl/crappy/internal/config"
 	"github.com/vitaliipsl/crappy/internal/model"
 	"github.com/vitaliipsl/crappy/internal/runtime"
@@ -26,7 +30,7 @@ func main() {
 	)
 	defer stop()
 
-	if err := run(ctx); err != nil {
+	if err := run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		log.Fatal(err)
 	}
 }
@@ -37,11 +41,12 @@ func run(ctx context.Context) error {
 		return err
 	}
 
-	_ = runtime
-
-	<-ctx.Done()
-
-	return nil
+	return cli.New(
+		runtime,
+		uuid.NewString(),
+		os.Stdin,
+		os.Stdout,
+	).Run(ctx)
 }
 
 func newRuntime() (*runtime.Runtime, error) {
