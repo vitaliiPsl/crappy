@@ -16,6 +16,7 @@ type State struct {
 }
 
 type Session struct {
+	ctx   context.Context
 	state State
 
 	entries     entry.Store
@@ -37,6 +38,7 @@ func New(
 	events := event.NewBus(state.ID, entries)
 
 	session := &Session{
+		ctx:         ctx,
 		state:       state,
 		entries:     entries,
 		events:      events,

@@ -56,10 +56,14 @@ func (s *Session) Execute(input kit.Message) (string, error) {
 		return "", ErrBusy
 	}
 
+	if err := s.reconcileExecutions(s.ctx); err != nil {
+		return "", fmt.Errorf("reconcile executions: %w", err)
+	}
+
 	executionID := uuid.NewString()
 	agentMemory := memory.New(s.state.ID, executionID, s.entries, s.events)
 
-	agent, err := s.agents.Build(context.Background(), agent.BuildRequest{
+	agent, err := s.agents.Build(s.ctx, agent.BuildRequest{
 		SessionID:   s.state.ID,
 		ExecutionID: executionID,
 		Memory:      agentMemory,
@@ -71,14 +75,14 @@ func (s *Session) Execute(input kit.Message) (string, error) {
 		return "", fmt.Errorf("build agent: %w", err)
 	}
 
-	executionContext, cancel := context.WithCancel(context.Background())
+	executionContext, cancel := context.WithCancel(s.ctx)
 	running := &execution{
 		id:     executionID,
 		cancel: cancel,
 	}
 
 	if err := s.Commit(
-		context.Background(),
+		s.ctx,
 		executionID,
 		ExecutionStartedEntryType,
 		ExecutionStarted{Input: input},

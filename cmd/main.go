@@ -90,6 +90,7 @@ func newRuntime(ctx context.Context) (*runtime.Runtime, error) {
 	}
 
 	return runtime.NewRuntime(
+		ctx,
 		storage.SessionStore(),
 		storage.EntryStore(),
 		agents,

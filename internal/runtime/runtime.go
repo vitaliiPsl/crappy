@@ -14,6 +14,8 @@ import (
 )
 
 type Runtime struct {
+	ctx context.Context
+
 	sessions    session.Store
 	entries     entry.Store
 	agents      *agent.Factory
@@ -24,12 +26,14 @@ type Runtime struct {
 }
 
 func NewRuntime(
+	ctx context.Context,
 	sessions session.Store,
 	entries entry.Store,
 	agents *agent.Factory,
 	checkpoints *checkpoint.Generator,
 ) *Runtime {
 	return &Runtime{
+		ctx:         ctx,
 		sessions:    sessions,
 		agents:      agents,
 		entries:     entries,
@@ -43,6 +47,10 @@ func (r *Runtime) Sessions(ctx context.Context) ([]session.State, error) {
 }
 
 func (r *Runtime) Session(ctx context.Context, sessionID string) (*session.Session, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -53,7 +61,7 @@ func (r *Runtime) Session(ctx context.Context, sessionID string) (*session.Sessi
 	state := session.State{ID: sessionID}
 
 	opened, err := session.New(
-		ctx,
+		r.ctx,
 		state,
 		r.entries,
 		r.agents,
@@ -92,4 +100,17 @@ func (r *Runtime) Execute(
 	}
 
 	return opened.Execute(input)
+}
+
+func (r *Runtime) Cancel(
+	ctx context.Context,
+	sessionID string,
+	executionID string,
+) error {
+	opened, err := r.Session(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+
+	return opened.Cancel(executionID)
 }

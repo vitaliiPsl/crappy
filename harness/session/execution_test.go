@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -303,6 +304,118 @@ func TestCancelActiveExecution(t *testing.T) {
 	}
 }
 
+func TestSessionLifetimeCancelsActiveExecution(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	model := &blockingModel{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+
+	session, err := New(
+		ctx,
+		State{ID: "session-1"},
+		entry.NewMemoryStore(),
+		agent.New(kit.AgentConfig{}, staticModelResolver{model}),
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	if _, err := session.Execute(kit.NewUserMessage(kit.NewTextContent("input"))); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	<-model.started
+	cancel()
+	waitSessionIdle(t, session)
+
+	entries, err := session.Entries(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("Entries() error = %v", err)
+	}
+
+	var finished ExecutionFinished
+	if err := json.Unmarshal(entries[len(entries)-1].Payload, &finished); err != nil {
+		t.Fatalf("decode finished execution: %v", err)
+	}
+
+	if finished.Outcome != ExecutionCancelled {
+		t.Fatalf("execution outcome = %q, want %q", finished.Outcome, ExecutionCancelled)
+	}
+}
+
+func TestExecuteReconcilesUnfinishedExecutionBeforeContinuing(t *testing.T) {
+	t.Parallel()
+
+	store := &finishFailingStore{
+		Store: entry.NewMemoryStore(),
+		err:   errors.New("storage unavailable"),
+	}
+	store.failing.Store(true)
+
+	model := kittest.NewModel(t,
+		kittest.ModelResult{Response: kit.ModelResponse{
+			Message:      kit.NewModelMessage(kit.NewTextContent("first")),
+			FinishReason: kit.FinishReasonStop,
+		}},
+		kittest.ModelResult{Response: kit.ModelResponse{
+			Message:      kit.NewModelMessage(kit.NewTextContent("second")),
+			FinishReason: kit.FinishReasonStop,
+		}},
+	)
+
+	session, err := New(
+		context.Background(),
+		State{ID: "session-1"},
+		store,
+		agent.New(kit.AgentConfig{}, staticModelResolver{model}),
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	if _, err := session.Execute(kit.NewUserMessage(kit.NewTextContent("input"))); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	waitSessionIdle(t, session)
+
+	if _, err := session.Execute(kit.NewUserMessage(kit.NewTextContent("again"))); !errors.Is(err, store.err) {
+		t.Fatalf("Execute() while storage unavailable error = %v, want %v", err, store.err)
+	}
+
+	store.failing.Store(false)
+
+	secondID, err := session.Execute(kit.NewUserMessage(kit.NewTextContent("again")))
+	if err != nil {
+		t.Fatalf("Execute() after storage recovery error = %v", err)
+	}
+
+	waitSessionIdle(t, session)
+
+	entries, err := session.Entries(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("Entries() error = %v", err)
+	}
+
+	var interrupted ExecutionFinished
+	if err := json.Unmarshal(entries[3].Payload, &interrupted); err != nil {
+		t.Fatalf("decode interrupted execution: %v", err)
+	}
+
+	if interrupted.Outcome != ExecutionInterrupted {
+		t.Fatalf("reconciled outcome = %q, want %q", interrupted.Outcome, ExecutionInterrupted)
+	}
+
+	if entries[4].ExecutionID != secondID || entries[4].Type != ExecutionStartedEntryType {
+		t.Fatalf("next execution entry = %#v", entries[4])
+	}
+}
+
 func TestRunExecutionReconcilesToolsBeforeCancellation(t *testing.T) {
 	t.Parallel()
 
@@ -402,6 +515,26 @@ type blockingModel struct {
 }
 
 type interruptedAgent struct{}
+
+type finishFailingStore struct {
+	entry.Store
+	err     error
+	failing atomic.Bool
+}
+
+func (s *finishFailingStore) Append(
+	ctx context.Context,
+	sessionID string,
+	entries ...entry.Entry,
+) ([]entry.Entry, error) {
+	for _, current := range entries {
+		if current.Type == ExecutionFinishedEntryType && s.failing.Load() {
+			return nil, s.err
+		}
+	}
+
+	return s.Store.Append(ctx, sessionID, entries...)
+}
 
 func (interruptedAgent) Run(context.Context, kit.Message) (kit.AgentResponse, error) {
 	return kit.AgentResponse{}, context.Canceled

@@ -16,6 +16,7 @@ func TestRuntimeOwnsSession(t *testing.T) {
 	t.Parallel()
 
 	runtime := NewRuntime(
+		context.Background(),
 		staticSessionStore{},
 		entry.NewMemoryStore(),
 		agent.New(kit.AgentConfig{}, staticModelResolver{kittest.NewModel(t)}),
@@ -42,6 +43,7 @@ func TestRuntimeListsStoredSessions(t *testing.T) {
 
 	want := []session.State{{ID: "session-1"}}
 	runtime := NewRuntime(
+		context.Background(),
 		staticSessionStore{states: want},
 		entry.NewMemoryStore(),
 		agent.New(kit.AgentConfig{}, staticModelResolver{kittest.NewModel(t)}),

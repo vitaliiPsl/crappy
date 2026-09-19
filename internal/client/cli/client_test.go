@@ -28,6 +28,7 @@ func TestClientRunsSession(t *testing.T) {
 		},
 	})
 	runtime := runtime.NewRuntime(
+		context.Background(),
 		emptySessionStore{},
 		entry.NewMemoryStore(),
 		agent.New(kit.AgentConfig{}, staticModelResolver{model}),
