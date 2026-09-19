@@ -22,6 +22,7 @@ func NewMemoryStore() *MemoryStore {
 
 func (s *MemoryStore) Append(
 	ctx context.Context,
+	sessionID string,
 	entries ...Entry,
 ) ([]Entry, error) {
 	if err := ctx.Err(); err != nil {
@@ -30,6 +31,7 @@ func (s *MemoryStore) Append(
 
 	prepared := make([]Entry, len(entries))
 	for i, entry := range entries {
+		entry.SessionID = sessionID
 		entry.Payload = clonePayload(entry.Payload)
 		prepared[i] = entry
 	}
@@ -41,23 +43,13 @@ func (s *MemoryStore) Append(
 		return nil, err
 	}
 
-	nextIDs := make(map[string]uint64)
+	nextID := uint64(len(s.entries[sessionID])) + 1
 	for i := range prepared {
-		sessionID := prepared[i].SessionID
-
-		nextID, ok := nextIDs[sessionID]
-		if !ok {
-			nextID = uint64(len(s.entries[sessionID])) + 1
-		}
-
-		prepared[i].ID = nextID
+		prepared[i].ID = nextID + uint64(i)
 		prepared[i].CreatedAt = time.Now().UTC()
-		nextIDs[sessionID] = nextID + 1
 	}
 
-	for _, entry := range prepared {
-		s.entries[entry.SessionID] = append(s.entries[entry.SessionID], entry)
-	}
+	s.entries[sessionID] = append(s.entries[sessionID], prepared...)
 
 	return cloneEntries(prepared), nil
 }

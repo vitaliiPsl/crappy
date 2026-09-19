@@ -96,7 +96,7 @@ func (b *Bus) Commit(
 		}
 	}
 
-	appended, err := b.entries.Append(ctx, entries...)
+	appended, err := b.entries.Append(ctx, b.sessionID, entries...)
 	if err != nil {
 		return err
 	}

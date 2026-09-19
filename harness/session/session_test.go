@@ -38,25 +38,26 @@ func TestSessionEntries(t *testing.T) {
 
 	store := entry.NewMemoryStore()
 
-	_, err := store.Append(context.Background(),
+	_, err := store.Append(context.Background(), "session-1",
 		entry.Entry{
-			SessionID: "session-1",
-			Type:      "message",
-			Payload:   json.RawMessage(`{"text":"first"}`),
+			Type:    "message",
+			Payload: json.RawMessage(`{"text":"first"}`),
 		},
 		entry.Entry{
-			SessionID: "session-1",
-			Type:      "message",
-			Payload:   json.RawMessage(`{"text":"second"}`),
-		},
-		entry.Entry{
-			SessionID: "session-2",
-			Type:      "message",
-			Payload:   json.RawMessage(`{"text":"other"}`),
+			Type:    "message",
+			Payload: json.RawMessage(`{"text":"second"}`),
 		},
 	)
 	if err != nil {
 		t.Fatalf("Append() error = %v", err)
+	}
+
+	_, err = store.Append(context.Background(), "session-2", entry.Entry{
+		Type:    "message",
+		Payload: json.RawMessage(`{"text":"other"}`),
+	})
+	if err != nil {
+		t.Fatalf("Append() other session error = %v", err)
 	}
 
 	session, err := New(context.Background(), State{ID: "session-1"}, store, nil, nil)
@@ -83,10 +84,9 @@ func TestSubscribeReplaysEntries(t *testing.T) {
 
 	store := entry.NewMemoryStore()
 
-	_, err := store.Append(context.Background(), entry.Entry{
-		SessionID: "session-1",
-		Type:      "test.entry",
-		Payload:   json.RawMessage(`{"value":1}`),
+	_, err := store.Append(context.Background(), "session-1", entry.Entry{
+		Type:    "test.entry",
+		Payload: json.RawMessage(`{"value":1}`),
 	})
 	if err != nil {
 		t.Fatalf("Append() error = %v", err)

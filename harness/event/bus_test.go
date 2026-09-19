@@ -99,10 +99,9 @@ func TestBusSubscribeReplaysEntries(t *testing.T) {
 
 	entries := entry.NewMemoryStore()
 
-	appended, err := entries.Append(context.Background(), entry.Entry{
-		SessionID: "session-1",
-		Type:      "test.entry",
-		Payload:   json.RawMessage(`{"value":1}`),
+	appended, err := entries.Append(context.Background(), "session-1", entry.Entry{
+		Type:    "test.entry",
+		Payload: json.RawMessage(`{"value":1}`),
 	})
 	if err != nil {
 		t.Fatalf("Append() error = %v", err)

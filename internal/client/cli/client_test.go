@@ -11,6 +11,7 @@ import (
 
 	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/entry"
+	"github.com/vitaliipsl/crappy/harness/session"
 	"github.com/vitaliipsl/crappy/internal/runtime"
 )
 
@@ -27,6 +28,7 @@ func TestClientRunsSession(t *testing.T) {
 		},
 	})
 	runtime := runtime.NewRuntime(
+		emptySessionStore{},
 		entry.NewMemoryStore(),
 		agent.New(kit.AgentConfig{}, staticModelResolver{model}),
 		nil,
@@ -47,6 +49,12 @@ func TestClientRunsSession(t *testing.T) {
 	if got := output.String(); !strings.Contains(got, "hello") {
 		t.Fatalf("output = %q, want agent response", got)
 	}
+}
+
+type emptySessionStore struct{}
+
+func (emptySessionStore) List(context.Context) ([]session.State, error) {
+	return nil, nil
 }
 
 type staticModelResolver struct {

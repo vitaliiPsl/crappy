@@ -71,6 +71,11 @@ func loadFile(path string) (Settings, error) {
 		return Settings{}, fmt.Errorf("resolve config path: %w", err)
 	}
 
+	value.SessionsPath, err = utils.ResolvePathFromFile(path, value.SessionsPath)
+	if err != nil {
+		return Settings{}, fmt.Errorf("resolve sessions path: %w", err)
+	}
+
 	return value, nil
 }
 

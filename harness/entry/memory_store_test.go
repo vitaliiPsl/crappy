@@ -14,20 +14,18 @@ func TestMemoryStoreAppendAndList(t *testing.T) {
 	store := NewMemoryStore()
 	input := []Entry{
 		{
-			SessionID:   "session-1",
 			ExecutionID: "execution-1",
 			Type:        "user.message",
 			Payload:     json.RawMessage(`{"text":"hello"}`),
 		},
 		{
-			SessionID:   "session-1",
 			ExecutionID: "execution-1",
 			Type:        "assistant.message",
 			Payload:     json.RawMessage(`{"text":"hi"}`),
 		},
 	}
 
-	appended, err := store.Append(context.Background(), input...)
+	appended, err := store.Append(context.Background(), "session-1", input...)
 	if err != nil {
 		t.Fatalf("Append() error = %v", err)
 	}
@@ -65,13 +63,12 @@ func TestMemoryStoreKeepsSessionsSeparate(t *testing.T) {
 
 	store := NewMemoryStore()
 
-	entry := Entry{SessionID: "session-1", Type: "checkpoint", Payload: json.RawMessage(`{}`)}
-	if _, err := store.Append(context.Background(), entry); err != nil {
+	entry := Entry{Type: "checkpoint", Payload: json.RawMessage(`{}`)}
+	if _, err := store.Append(context.Background(), "session-1", entry); err != nil {
 		t.Fatalf("Append(session-1) error = %v", err)
 	}
 
-	entry.SessionID = "session-2"
-	if _, err := store.Append(context.Background(), entry); err != nil {
+	if _, err := store.Append(context.Background(), "session-2", entry); err != nil {
 		t.Fatalf("Append(session-2) error = %v", err)
 	}
 
@@ -97,10 +94,9 @@ func TestMemoryStoreOwnsPayloads(t *testing.T) {
 	store := NewMemoryStore()
 	payload := json.RawMessage(`{"value":1}`)
 
-	appended, err := store.Append(context.Background(), Entry{
-		SessionID: "session-1",
-		Type:      "value.changed",
-		Payload:   payload,
+	appended, err := store.Append(context.Background(), "session-1", Entry{
+		Type:    "value.changed",
+		Payload: payload,
 	})
 	if err != nil {
 		t.Fatalf("Append() error = %v", err)
@@ -137,7 +133,7 @@ func TestMemoryStoreHonorsCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if _, err := store.Append(ctx, Entry{SessionID: "session-1"}); !errors.Is(err, context.Canceled) {
+	if _, err := store.Append(ctx, "session-1", Entry{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Append() error = %v, want context.Canceled", err)
 	}
 
@@ -160,10 +156,9 @@ func TestMemoryStoreConcurrentAppend(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			_, err := store.Append(context.Background(), Entry{
-				SessionID: "session-1",
-				Type:      "test.entry",
-				Payload:   json.RawMessage(`{}`),
+			_, err := store.Append(context.Background(), "session-1", Entry{
+				Type:    "test.entry",
+				Payload: json.RawMessage(`{}`),
 			})
 			if err != nil {
 				t.Errorf("Append() error = %v", err)

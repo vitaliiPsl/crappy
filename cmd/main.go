@@ -14,12 +14,12 @@ import (
 	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/checkpoint"
 	"github.com/vitaliipsl/crappy/harness/checkpoint/automatic"
-	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/internal/client/cli"
 	"github.com/vitaliipsl/crappy/internal/config"
 	"github.com/vitaliipsl/crappy/internal/model"
 	"github.com/vitaliipsl/crappy/internal/runtime"
 	"github.com/vitaliipsl/crappy/internal/settings"
+	"github.com/vitaliipsl/crappy/internal/storage/jsonl"
 	"github.com/vitaliipsl/crappy/internal/tools"
 	"github.com/vitaliipsl/crappy/internal/tools/bash"
 	"github.com/vitaliipsl/crappy/internal/tools/filesystem"
@@ -39,7 +39,7 @@ func main() {
 }
 
 func run(ctx context.Context) error {
-	runtime, err := newRuntime()
+	runtime, err := newRuntime(ctx)
 	if err != nil {
 		return err
 	}
@@ -52,7 +52,7 @@ func run(ctx context.Context) error {
 	).Run(ctx)
 }
 
-func newRuntime() (*runtime.Runtime, error) {
+func newRuntime(ctx context.Context) (*runtime.Runtime, error) {
 	settings, err := settings.Load()
 	if err != nil {
 		return nil, fmt.Errorf("load settings: %w", err)
@@ -84,8 +84,14 @@ func newRuntime() (*runtime.Runtime, error) {
 		agent.WithContributors(automatic.New()),
 	)
 
+	storage, err := jsonl.Open(ctx, settings.SessionsPath)
+	if err != nil {
+		return nil, fmt.Errorf("open session storage: %w", err)
+	}
+
 	return runtime.NewRuntime(
-		entry.NewMemoryStore(),
+		storage.SessionStore(),
+		storage.EntryStore(),
 		agents,
 		generator,
 	), nil

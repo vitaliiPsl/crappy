@@ -6,21 +6,24 @@ import (
 )
 
 const (
-	EnvPath           = "CRAPPY_SETTINGS"
-	DefaultPath       = "~/.crappy/settings.yaml"
-	DefaultConfigPath = "~/.crappy/config.yaml"
+	EnvPath             = "CRAPPY_SETTINGS"
+	DefaultPath         = "~/.crappy/settings.yaml"
+	DefaultConfigPath   = "~/.crappy/config.yaml"
+	DefaultSessionsPath = "~/.crappy/sessions"
 )
 
 type Settings struct {
-	ConfigPath string           `yaml:"config_path,omitempty" validate:"required"`
-	Tools      tools.Config     `yaml:"tools"`
-	Providers  []model.Provider `yaml:"providers" validate:"min=1,unique=ID,dive"`
+	ConfigPath   string           `yaml:"config_path,omitempty" validate:"required"`
+	SessionsPath string           `yaml:"sessions_path,omitempty" validate:"required"`
+	Tools        tools.Config     `yaml:"tools"`
+	Providers    []model.Provider `yaml:"providers" validate:"min=1,unique=ID,dive"`
 }
 
 func defaults() Settings {
 	return Settings{
-		ConfigPath: DefaultConfigPath,
-		Tools:      tools.DefaultConfig(),
+		ConfigPath:   DefaultConfigPath,
+		SessionsPath: DefaultSessionsPath,
+		Tools:        tools.DefaultConfig(),
 		Providers: []model.Provider{
 			{ID: "anthropic", API: "anthropic", APIKeyEnv: "ANTHROPIC_API_KEY"},
 			{ID: "google", API: "google", APIKeyEnv: "GOOGLE_API_KEY"},

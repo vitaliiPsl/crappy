@@ -14,32 +14,39 @@ import (
 )
 
 type Runtime struct {
+	sessions    session.Store
 	entries     entry.Store
 	agents      *agent.Factory
 	checkpoints *checkpoint.Generator
 
-	mu       sync.Mutex
-	sessions map[string]*session.Session
+	mu     sync.Mutex
+	opened map[string]*session.Session
 }
 
 func NewRuntime(
+	sessions session.Store,
 	entries entry.Store,
 	agents *agent.Factory,
 	checkpoints *checkpoint.Generator,
 ) *Runtime {
 	return &Runtime{
+		sessions:    sessions,
 		agents:      agents,
 		entries:     entries,
 		checkpoints: checkpoints,
-		sessions:    make(map[string]*session.Session),
+		opened:      make(map[string]*session.Session),
 	}
+}
+
+func (r *Runtime) Sessions(ctx context.Context) ([]session.State, error) {
+	return r.sessions.List(ctx)
 }
 
 func (r *Runtime) Session(ctx context.Context, sessionID string) (*session.Session, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if existing := r.sessions[sessionID]; existing != nil {
+	if existing := r.opened[sessionID]; existing != nil {
 		return existing, nil
 	}
 
@@ -56,7 +63,7 @@ func (r *Runtime) Session(ctx context.Context, sessionID string) (*session.Sessi
 		return nil, err
 	}
 
-	r.sessions[sessionID] = opened
+	r.opened[sessionID] = opened
 
 	return opened, nil
 }

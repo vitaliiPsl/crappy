@@ -26,6 +26,10 @@ func TestLoadFileSeedsDefaults(t *testing.T) {
 		t.Fatalf("ConfigPath = %q, want absolute path", loaded.ConfigPath)
 	}
 
+	if !filepath.IsAbs(loaded.SessionsPath) {
+		t.Fatalf("SessionsPath = %q, want absolute path", loaded.SessionsPath)
+	}
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read seeded settings: %v", err)
@@ -33,6 +37,10 @@ func TestLoadFileSeedsDefaults(t *testing.T) {
 
 	if !strings.Contains(string(data), "config_path:") {
 		t.Fatalf("seeded settings = %q, want config path", data)
+	}
+
+	if !strings.Contains(string(data), "sessions_path:") {
+		t.Fatalf("seeded settings = %q, want sessions path", data)
 	}
 
 	if !strings.Contains(string(data), "timeout: 30s") {
@@ -145,13 +153,14 @@ providers:
 	}
 }
 
-func TestLoadFileResolvesConfigPathRelativeToSettings(t *testing.T) {
+func TestLoadFileResolvesPathsRelativeToSettings(t *testing.T) {
 	t.Parallel()
 
 	directory := t.TempDir()
 	path := filepath.Join(directory, "settings.yaml")
 	writeSettings(t, path, `
 config_path: config/config.yaml
+sessions_path: data/sessions
 providers:
   - id: provider
     api: openai
@@ -165,6 +174,11 @@ providers:
 	want := filepath.Join(directory, "config", "config.yaml")
 	if loaded.ConfigPath != want {
 		t.Fatalf("ConfigPath = %q, want %q", loaded.ConfigPath, want)
+	}
+
+	want = filepath.Join(directory, "data", "sessions")
+	if loaded.SessionsPath != want {
+		t.Fatalf("SessionsPath = %q, want %q", loaded.SessionsPath, want)
 	}
 }
 

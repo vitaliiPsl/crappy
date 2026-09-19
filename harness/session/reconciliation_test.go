@@ -17,14 +17,13 @@ func TestNewReconcilesUnfinishedExecution(t *testing.T) {
 
 	_, err := store.Append(
 		context.Background(),
+		"session-1",
 		entry.Entry{
-			SessionID:   "session-1",
 			ExecutionID: "execution-1",
 			Type:        ExecutionStartedEntryType,
 			Payload:     json.RawMessage(`{}`),
 		},
 		entry.Entry{
-			SessionID:   "session-1",
 			ExecutionID: "execution-1",
 			Type:        "message",
 			Payload:     json.RawMessage(`{}`),
@@ -77,14 +76,13 @@ func TestNewDoesNotReconcileFinishedExecution(t *testing.T) {
 
 	_, err := store.Append(
 		context.Background(),
+		"session-1",
 		entry.Entry{
-			SessionID:   "session-1",
 			ExecutionID: "execution-1",
 			Type:        ExecutionStartedEntryType,
 			Payload:     json.RawMessage(`{}`),
 		},
 		entry.Entry{
-			SessionID:   "session-1",
 			ExecutionID: "execution-1",
 			Type:        ExecutionFinishedEntryType,
 			Payload:     json.RawMessage(`{"outcome":"completed"}`),
@@ -142,20 +140,18 @@ func TestNewReconcilesMissingToolResults(t *testing.T) {
 
 	_, err = store.Append(
 		context.Background(),
+		"session-1",
 		entry.Entry{
-			SessionID:   "session-1",
 			ExecutionID: "execution-1",
 			Type:        ExecutionStartedEntryType,
 			Payload:     json.RawMessage(`{}`),
 		},
 		entry.Entry{
-			SessionID:   "session-1",
 			ExecutionID: "execution-1",
 			Type:        "message",
 			Payload:     modelPayload,
 		},
 		entry.Entry{
-			SessionID:   "session-1",
 			ExecutionID: "execution-1",
 			Type:        "message",
 			Payload:     resultPayload,
