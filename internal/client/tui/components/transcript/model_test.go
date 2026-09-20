@@ -18,3 +18,17 @@ func TestDurableMessageReplacesStream(t *testing.T) {
 		t.Fatalf("view = %q, want only durable response", view)
 	}
 }
+
+func TestToolCallAndResultRenderTogether(t *testing.T) {
+	call := kit.NewToolCall("call-1", "bash", map[string]any{"command": "go test ./..."})
+	result := kit.NewToolResult(call, kit.ToolOutput{}, nil)
+	model := New()
+	model.SetSize(80, 20)
+	model.Append(kit.NewModelMessage(kit.NewToolCallContent(call)))
+	model.Append(kit.NewToolMessage(kit.NewToolResultContent(result)))
+
+	view := model.View()
+	if strings.Count(view, "bash") != 1 || !strings.Contains(view, "go test ./...") {
+		t.Fatalf("view = %q, want paired tool call and result", view)
+	}
+}

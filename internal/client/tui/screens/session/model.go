@@ -2,7 +2,6 @@ package session
 
 import (
 	"context"
-	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -83,12 +82,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) View() tea.View {
-	return tea.NewView(strings.Join([]string{
-		m.sessionID,
-		m.transcript.View(),
-		m.status(),
-		m.composer.View(),
-	}, "\n"))
+	return tea.NewView(m.render())
 }
 
 func (m *Model) Close() {

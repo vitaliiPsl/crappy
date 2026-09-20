@@ -5,6 +5,16 @@ import (
 
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+)
+
+const (
+	composerPrompt      = "> "
+	composerPlaceholder = "Type a message… Enter to send"
+	composerMinHeight   = 1
+	composerMaxHeight   = 8
+	composerPaddingX    = 1
+	composerPaddingY    = 1
 )
 
 type Submit struct {
@@ -13,16 +23,25 @@ type Submit struct {
 
 type Model struct {
 	input textarea.Model
+	width int
 }
 
 func New() Model {
 	input := textarea.New()
-	input.Prompt = "> "
-	input.Placeholder = "Type a message..."
+	input.Prompt = composerPrompt
+	input.Placeholder = composerPlaceholder
 	input.ShowLineNumbers = false
 	input.DynamicHeight = true
-	input.MinHeight = 1
-	input.MaxHeight = 8
+	input.MinHeight = composerMinHeight
+	input.MaxHeight = composerMaxHeight
+	input.SetPromptFunc(len(composerPrompt), func(info textarea.PromptInfo) string {
+		if info.LineNumber == 0 {
+			return composerPrompt
+		}
+
+		return ""
+	})
+	input.SetStyles(composerStyles(input.Styles()))
 
 	return Model{input: input}
 }
@@ -54,15 +73,21 @@ func (m *Model) Update(message tea.Msg) tea.Cmd {
 }
 
 func (m Model) View() string {
-	return strings.TrimRight(m.input.View(), "\n")
+	body := strings.TrimRight(m.input.View(), "\n")
+
+	return composerStyle.
+		Width(max(m.width, 1)).
+		Padding(composerPaddingY, composerPaddingX).
+		Render(body)
 }
 
 func (m Model) Height() int {
-	return m.input.Height()
+	return lipgloss.Height(m.View())
 }
 
 func (m *Model) SetWidth(width int) {
-	m.input.SetWidth(max(width, 1))
+	m.width = max(width, 1)
+	m.input.SetWidth(max(m.width-composerPaddingX*2, 1))
 }
 
 func (m *Model) Reset() {

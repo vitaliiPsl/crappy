@@ -5,6 +5,7 @@ import (
 
 	"github.com/vitaliipsl/crappy/internal/client/tui/navigation"
 	"github.com/vitaliipsl/crappy/internal/client/tui/routes"
+	"github.com/vitaliipsl/crappy/internal/client/tui/theme"
 )
 
 type model struct {
@@ -46,6 +47,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) View() tea.View {
 	view := m.navigator.View()
 	view.AltScreen = true
+	view.ForegroundColor = theme.Default.Text
 	view.MouseMode = tea.MouseModeCellMotion
 
 	return view

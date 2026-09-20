@@ -1,8 +1,37 @@
 package session
 
+import (
+	"strings"
+
+	"charm.land/lipgloss/v2"
+)
+
+func (m *Model) render() string {
+	parts := []string{transcriptAreaStyle.Render(m.transcript.View())}
+	if status := m.statusView(); status != "" {
+		parts = append(parts, status)
+	}
+
+	parts = append(parts, m.composer.View())
+
+	return pageStyle.Render(strings.Join(parts, "\n"))
+}
+
 func (m *Model) resize() {
-	m.composer.SetWidth(m.width)
-	m.transcript.SetSize(m.width, max(m.height-m.composer.Height()-2, 1))
+	width := m.contentWidth()
+	m.composer.SetWidth(width)
+
+	statusHeight := 0
+	if status := m.statusView(); status != "" {
+		statusHeight = lipgloss.Height(status)
+	}
+
+	transcriptHeight := m.height -
+		pageStyle.GetVerticalFrameSize() -
+		transcriptAreaStyle.GetVerticalFrameSize() -
+		m.composer.Height() -
+		statusHeight
+	m.transcript.SetSize(width, max(transcriptHeight, 1))
 }
 
 func (m *Model) status() string {
@@ -11,4 +40,17 @@ func (m *Model) status() string {
 	}
 
 	return ""
+}
+
+func (m *Model) statusView() string {
+	status := m.status()
+	if status == "" {
+		return ""
+	}
+
+	return errorStyle.Width(m.contentWidth()).Render(status)
+}
+
+func (m *Model) contentWidth() int {
+	return max(m.width-pageStyle.GetHorizontalFrameSize(), 1)
 }

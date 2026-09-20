@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
@@ -39,7 +40,17 @@ func TestEventsUpdateTranscript(t *testing.T) {
 	})
 
 	view := model.View().Content
-	if !strings.Contains(view, "You: hello") || !strings.Contains(view, "world") {
+	if !strings.Contains(view, "hello") || !strings.Contains(view, "world") {
 		t.Fatalf("view = %q, want durable and streaming messages", view)
+	}
+}
+
+func TestViewFitsWindow(t *testing.T) {
+	model := New(context.Background(), nil, "session-1")
+	model.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+
+	view := model.View().Content
+	if width, height := lipgloss.Width(view), lipgloss.Height(view); width != 80 || height != 20 {
+		t.Fatalf("view = %dx%d, want 80x20", width, height)
 	}
 }

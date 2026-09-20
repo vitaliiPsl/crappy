@@ -5,6 +5,7 @@ go 1.26.2
 require (
 	charm.land/bubbles/v2 v2.1.0
 	charm.land/bubbletea/v2 v2.0.6
+	charm.land/lipgloss/v2 v2.0.2
 	github.com/go-playground/validator/v10 v10.25.0
 	github.com/google/uuid v1.6.0
 	github.com/vitaliiPsl/crappy-adk v0.11.0
@@ -12,7 +13,6 @@ require (
 )
 
 require (
-	charm.land/lipgloss/v2 v2.0.2 // indirect
 	cloud.google.com/go v0.116.0 // indirect
 	cloud.google.com/go/auth v0.9.3 // indirect
 	cloud.google.com/go/compute/metadata v0.5.0 // indirect

@@ -8,17 +8,20 @@ import (
 )
 
 type Model struct {
-	viewport  viewport.Model
-	messages  []kit.Message
-	streaming []kit.Content
-	active    int
+	viewport   viewport.Model
+	projection projection
+	width      int
+	height     int
 }
 
 func New() Model {
 	viewport := viewport.New()
 	viewport.SoftWrap = true
 
-	return Model{viewport: viewport, active: -1}
+	return Model{
+		viewport:   viewport,
+		projection: newProjection(),
+	}
 }
 
 func (m *Model) Update(message tea.Msg) tea.Cmd {
@@ -34,18 +37,35 @@ func (m Model) View() string {
 }
 
 func (m *Model) SetSize(width, height int) {
-	m.viewport.SetWidth(max(width, 1))
-	m.viewport.SetHeight(max(height, 1))
+	follow := m.viewport.AtBottom()
+
+	m.width = max(width, 1)
+	m.height = max(height, 1)
+	m.viewport.SetWidth(m.width)
+	m.viewport.SetHeight(m.height)
 	m.refresh()
+
+	if follow {
+		m.viewport.GotoBottom()
+	}
 }
 
 func (m *Model) Append(message kit.Message) {
-	if message.Role == kit.RoleModel {
-		m.streaming = nil
-		m.active = -1
-	}
+	m.projection.append(message)
+	m.refreshAndFollow()
+}
 
-	m.messages = append(m.messages, message)
+func (m *Model) Apply(event kit.AgentEvent) {
+	m.projection.apply(event)
+
+	m.refreshAndFollow()
+}
+
+func (m *Model) refreshAndFollow() {
+	follow := m.viewport.AtBottom()
 	m.refresh()
-	m.viewport.GotoBottom()
+
+	if follow {
+		m.viewport.GotoBottom()
+	}
 }

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 func TestSubmitPreservesInputUntilReset(t *testing.T) {
@@ -26,5 +27,14 @@ func TestSubmitPreservesInputUntilReset(t *testing.T) {
 
 	if model.input.Value() != "" {
 		t.Fatalf("input = %q, want empty", model.input.Value())
+	}
+}
+
+func TestViewUsesAvailableWidth(t *testing.T) {
+	model := New()
+	model.SetWidth(80)
+
+	if width := lipgloss.Width(model.View()); width != 80 {
+		t.Fatalf("view width = %d, want 80", width)
 	}
 }

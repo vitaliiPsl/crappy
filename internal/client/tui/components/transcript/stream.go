@@ -2,44 +2,92 @@ package transcript
 
 import "github.com/vitaliiPsl/crappy-adk/kit"
 
-func (m *Model) Apply(event kit.AgentEvent) {
+type stream struct {
+	content []kit.Content
+	active  int
+}
+
+func newStream() stream {
+	return stream{active: -1}
+}
+
+func (s *stream) apply(event kit.AgentEvent) {
 	switch event.Type {
 	case kit.EventContentStarted:
-		m.start(event.Content)
+		s.start(event.Content)
 	case kit.EventContentDelta:
-		m.appendDelta(event.Content)
+		s.appendDelta(event.Content)
 	case kit.EventContentDone:
 		if event.ToolResult == nil {
-			m.finish(event.Content)
+			s.finish(event.Content)
 		}
 	}
-
-	m.refresh()
-	m.viewport.GotoBottom()
 }
 
-func (m *Model) start(content *kit.Content) {
+func (s *stream) reset() {
+	s.content = nil
+	s.active = -1
+}
+
+func (s *stream) start(content *kit.Content) {
 	if content == nil {
 		return
 	}
 
-	m.streaming = append(m.streaming, *content)
-	m.active = len(m.streaming) - 1
+	s.content = append(s.content, cloneContent(*content))
+	s.active = len(s.content) - 1
 }
 
-func (m *Model) appendDelta(content *kit.Content) {
+func (s *stream) appendDelta(content *kit.Content) {
 	if content == nil {
 		return
 	}
 
-	if m.active < 0 || m.active >= len(m.streaming) || m.streaming[m.active].Type != content.Type {
-		m.start(&kit.Content{Type: content.Type})
+	if s.active < 0 ||
+		s.active >= len(s.content) ||
+		s.content[s.active].Type != content.Type {
+		s.content = append(s.content, kit.Content{Type: content.Type})
+		s.active = len(s.content) - 1
 	}
 
-	target := &m.streaming[m.active]
-	switch content.Type {
+	mergeContent(&s.content[s.active], *content)
+}
+
+func (s *stream) finish(content *kit.Content) {
+	if content == nil {
+		return
+	}
+
+	completed := cloneContent(*content)
+	if s.active >= 0 &&
+		s.active < len(s.content) &&
+		s.content[s.active].Type == content.Type {
+		s.content[s.active] = completed
+	} else {
+		s.content = append(s.content, completed)
+	}
+
+	s.active = -1
+}
+
+func cloneContent(content kit.Content) kit.Content {
+	if content.Text != nil {
+		value := *content.Text
+		content.Text = &value
+	}
+
+	if content.Thinking != nil {
+		value := *content.Thinking
+		content.Thinking = &value
+	}
+
+	return content
+}
+
+func mergeContent(target *kit.Content, delta kit.Content) {
+	switch delta.Type {
 	case kit.ContentTypeText:
-		if content.Text == nil {
+		if delta.Text == nil {
 			return
 		}
 
@@ -47,9 +95,9 @@ func (m *Model) appendDelta(content *kit.Content) {
 			target.Text = &kit.Text{}
 		}
 
-		target.Text.Text += content.Text.Text
+		target.Text.Text += delta.Text.Text
 	case kit.ContentTypeThinking:
-		if content.Thinking == nil {
+		if delta.Thinking == nil {
 			return
 		}
 
@@ -57,22 +105,8 @@ func (m *Model) appendDelta(content *kit.Content) {
 			target.Thinking = &kit.Thinking{}
 		}
 
-		target.Thinking.Text += content.Thinking.Text
+		target.Thinking.Text += delta.Thinking.Text
 	default:
-		*target = *content
+		*target = cloneContent(delta)
 	}
-}
-
-func (m *Model) finish(content *kit.Content) {
-	if content == nil {
-		return
-	}
-
-	if m.active < 0 || m.active >= len(m.streaming) || m.streaming[m.active].Type != content.Type {
-		m.streaming = append(m.streaming, *content)
-	} else {
-		m.streaming[m.active] = *content
-	}
-
-	m.active = -1
 }

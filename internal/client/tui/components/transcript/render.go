@@ -1,62 +1,165 @@
 package transcript
 
 import (
+	"fmt"
 	"strings"
+
+	"charm.land/lipgloss/v2"
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
 )
 
+const (
+	emptyTitle    = "CRAPPY"
+	emptyHeadline = "What are we working on?"
+	emptyPadding  = 4
+)
+
 func (m *Model) refresh() {
-	parts := make([]string, 0, len(m.messages)+1)
-	for _, message := range m.messages {
-		if rendered := renderMessage(message); rendered != "" {
-			parts = append(parts, rendered)
-		}
-	}
-
-	if rendered := renderMessage(kit.NewModelMessage(m.streaming...)); rendered != "" {
-		parts = append(parts, rendered)
-	}
-
-	m.viewport.SetContent(strings.Join(parts, "\n\n"))
+	m.viewport.SetContent(render(
+		m.projection,
+		m.width,
+		m.height,
+	))
 }
 
-func renderMessage(message kit.Message) string {
-	parts := make([]string, 0, len(message.Content))
-	for _, content := range message.Content {
-		if text, ok := kit.ContentText(content); ok && text != "" {
-			parts = append(parts, text)
-
-			continue
-		}
-
-		switch content.Type {
-		case kit.ContentTypeToolCall:
-			if content.ToolCall != nil {
-				parts = append(parts, "Tool: "+content.ToolCall.Name)
-			}
-		case kit.ContentTypeToolResult:
-			if content.ToolResult != nil {
-				parts = append(parts, renderToolResult(*content.ToolResult))
-			}
+func render(projection projection, width, height int) string {
+	sections := make([]string, 0, len(projection.items)+1)
+	for _, value := range projection.items {
+		if rendered := renderMessage(value, width); rendered != "" {
+			sections = append(sections, rendered)
 		}
 	}
 
-	if len(parts) == 0 {
-		return ""
+	if value, ok := newMessageItem(
+		kit.Message{Role: kit.RoleModel, Content: projection.stream.content},
+		make(map[string]*toolUse),
+	); ok {
+		sections = append(sections, renderMessage(value, width))
 	}
 
-	if message.Role == kit.RoleUser {
-		parts[0] = "You: " + parts[0]
+	if len(sections) == 0 {
+		return renderEmpty(width, height)
+	}
+
+	return strings.Join(sections, "\n\n")
+}
+
+func renderMessage(value item, width int) string {
+	switch value.role {
+	case kit.RoleUser:
+		content := renderContentItems(
+			value.content,
+			max(width-userStyle.GetHorizontalFrameSize(), 1),
+		)
+		if content == "" {
+			return ""
+		}
+
+		return userStyle.Width(max(width, 1)).Render(content)
+	default:
+		content := renderContentItems(
+			value.content,
+			max(width-assistantStyle.GetHorizontalFrameSize(), 1),
+		)
+		if content == "" {
+			return ""
+		}
+
+		return assistantStyle.Width(max(width, 1)).Render(content)
+	}
+}
+
+func renderContentItems(content []contentItem, width int) string {
+	parts := make([]string, 0, len(content))
+	for _, value := range content {
+		if rendered := renderContentItem(value, width); rendered != "" {
+			parts = append(parts, rendered)
+		}
 	}
 
 	return strings.Join(parts, "\n")
 }
 
-func renderToolResult(result kit.ToolResult) string {
-	if result.Error != "" {
-		return "Tool error: " + result.Error
+func renderContentItem(value contentItem, width int) string {
+	if value.tool != nil {
+		return renderTool(*value.tool, width)
 	}
 
-	return "Tool finished: " + result.Call.Name
+	content := value.content
+	switch content.Type {
+	case kit.ContentTypeText:
+		if content.Text != nil {
+			return content.Text.Text
+		}
+	case kit.ContentTypeThinking:
+		if content.Thinking != nil && content.Thinking.Text != "" {
+			return thinkingStyle.Render(thinkingLabel(content.Thinking.Text))
+		}
+	case kit.ContentTypeImage:
+		if content.Image != nil {
+			return mutedStyle.Render(mediaLabel("image", content.Image.MIMEType, content.Image.URI))
+		}
+	case kit.ContentTypeAudio:
+		if content.Audio != nil {
+			return mutedStyle.Render(mediaLabel("audio", content.Audio.MIMEType, content.Audio.URI))
+		}
+	case kit.ContentTypeResource:
+		if content.Resource != nil {
+			label := content.Resource.Title
+
+			if label == "" {
+				label = content.Resource.Name
+			}
+
+			if label == "" {
+				label = content.Resource.URI
+			}
+
+			return mutedStyle.Render(mediaLabel("resource", content.Resource.MIMEType, label))
+		}
+	}
+
+	return ""
+}
+
+func thinkingLabel(text string) string {
+	characters := len([]rune(text))
+	if characters >= 1000 {
+		return fmt.Sprintf("Thinking · %.1fk chars", float64(characters)/1000)
+	}
+
+	return fmt.Sprintf("Thinking · %d chars", characters)
+}
+
+func renderEmpty(width, height int) string {
+	content := lipgloss.JoinVertical(
+		lipgloss.Center,
+		emptyTitleStyle.Render(emptyTitle),
+		"",
+		emptyTextStyle.Render(emptyHeadline),
+	)
+
+	contentHeight := lipgloss.Height(content)
+	paddingTop := max((height-contentHeight-emptyPadding)/2, 0)
+
+	return strings.Repeat("\n", paddingTop) +
+		lipgloss.NewStyle().Width(max(width, 1)).Align(lipgloss.Center).Render(content)
+}
+
+func mediaLabel(kind, mimeType, detail string) string {
+	values := make([]string, 0, 2)
+	if mimeType != "" {
+		values = append(values, mimeType)
+	}
+
+	if detail != "" {
+		values = append(values, detail)
+	}
+
+	if len(values) == 0 {
+		return "[" + kind + "]"
+	}
+
+	return "[" + kind + ": " + strings.Join(values, ", ") + "]"
 }
