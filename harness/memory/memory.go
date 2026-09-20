@@ -12,7 +12,7 @@ import (
 	"github.com/vitaliipsl/crappy/harness/event"
 )
 
-const messageEntryType = "message"
+const EntryType = "message"
 
 type entryMemory struct {
 	sessionID   string
@@ -54,7 +54,7 @@ func (m *entryMemory) Record(ctx context.Context, messages ...kit.Message) error
 		payloads[i] = message
 	}
 
-	return m.events.Commit(ctx, m.executionID, messageEntryType, payloads...)
+	return m.events.Commit(ctx, m.executionID, EntryType, payloads...)
 }
 
 func contextMessages(entries []entry.Entry) ([]kit.Message, error) {
@@ -85,7 +85,7 @@ func contextMessages(entries []entry.Entry) ([]kit.Message, error) {
 func messages(entries []entry.Entry) ([]kit.Message, error) {
 	messages := make([]kit.Message, 0, len(entries))
 	for _, value := range entries {
-		if value.Type != messageEntryType {
+		if value.Type != EntryType {
 			continue
 		}
 
