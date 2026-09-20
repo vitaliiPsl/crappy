@@ -212,7 +212,7 @@ func TestExecutePublishesEntriesAndAgentEvents(t *testing.T) {
 		t.Fatalf("second event = %#v, want message entry 2", events[1])
 	}
 
-	if events[2].EntryID != 0 || events[2].Type != "agent.content_delta" {
+	if events[2].EntryID != 0 || events[2].Type != AgentEventType {
 		t.Fatalf("third event = %#v, want transient content delta", events[2])
 	}
 
@@ -231,7 +231,7 @@ func TestExecutePublishesEntriesAndAgentEvents(t *testing.T) {
 		t.Fatalf("fourth event = %#v, want message entry 3", events[3])
 	}
 
-	if events[4].EntryID != 0 || events[4].Type != "agent.message" {
+	if events[4].EntryID != 0 || events[4].Type != AgentEventType {
 		t.Fatalf("fifth event = %#v, want transient agent message", events[4])
 	}
 

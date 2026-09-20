@@ -19,6 +19,7 @@ var (
 )
 
 const (
+	AgentEventType             = "agent.event"
 	ExecutionStartedEntryType  = "execution.started"
 	ExecutionFinishedEntryType = "execution.finished"
 )
@@ -131,8 +132,7 @@ func (s *Session) runExecution(
 
 	var runErr error
 	for agentEvent := range stream.Iter() {
-		eventType := "agent." + string(agentEvent.Type)
-		if err := s.Emit(ctx, execution.id, eventType, agentEvent); err != nil {
+		if err := s.Emit(ctx, execution.id, AgentEventType, agentEvent); err != nil {
 			runErr = err
 
 			break

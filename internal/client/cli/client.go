@@ -132,13 +132,15 @@ func (c *Client) Run(ctx context.Context) error {
 
 func (c *Client) handleEvent(value event.Event) (string, error) {
 	switch value.Type {
-	case "agent.content_delta":
+	case session.AgentEventType:
 		var agentEvent kit.AgentEvent
 		if err := json.Unmarshal(value.Payload, &agentEvent); err != nil {
-			return "", fmt.Errorf("decode content delta: %w", err)
+			return "", fmt.Errorf("decode agent event: %w", err)
 		}
 
-		if agentEvent.Content == nil || agentEvent.Content.Text == nil {
+		if agentEvent.Type != kit.EventContentDelta ||
+			agentEvent.Content == nil ||
+			agentEvent.Content.Text == nil {
 			return "", nil
 		}
 

@@ -84,11 +84,13 @@ func TestTogglePushesAndReturns(t *testing.T) {
 	navigator := testNavigator(current, next)
 
 	navigator.Update(Toggle(testRoute()))
+
 	if len(navigator.stack) != 2 {
 		t.Fatal("first Toggle() did not push the route")
 	}
 
 	navigator.Update(Toggle(testRoute()))
+
 	if len(navigator.stack) != 1 || !next.closed {
 		t.Fatal("second Toggle() did not return from the route")
 	}
@@ -99,6 +101,7 @@ func TestInputOnlyReachesActivePage(t *testing.T) {
 	next := &testPage{}
 	navigator := testNavigator(current, next)
 	navigator.Update(Push(testRoute()))
+
 	current.messages = nil
 	next.messages = nil
 
@@ -116,6 +119,7 @@ func TestAsyncMessagesReachEveryPage(t *testing.T) {
 	next := &testPage{}
 	navigator := testNavigator(current, next)
 	navigator.Update(Push(testRoute()))
+
 	current.messages = nil
 	next.messages = nil
 

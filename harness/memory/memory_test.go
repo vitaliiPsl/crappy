@@ -45,8 +45,8 @@ func TestRecordAndHistory(t *testing.T) {
 			t.Fatalf("ExecutionID = %q, want %q", stored.ExecutionID, "execution-1")
 		}
 
-		if stored.Type != messageEntryType {
-			t.Fatalf("entry type = %q, want %q", stored.Type, messageEntryType)
+		if stored.Type != EntryType {
+			t.Fatalf("entry type = %q, want %q", stored.Type, EntryType)
 		}
 	}
 }

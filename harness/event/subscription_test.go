@@ -18,7 +18,7 @@ func TestSubscriptionReplaysEntriesBeforeLiveEvents(t *testing.T) {
 
 	stored := entry.Entry{ID: 1, SessionID: "session-1"}
 
-	if !subscription.Publish(Event{Type: "agent.content_delta", Payload: json.RawMessage(`"during replay"`)}) {
+	if !subscription.Publish(Event{Type: "test.transient", Payload: json.RawMessage(`"during replay"`)}) {
 		t.Fatal("Publish() closed subscription for transient event")
 	}
 
@@ -28,7 +28,7 @@ func TestSubscriptionReplaysEntriesBeforeLiveEvents(t *testing.T) {
 
 	subscription.Start(0, []entry.Entry{stored})
 
-	if !subscription.Publish(Event{Type: "agent.content_delta", Payload: json.RawMessage(`"live"`)}) {
+	if !subscription.Publish(Event{Type: "test.transient", Payload: json.RawMessage(`"live"`)}) {
 		t.Fatal("Publish() closed subscription for live event")
 	}
 

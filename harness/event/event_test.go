@@ -40,7 +40,7 @@ func TestTransientEventOmitsDurableFields(t *testing.T) {
 
 	encoded, err := json.Marshal(Event{
 		SessionID: "session-1",
-		Type:      "agent.content_delta",
+		Type:      "test.transient",
 		Payload:   json.RawMessage(`{"type":"text","text":{"text":"hi"}}`),
 	})
 	if err != nil {

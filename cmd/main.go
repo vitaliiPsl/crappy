@@ -9,12 +9,10 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/google/uuid"
-
 	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/checkpoint"
 	"github.com/vitaliipsl/crappy/harness/checkpoint/automatic"
-	"github.com/vitaliipsl/crappy/internal/client/cli"
+	"github.com/vitaliipsl/crappy/internal/client/tui"
 	"github.com/vitaliipsl/crappy/internal/config"
 	"github.com/vitaliipsl/crappy/internal/model"
 	"github.com/vitaliipsl/crappy/internal/runtime"
@@ -44,12 +42,7 @@ func run(ctx context.Context) error {
 		return err
 	}
 
-	return cli.New(
-		runtime,
-		uuid.NewString(),
-		os.Stdin,
-		os.Stdout,
-	).Run(ctx)
+	return tui.Run(ctx, runtime)
 }
 
 func newRuntime(ctx context.Context) (*runtime.Runtime, error) {

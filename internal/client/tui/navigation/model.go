@@ -180,6 +180,7 @@ func (m *Model) updateAll(message tea.Msg) tea.Cmd {
 	for index := range m.stack {
 		updated, command := m.stack[index].page.Update(message)
 		m.stack[index].page = updated
+
 		commands = append(commands, command)
 	}
 
