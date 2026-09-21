@@ -74,6 +74,42 @@ func TestSessionStoreListsSessionWithoutEntries(t *testing.T) {
 	}
 }
 
+func TestSessionStoreDeletesSession(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join(t.TempDir(), "sessions")
+	storage := openStorage(t, root)
+	entries := storage.EntryStore()
+
+	if _, err := entries.Append(context.Background(), "session-1", entry.Entry{
+		Type: "test.entry",
+	}); err != nil {
+		t.Fatalf("Append() error = %v", err)
+	}
+
+	if err := storage.SessionStore().Delete(context.Background(), "session-1"); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+
+	states, err := storage.SessionStore().List(context.Background())
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+
+	if len(states) != 0 {
+		t.Fatalf("List() = %#v, want deleted session absent", states)
+	}
+
+	remaining, err := entries.List(context.Background(), "session-1", 0)
+	if err != nil {
+		t.Fatalf("entries List() error = %v", err)
+	}
+
+	if len(remaining) != 0 {
+		t.Fatalf("entries = %#v, want deleted transcript absent", remaining)
+	}
+}
+
 func TestStorageProtectsTranscript(t *testing.T) {
 	t.Parallel()
 
@@ -117,6 +153,24 @@ func TestSessionStoreHonorsCanceledContext(t *testing.T) {
 
 	if _, err := storage.SessionStore().List(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("List() error = %v, want context.Canceled", err)
+	}
+
+	if err := storage.SessionStore().Delete(ctx, "session-1"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Delete() error = %v, want context.Canceled", err)
+	}
+}
+
+func TestSessionStoreRejectsUnsafeSessionID(t *testing.T) {
+	t.Parallel()
+
+	storage := openStorage(t, filepath.Join(t.TempDir(), "sessions"))
+	for _, sessionID := range []string{"", ".", "..", "nested/session", `nested\session`} {
+		if err := storage.SessionStore().Delete(
+			context.Background(),
+			sessionID,
+		); err == nil {
+			t.Fatalf("Delete(%q) error = nil", sessionID)
+		}
 	}
 }
 

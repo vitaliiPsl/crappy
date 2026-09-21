@@ -39,3 +39,41 @@ func (s *sessionStore) List(ctx context.Context) ([]session.State, error) {
 
 	return sessions, nil
 }
+
+func (s *sessionStore) Delete(ctx context.Context, sessionID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	path, err := s.storage.sessionDirectory(sessionID)
+	if err != nil {
+		return err
+	}
+
+	s.storage.mu.Lock()
+	defer s.storage.mu.Unlock()
+
+	state := s.storage.states[sessionID]
+	if state == nil {
+		state = &sessionState{}
+	}
+
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	if err := os.RemoveAll(path); err != nil {
+		return fmt.Errorf("remove session directory: %w", err)
+	}
+
+	delete(s.storage.states, sessionID)
+
+	if err := syncDirectory(s.storage.root); err != nil {
+		return fmt.Errorf("sync sessions directory: %w", err)
+	}
+
+	return nil
+}

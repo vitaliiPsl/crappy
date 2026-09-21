@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
@@ -60,12 +61,71 @@ func TestRuntimeListsStoredSessions(t *testing.T) {
 	}
 }
 
+func TestRuntimeDeletesClosedSession(t *testing.T) {
+	t.Parallel()
+
+	store := &recordingSessionStore{}
+	runtime := NewRuntime(context.Background(), store, nil, nil, nil)
+
+	if err := runtime.DeleteSession(context.Background(), "session-1"); err != nil {
+		t.Fatalf("DeleteSession() error = %v", err)
+	}
+
+	if store.deleted != "session-1" {
+		t.Fatalf("deleted session = %q, want session-1", store.deleted)
+	}
+}
+
+func TestRuntimeRejectsDeletingOpenSession(t *testing.T) {
+	t.Parallel()
+
+	store := &recordingSessionStore{}
+	runtime := NewRuntime(
+		context.Background(),
+		store,
+		entry.NewMemoryStore(),
+		agent.New(kit.AgentConfig{}, staticModelResolver{kittest.NewModel(t)}),
+		nil,
+	)
+
+	if _, err := runtime.Session(context.Background(), "session-1"); err != nil {
+		t.Fatalf("Session() error = %v", err)
+	}
+
+	err := runtime.DeleteSession(context.Background(), "session-1")
+	if !errors.Is(err, ErrSessionOpen) {
+		t.Fatalf("DeleteSession() error = %v, want ErrSessionOpen", err)
+	}
+
+	if store.deleted != "" {
+		t.Fatalf("deleted session = %q, want none", store.deleted)
+	}
+}
+
 type staticSessionStore struct {
 	states []session.State
 }
 
 func (s staticSessionStore) List(context.Context) ([]session.State, error) {
 	return s.states, nil
+}
+
+func (staticSessionStore) Delete(context.Context, string) error {
+	return nil
+}
+
+type recordingSessionStore struct {
+	deleted string
+}
+
+func (*recordingSessionStore) List(context.Context) ([]session.State, error) {
+	return nil, nil
+}
+
+func (s *recordingSessionStore) Delete(_ context.Context, sessionID string) error {
+	s.deleted = sessionID
+
+	return nil
 }
 
 type staticModelResolver struct {
