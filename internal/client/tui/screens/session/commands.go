@@ -8,6 +8,8 @@ import (
 	"github.com/vitaliipsl/crappy/harness/event"
 )
 
+const subscriptionStartEntryID uint64 = 0
+
 type subscribedMsg struct {
 	target       *Model
 	subscription *event.Subscription
@@ -34,7 +36,11 @@ func (executeResultMsg) Broadcast() {}
 
 func (m *Model) subscribe() tea.Cmd {
 	return func() tea.Msg {
-		subscription, err := m.runtime.Subscribe(m.ctx, m.sessionID, 0)
+		subscription, err := m.runtime.Subscribe(
+			m.ctx,
+			m.sessionID,
+			subscriptionStartEntryID,
+		)
 
 		return subscribedMsg{target: m, subscription: subscription, err: err}
 	}

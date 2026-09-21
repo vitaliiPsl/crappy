@@ -6,6 +6,12 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
+const (
+	errorPrefix        = "Error: "
+	sectionSeparator   = "\n"
+	minimumContentSize = 1
+)
+
 func (m *Model) render() string {
 	parts := []string{transcriptAreaStyle.Render(m.transcript.View())}
 	if status := m.statusView(); status != "" {
@@ -14,7 +20,7 @@ func (m *Model) render() string {
 
 	parts = append(parts, m.composer.View())
 
-	return pageStyle.Render(strings.Join(parts, "\n"))
+	return pageStyle.Render(strings.Join(parts, sectionSeparator))
 }
 
 func (m *Model) resize() {
@@ -31,12 +37,12 @@ func (m *Model) resize() {
 		transcriptAreaStyle.GetVerticalFrameSize() -
 		m.composer.Height() -
 		statusHeight
-	m.transcript.SetSize(width, max(transcriptHeight, 1))
+	m.transcript.SetSize(width, max(transcriptHeight, minimumContentSize))
 }
 
 func (m *Model) status() string {
 	if m.err != nil {
-		return "Error: " + m.err.Error()
+		return errorPrefix + m.err.Error()
 	}
 
 	return ""
@@ -52,5 +58,5 @@ func (m *Model) statusView() string {
 }
 
 func (m *Model) contentWidth() int {
-	return max(m.width-pageStyle.GetHorizontalFrameSize(), 1)
+	return max(m.width-pageStyle.GetHorizontalFrameSize(), minimumContentSize)
 }

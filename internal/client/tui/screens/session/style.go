@@ -6,8 +6,15 @@ import (
 	"github.com/vitaliipsl/crappy/internal/client/tui/theme"
 )
 
+const (
+	pagePaddingHorizontal  = 2
+	transcriptMarginBottom = 1
+)
+
 var (
-	pageStyle           = lipgloss.NewStyle().PaddingLeft(2).PaddingRight(2)
-	transcriptAreaStyle = lipgloss.NewStyle().MarginBottom(1)
+	pageStyle = lipgloss.NewStyle().
+			PaddingLeft(pagePaddingHorizontal).
+			PaddingRight(pagePaddingHorizontal)
+	transcriptAreaStyle = lipgloss.NewStyle().MarginBottom(transcriptMarginBottom)
 	errorStyle          = lipgloss.NewStyle().Foreground(theme.Default.Error)
 )

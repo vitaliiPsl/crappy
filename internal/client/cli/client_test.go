@@ -58,6 +58,10 @@ func (emptySessionStore) List(context.Context) ([]session.State, error) {
 	return nil, nil
 }
 
+func (emptySessionStore) Delete(context.Context, string) error {
+	return nil
+}
+
 type staticModelResolver struct {
 	model kit.Model
 }
