@@ -43,7 +43,7 @@ func loadFile(path string) (Config, error) {
 		return Config{}, fmt.Errorf("read config: %w", err)
 	}
 
-	var value Config
+	value := defaults()
 	if err := decode(data, &value); err != nil {
 		return Config{}, fmt.Errorf("decode config: %w", err)
 	}

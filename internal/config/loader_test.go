@@ -27,6 +27,10 @@ func TestLoadFileSeedsDefaults(t *testing.T) {
 		t.Fatalf("ModelID = %q, want %q", got, want)
 	}
 
+	if got, want := loaded.Checkpoint.ThresholdTokens, defaultCheckpointThresholdTokens; got != want {
+		t.Fatalf("checkpoint threshold = %d, want %d", got, want)
+	}
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read seeded config: %v", err)
@@ -34,6 +38,10 @@ func TestLoadFileSeedsDefaults(t *testing.T) {
 
 	if !strings.Contains(string(data), "provider_id: "+defaultProviderID) {
 		t.Fatalf("seeded config = %q, want default provider", data)
+	}
+
+	if !strings.Contains(string(data), "threshold_tokens:") {
+		t.Fatalf("seeded config = %q, want checkpoint threshold", data)
 	}
 
 	info, err := os.Stat(path)
@@ -58,6 +66,8 @@ generation:
   thinking: high
   temperature: 0.4
   max_output_tokens: 2048
+checkpoint:
+  threshold_tokens: 120000
 `)
 
 	loaded, err := LoadFile(path)
@@ -89,6 +99,10 @@ generation:
 		t.Fatalf("max output tokens = %d, want %d", got, want)
 	}
 
+	if got, want := loaded.Checkpoint.ThresholdTokens, int64(120_000); got != want {
+		t.Fatalf("checkpoint threshold = %d, want %d", got, want)
+	}
+
 	agentConfig := loaded.AgentConfig()
 	if agentConfig.Thinking == nil || *agentConfig.Thinking != kit.ThinkingLevelHigh {
 		t.Fatalf("agent thinking = %v, want %q", agentConfig.Thinking, kit.ThinkingLevelHigh)
@@ -108,6 +122,62 @@ generation:
 
 	if _, err := LoadFile(path); err == nil {
 		t.Fatal("LoadFile() error = nil, want validation error")
+	}
+}
+
+func TestLoadFileRejectsNegativeCheckpointThreshold(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	writeConfig(t, path, `
+provider_id: provider
+model_id: model
+checkpoint:
+  threshold_tokens: -1
+`)
+
+	if _, err := LoadFile(path); err == nil {
+		t.Fatal("LoadFile() error = nil, want validation error")
+	}
+}
+
+func TestLoadFileDefaultsCheckpointThreshold(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	writeConfig(t, path, `
+provider_id: provider
+model_id: model
+`)
+
+	loaded, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile() error = %v", err)
+	}
+
+	if got, want := loaded.Checkpoint.ThresholdTokens, defaultCheckpointThresholdTokens; got != want {
+		t.Fatalf("checkpoint threshold = %d, want %d", got, want)
+	}
+}
+
+func TestLoadFileDisablesCheckpointing(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	writeConfig(t, path, `
+provider_id: provider
+model_id: model
+checkpoint:
+  threshold_tokens: 0
+`)
+
+	loaded, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile() error = %v", err)
+	}
+
+	if got, want := loaded.Checkpoint.ThresholdTokens, int64(0); got != want {
+		t.Fatalf("checkpoint threshold = %d, want %d", got, want)
 	}
 }
 

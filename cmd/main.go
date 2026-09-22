@@ -74,7 +74,11 @@ func newRuntime(ctx context.Context) (*runtime.Runtime, error) {
 		agent.WithTools(bash.New()),
 		agent.WithTools(filesystem.New()...),
 		agent.WithToolMiddleware(tools.Timeout(settings.Tools)),
-		agent.WithContributors(automatic.New()),
+		agent.WithContributors(automatic.New(
+			automatic.WithTrigger(
+				automatic.WhenInputExceedsTokens(config.Checkpoint.ThresholdTokens),
+			),
+		)),
 	)
 
 	storage, err := jsonl.Open(ctx, settings.SessionsPath)
