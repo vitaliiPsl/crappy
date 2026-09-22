@@ -61,7 +61,11 @@ func newRuntime(ctx context.Context) (*runtime.Runtime, error) {
 		return nil, fmt.Errorf("create model registry: %w", err)
 	}
 
-	modelResolver := models.Resolver(config.ProviderID, config.ModelID)
+	modelResolver := models.Resolver(
+		config.ProviderID,
+		config.ModelID,
+		model.Retry(settings.Retry),
+	)
 
 	generator, err := checkpoint.NewGenerator(modelResolver)
 	if err != nil {

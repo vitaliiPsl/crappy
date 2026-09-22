@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/vitaliiPsl/crappy-adk/x/retry"
 )
 
 func TestLoadFileSeedsDefaults(t *testing.T) {
@@ -45,6 +47,14 @@ func TestLoadFileSeedsDefaults(t *testing.T) {
 
 	if !strings.Contains(string(data), "timeout: 30s") {
 		t.Fatalf("seeded settings = %q, want tool timeout", data)
+	}
+
+	if got, want := loaded.Retry, retry.DefaultConfig(); got != want {
+		t.Fatalf("retry = %+v, want %+v", got, want)
+	}
+
+	if !strings.Contains(string(data), "max_attempts:") {
+		t.Fatalf("seeded settings = %q, want retry settings", data)
 	}
 
 	info, err := os.Stat(path)
