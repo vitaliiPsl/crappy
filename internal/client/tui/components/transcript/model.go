@@ -37,10 +37,17 @@ func (m Model) View() string {
 }
 
 func (m *Model) SetSize(width, height int) {
+	width = max(width, 1)
+	height = max(height, 1)
+
+	if width == m.width && height == m.height {
+		return
+	}
+
 	follow := m.viewport.AtBottom()
 
-	m.width = max(width, 1)
-	m.height = max(height, 1)
+	m.width = width
+	m.height = height
 	m.viewport.SetWidth(m.width)
 	m.viewport.SetHeight(m.height)
 	m.refresh()

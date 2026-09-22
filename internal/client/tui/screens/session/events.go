@@ -15,7 +15,7 @@ func (m *Model) applyEvent(value event.Event) {
 	case memory.EntryType:
 		var message kit.Message
 		if err := json.Unmarshal(value.Payload, &message); err != nil {
-			m.err = err
+			m.notice = errorNotice(err)
 
 			return
 		}
@@ -24,11 +24,27 @@ func (m *Model) applyEvent(value event.Event) {
 	case harnesssession.AgentEventType:
 		var agentEvent kit.AgentEvent
 		if err := json.Unmarshal(value.Payload, &agentEvent); err != nil {
-			m.err = err
+			m.notice = errorNotice(err)
 
 			return
 		}
 
 		m.transcript.Apply(agentEvent)
+	case harnesssession.ExecutionStartedEntryType:
+		m.executionID = value.ExecutionID
+		m.notice = notice{}
+	case harnesssession.ExecutionFinishedEntryType:
+		var finished harnesssession.ExecutionFinished
+		if err := json.Unmarshal(value.Payload, &finished); err != nil {
+			m.notice = errorNotice(err)
+
+			return
+		}
+
+		if value.ExecutionID == m.executionID {
+			m.executionID = ""
+		}
+
+		m.notice = executionNotice(finished)
 	}
 }

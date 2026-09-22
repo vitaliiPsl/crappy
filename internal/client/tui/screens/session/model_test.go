@@ -54,3 +54,141 @@ func TestViewFitsWindow(t *testing.T) {
 		t.Fatalf("view = %dx%d, want 80x20", width, height)
 	}
 }
+
+func executionEvent(t *testing.T, eventType, executionID string, payload any) event.Event {
+	t.Helper()
+
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return event.Event{
+		Type:        eventType,
+		ExecutionID: executionID,
+		Payload:     encoded,
+	}
+}
+
+func TestExecutionLifecycleDrivesStatus(t *testing.T) {
+	model := New(context.Background(), nil, "session-1")
+	model.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+
+	if model.running() {
+		t.Fatal("running() = true before any execution")
+	}
+
+	model.applyEvent(executionEvent(
+		t,
+		harnesssession.ExecutionStartedEntryType,
+		"execution-1",
+		harnesssession.ExecutionStarted{},
+	))
+
+	if !model.running() {
+		t.Fatal("running() = false while an execution is running")
+	}
+
+	if !strings.Contains(model.View().Content, workingLabel) {
+		t.Fatalf("view = %q, want working status", model.View().Content)
+	}
+
+	model.applyEvent(executionEvent(
+		t,
+		harnesssession.ExecutionFinishedEntryType,
+		"execution-1",
+		harnesssession.ExecutionFinished{Outcome: harnesssession.ExecutionCompleted},
+	))
+
+	if model.running() {
+		t.Fatal("running() = true after the execution finished")
+	}
+
+	if status := model.statusView(); status != "" {
+		t.Fatalf("statusView() = %q, want empty after a completed execution", status)
+	}
+}
+
+func TestFailedExecutionIsSurfaced(t *testing.T) {
+	model := New(context.Background(), nil, "session-1")
+	model.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+
+	model.applyEvent(executionEvent(
+		t,
+		harnesssession.ExecutionStartedEntryType,
+		"execution-1",
+		harnesssession.ExecutionStarted{},
+	))
+	model.applyEvent(executionEvent(
+		t,
+		harnesssession.ExecutionFinishedEntryType,
+		"execution-1",
+		harnesssession.ExecutionFinished{
+			Outcome: harnesssession.ExecutionFailed,
+			Error:   "model exploded",
+		},
+	))
+
+	if !strings.Contains(model.View().Content, "model exploded") {
+		t.Fatalf("view = %q, want the execution error", model.View().Content)
+	}
+}
+
+func TestInterruptedExecutionIsSurfaced(t *testing.T) {
+	for _, outcome := range []harnesssession.ExecutionOutcome{
+		harnesssession.ExecutionCancelled,
+		harnesssession.ExecutionInterrupted,
+	} {
+		t.Run(string(outcome), func(t *testing.T) {
+			model := New(context.Background(), nil, "session-1")
+			model.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+
+			model.applyEvent(executionEvent(
+				t,
+				harnesssession.ExecutionFinishedEntryType,
+				"execution-1",
+				harnesssession.ExecutionFinished{Outcome: outcome},
+			))
+
+			if !strings.Contains(model.View().Content, interruptedLabel) {
+				t.Fatalf("view = %q, want %q", model.View().Content, interruptedLabel)
+			}
+		})
+	}
+}
+
+func TestSubmitIsIgnoredWhileBusy(t *testing.T) {
+	model := New(context.Background(), nil, "session-1")
+	model.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+
+	model.applyEvent(executionEvent(
+		t,
+		harnesssession.ExecutionStartedEntryType,
+		"execution-1",
+		harnesssession.ExecutionStarted{},
+	))
+
+	if command := model.submit("second message"); command != nil {
+		t.Fatal("submit() returned a command while busy")
+	}
+}
+
+func TestCancelKeyOnlyFiresWhileRunning(t *testing.T) {
+	model := New(context.Background(), nil, "session-1")
+	model.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+
+	if _, command := model.Update(tea.KeyPressMsg{Code: tea.KeyEscape}); command != nil {
+		t.Fatal("Update() returned a command for the cancel key while idle")
+	}
+
+	model.applyEvent(executionEvent(
+		t,
+		harnesssession.ExecutionStartedEntryType,
+		"execution-1",
+		harnesssession.ExecutionStarted{},
+	))
+
+	if _, command := model.Update(tea.KeyPressMsg{Code: tea.KeyEscape}); command == nil {
+		t.Fatal("Update() returned no command for the cancel key while running")
+	}
+}

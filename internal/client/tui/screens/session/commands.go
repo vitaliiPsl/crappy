@@ -34,6 +34,13 @@ type executeResultMsg struct {
 
 func (executeResultMsg) Broadcast() {}
 
+type cancelResultMsg struct {
+	target *Model
+	err    error
+}
+
+func (cancelResultMsg) Broadcast() {}
+
 func (m *Model) subscribe() tea.Cmd {
 	return func() tea.Msg {
 		subscription, err := m.runtime.Subscribe(
@@ -70,5 +77,13 @@ func (m *Model) execute(input kit.Message) tea.Cmd {
 		_, err := m.runtime.Execute(m.ctx, m.sessionID, input)
 
 		return executeResultMsg{target: m, err: err}
+	}
+}
+
+func (m *Model) cancelExecution(executionID string) tea.Cmd {
+	return func() tea.Msg {
+		err := m.runtime.Cancel(m.ctx, m.sessionID, executionID)
+
+		return cancelResultMsg{target: m, err: err}
 	}
 }

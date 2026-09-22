@@ -18,8 +18,9 @@ type Model struct {
 	runtime      *runtime.Runtime
 	subscription *event.Subscription
 
-	sessionID string
-	err       error
+	sessionID   string
+	executionID string
+	notice      notice
 
 	transcript transcript.Model
 	composer   composer.Model
@@ -49,7 +50,6 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = message.Width
 		m.height = message.Height
-		m.resize()
 
 		return m, nil
 	case subscribedMsg:
@@ -60,25 +60,23 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.handleExecuteResult(message)
 
 		return m, nil
+	case cancelResultMsg:
+		m.handleCancelResult(message)
+
+		return m, nil
 	case composer.Submit:
 		return m, m.submit(message.Text)
 	case tea.KeyPressMsg:
+		if message.String() == cancelKey && m.running() {
+			return m, m.cancelExecution(m.executionID)
+		}
+
 		if isTranscriptKey(message.String()) {
 			return m, m.transcript.Update(message)
 		}
-	case tea.MouseWheelMsg:
-		return m, m.transcript.Update(message)
 	}
 
-	previousHeight := m.composer.Height()
-
-	command := m.composer.Update(message)
-
-	if previousHeight != m.composer.Height() {
-		m.resize()
-	}
-
-	return m, command
+	return m, m.composer.Update(message)
 }
 
 func (m *Model) View() tea.View {
@@ -91,4 +89,8 @@ func (m *Model) Close() {
 	if m.subscription != nil {
 		m.subscription.Close()
 	}
+}
+
+func (m *Model) running() bool {
+	return m.executionID != ""
 }

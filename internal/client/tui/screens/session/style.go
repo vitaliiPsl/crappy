@@ -17,4 +17,6 @@ var (
 			PaddingRight(pagePaddingHorizontal)
 	transcriptAreaStyle = lipgloss.NewStyle().MarginBottom(transcriptMarginBottom)
 	errorStyle          = lipgloss.NewStyle().Foreground(theme.Default.Error)
+	workingStyle        = lipgloss.NewStyle().Foreground(theme.Default.Primary)
+	noticeStyle         = lipgloss.NewStyle().Foreground(theme.Default.Warning)
 )

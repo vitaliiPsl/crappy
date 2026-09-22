@@ -86,7 +86,13 @@ func (m Model) Height() int {
 }
 
 func (m *Model) SetWidth(width int) {
-	m.width = max(width, 1)
+	width = max(width, 1)
+
+	if width == m.width {
+		return
+	}
+
+	m.width = width
 	m.input.SetWidth(max(m.width-composerPaddingX*2, 1))
 }
 

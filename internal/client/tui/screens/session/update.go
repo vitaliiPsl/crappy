@@ -1,14 +1,23 @@
 package session
 
 import (
+	"errors"
+
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
+
+	harnesssession "github.com/vitaliipsl/crappy/harness/session"
 )
 
+const cancelKey = "esc"
+
 func (m *Model) submit(text string) tea.Cmd {
-	m.err = nil
-	m.resize()
+	if m.running() {
+		return nil
+	}
+
+	m.notice = notice{}
 
 	return m.execute(kit.NewUserMessage(kit.NewTextContent(text)))
 }
@@ -19,15 +28,12 @@ func (m *Model) handleSubscribed(message subscribedMsg) tea.Cmd {
 	}
 
 	if message.err != nil {
-		m.err = message.err
-		m.resize()
+		m.notice = errorNotice(message.err)
 
 		return nil
 	}
 
 	m.subscription = message.subscription
-	m.err = nil
-	m.resize()
 
 	return m.waitForEvent()
 }
@@ -39,14 +45,15 @@ func (m *Model) handleEvent(message eventMsg) tea.Cmd {
 
 	if !message.open {
 		m.subscription = nil
-		m.err = message.err
-		m.resize()
+
+		if message.err != nil {
+			m.notice = errorNotice(message.err)
+		}
 
 		return nil
 	}
 
 	m.applyEvent(message.event)
-	m.resize()
 
 	return m.waitForEvent()
 }
@@ -57,14 +64,24 @@ func (m *Model) handleExecuteResult(message executeResultMsg) {
 	}
 
 	if message.err != nil {
-		m.err = message.err
-		m.resize()
+		m.notice = errorNotice(message.err)
 
 		return
 	}
 
 	m.composer.Reset()
-	m.resize()
+}
+
+func (m *Model) handleCancelResult(message cancelResultMsg) {
+	if message.target != m {
+		return
+	}
+
+	if message.err == nil || errors.Is(message.err, harnesssession.ErrExecutionNotActive) {
+		return
+	}
+
+	m.notice = errorNotice(message.err)
 }
 
 func isTranscriptKey(key string) bool {

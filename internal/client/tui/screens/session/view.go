@@ -8,13 +8,20 @@ import (
 
 const (
 	errorPrefix        = "Error: "
+	workingLabel       = "Working… Esc to interrupt"
+	interruptedLabel   = "Interrupted"
 	sectionSeparator   = "\n"
 	minimumContentSize = 1
 )
 
 func (m *Model) render() string {
+	status := m.statusView()
+
+	m.composer.SetWidth(m.contentWidth())
+	m.transcript.SetSize(m.contentWidth(), m.transcriptHeight(status))
+
 	parts := []string{transcriptAreaStyle.Render(m.transcript.View())}
-	if status := m.statusView(); status != "" {
+	if status != "" {
 		parts = append(parts, status)
 	}
 
@@ -23,38 +30,33 @@ func (m *Model) render() string {
 	return pageStyle.Render(strings.Join(parts, sectionSeparator))
 }
 
-func (m *Model) resize() {
-	width := m.contentWidth()
-	m.composer.SetWidth(width)
-
-	statusHeight := 0
-	if status := m.statusView(); status != "" {
-		statusHeight = lipgloss.Height(status)
-	}
-
-	transcriptHeight := m.height -
+func (m *Model) transcriptHeight(status string) int {
+	height := m.height -
 		pageStyle.GetVerticalFrameSize() -
 		transcriptAreaStyle.GetVerticalFrameSize() -
-		m.composer.Height() -
-		statusHeight
-	m.transcript.SetSize(width, max(transcriptHeight, minimumContentSize))
-}
+		m.composer.Height()
 
-func (m *Model) status() string {
-	if m.err != nil {
-		return errorPrefix + m.err.Error()
+	if status != "" {
+		height -= lipgloss.Height(status)
 	}
 
-	return ""
+	return max(height, minimumContentSize)
 }
 
 func (m *Model) statusView() string {
-	status := m.status()
-	if status == "" {
-		return ""
+	if m.running() {
+		return workingStyle.Width(m.contentWidth()).Render(workingLabel)
 	}
 
-	return errorStyle.Width(m.contentWidth()).Render(status)
+	switch m.notice.kind {
+	case noticeError:
+		return errorStyle.Width(m.contentWidth()).Render(errorPrefix + m.notice.message)
+	case noticeInterrupted:
+		return noticeStyle.Width(m.contentWidth()).Render(interruptedLabel)
+	case noticeNone:
+	}
+
+	return ""
 }
 
 func (m *Model) contentWidth() int {
