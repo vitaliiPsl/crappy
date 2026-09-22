@@ -1,6 +1,8 @@
 package transcript
 
 import (
+	"strings"
+
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 
@@ -9,31 +11,48 @@ import (
 
 type Model struct {
 	viewport   viewport.Model
-	projection projection
+	executions []*execution
 	width      int
 	height     int
+
+	content string
+	view    string
 }
 
 func New() Model {
 	viewport := viewport.New()
 	viewport.SoftWrap = true
 
-	return Model{
-		viewport:   viewport,
-		projection: newProjection(),
-	}
+	return Model{viewport: viewport}
 }
 
 func (m *Model) Update(message tea.Msg) tea.Cmd {
 	var command tea.Cmd
 
 	m.viewport, command = m.viewport.Update(message)
+	m.view = ""
 
 	return command
 }
 
-func (m Model) View() string {
-	return m.viewport.View()
+func (m *Model) View() string {
+	if content := m.render(); content != m.content {
+		m.content = content
+		m.view = ""
+
+		follow := m.viewport.AtBottom()
+		m.viewport.SetContent(content)
+
+		if follow {
+			m.viewport.GotoBottom()
+		}
+	}
+
+	if m.view == "" {
+		m.view = m.viewport.View()
+	}
+
+	return m.view
 }
 
 func (m *Model) SetSize(width, height int) {
@@ -44,35 +63,54 @@ func (m *Model) SetSize(width, height int) {
 		return
 	}
 
-	follow := m.viewport.AtBottom()
-
 	m.width = width
 	m.height = height
 	m.viewport.SetWidth(m.width)
 	m.viewport.SetHeight(m.height)
-	m.refresh()
+	m.view = ""
+}
 
-	if follow {
-		m.viewport.GotoBottom()
+func (m *Model) Start(executionID string) {
+	m.execution(executionID)
+}
+
+func (m *Model) Append(executionID string, message kit.Message) {
+	m.execution(executionID).append(message)
+}
+
+func (m *Model) Apply(executionID string, event kit.AgentEvent) {
+	m.execution(executionID).apply(event)
+}
+
+func (m *Model) Finish(executionID string) {
+	m.execution(executionID).finish()
+}
+
+func (m *Model) execution(id string) *execution {
+	if len(m.executions) > 0 {
+		last := m.executions[len(m.executions)-1]
+		if last.id == id {
+			return last
+		}
 	}
+
+	created := newExecution(id)
+	m.executions = append(m.executions, created)
+
+	return created
 }
 
-func (m *Model) Append(message kit.Message) {
-	m.projection.append(message)
-	m.refreshAndFollow()
-}
-
-func (m *Model) Apply(event kit.AgentEvent) {
-	m.projection.apply(event)
-
-	m.refreshAndFollow()
-}
-
-func (m *Model) refreshAndFollow() {
-	follow := m.viewport.AtBottom()
-	m.refresh()
-
-	if follow {
-		m.viewport.GotoBottom()
+func (m *Model) render() string {
+	sections := make([]string, 0, len(m.executions))
+	for _, value := range m.executions {
+		if rendered := value.render(m.width); rendered != "" {
+			sections = append(sections, rendered)
+		}
 	}
+
+	if len(sections) == 0 {
+		return renderEmpty(m.width, m.height)
+	}
+
+	return strings.Join(sections, sectionSeparator)
 }

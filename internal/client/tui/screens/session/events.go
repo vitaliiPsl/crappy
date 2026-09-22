@@ -20,7 +20,7 @@ func (m *Model) applyEvent(value event.Event) {
 			return
 		}
 
-		m.transcript.Append(message)
+		m.transcript.Append(value.ExecutionID, message)
 	case harnesssession.AgentEventType:
 		var agentEvent kit.AgentEvent
 		if err := json.Unmarshal(value.Payload, &agentEvent); err != nil {
@@ -29,10 +29,11 @@ func (m *Model) applyEvent(value event.Event) {
 			return
 		}
 
-		m.transcript.Apply(agentEvent)
+		m.transcript.Apply(value.ExecutionID, agentEvent)
 	case harnesssession.ExecutionStartedEntryType:
 		m.executionID = value.ExecutionID
 		m.notice = notice{}
+		m.transcript.Start(value.ExecutionID)
 	case harnesssession.ExecutionFinishedEntryType:
 		var finished harnesssession.ExecutionFinished
 		if err := json.Unmarshal(value.Payload, &finished); err != nil {
@@ -45,6 +46,7 @@ func (m *Model) applyEvent(value event.Event) {
 			m.executionID = ""
 		}
 
+		m.transcript.Finish(value.ExecutionID)
 		m.notice = executionNotice(finished)
 	}
 }

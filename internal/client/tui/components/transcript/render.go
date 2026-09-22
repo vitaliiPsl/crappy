@@ -13,37 +13,9 @@ const (
 	emptyTitle    = "CRAPPY"
 	emptyHeadline = "What are we working on?"
 	emptyPadding  = 4
+
+	sectionSeparator = "\n\n"
 )
-
-func (m *Model) refresh() {
-	m.viewport.SetContent(render(
-		m.projection,
-		m.width,
-		m.height,
-	))
-}
-
-func render(projection projection, width, height int) string {
-	sections := make([]string, 0, len(projection.items)+1)
-	for _, value := range projection.items {
-		if rendered := renderMessage(value, width); rendered != "" {
-			sections = append(sections, rendered)
-		}
-	}
-
-	if value, ok := newMessageItem(
-		kit.Message{Role: kit.RoleModel, Content: projection.stream.content},
-		make(map[string]*toolUse),
-	); ok {
-		sections = append(sections, renderMessage(value, width))
-	}
-
-	if len(sections) == 0 {
-		return renderEmpty(width, height)
-	}
-
-	return strings.Join(sections, "\n\n")
-}
 
 func renderMessage(value item, width int) string {
 	switch value.role {
