@@ -69,7 +69,7 @@ func TestContextStartsAtLatestCheckpoint(t *testing.T) {
 		context.Background(),
 		"",
 		checkpoint.EntryType,
-		checkpoint.Checkpoint{Summary: "summary"},
+		checkpoint.Checkpoint{Summary: checkpoint.Summary{Objective: "summary"}},
 	); err != nil {
 		t.Fatalf("Commit(checkpoint) error = %v", err)
 	}
@@ -114,7 +114,7 @@ func TestContextRetainsMessagesBeforeCheckpoint(t *testing.T) {
 		context.Background(),
 		"",
 		checkpoint.EntryType,
-		checkpoint.Checkpoint{Summary: "summary", Retained: 1},
+		checkpoint.Checkpoint{Summary: checkpoint.Summary{Objective: "summary"}, Retained: 1},
 	); err != nil {
 		t.Fatalf("Commit(checkpoint) error = %v", err)
 	}
@@ -141,6 +141,6 @@ func TestContextRetainsMessagesBeforeCheckpoint(t *testing.T) {
 	}
 }
 
-func checkpointMessage(summary string) kit.Message {
-	return checkpoint.Checkpoint{Summary: summary}.Message()
+func checkpointMessage(objective string) kit.Message {
+	return checkpoint.Checkpoint{Summary: checkpoint.Summary{Objective: objective}}.Message()
 }

@@ -4,11 +4,13 @@ import (
 	"cmp"
 	"context"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
+	"github.com/vitaliiPsl/crappy-adk/x/output"
 )
 
 var ErrContextOverflow = errors.New("the smallest checkpoint chunk exceeds the model context")
@@ -57,6 +59,7 @@ type Generator struct {
 	config    Config
 	models    ModelResolver
 	estimator Estimator
+	schema    kit.OutputSchema
 }
 
 func NewGenerator(config Config, models ModelResolver, options ...GeneratorOption) (*Generator, error) {
@@ -64,10 +67,16 @@ func NewGenerator(config Config, models ModelResolver, options ...GeneratorOptio
 		return nil, errors.New("model resolver is required")
 	}
 
+	schema, err := output.For[Summary]("checkpoint", "Checkpoint of the work so far.")
+	if err != nil {
+		return nil, err
+	}
+
 	generator := &Generator{
 		config:    config.withDefaults(),
 		models:    models,
 		estimator: &CharacterEstimator{},
+		schema:    schema,
 	}
 
 	for _, option := range options {
@@ -140,16 +149,20 @@ func (g *Generator) generate(
 	previous *Checkpoint,
 	messages []kit.Message,
 ) (*Checkpoint, error) {
+	input, err := g.generatorInput(previous, messages)
+	if err != nil {
+		return nil, err
+	}
+
 	response, err := model.Generate(ctx, kit.ModelRequest{
 		Instructions: g.config.Prompt,
 		Messages: []kit.Message{
-			kit.NewUserMessage(
-				kit.NewTextContent(g.generatorInput(previous, messages)),
-			),
+			kit.NewUserMessage(kit.NewTextContent(input)),
 		},
 		Config: kit.GenerationConfig{
 			MaxOutputTokens: &g.config.MaxOutputTokens,
 		},
+		OutputSchema: &g.schema,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("generate checkpoint: %w", err)
@@ -197,12 +210,17 @@ func (g *Generator) generateChunks(
 	return checkpoint, nil
 }
 
-func (g *Generator) generatorInput(previous *Checkpoint, messages []kit.Message) string {
+func (g *Generator) generatorInput(previous *Checkpoint, messages []kit.Message) (string, error) {
 	var input strings.Builder
 
 	if previous != nil {
+		summary, err := json.MarshalIndent(previous.Summary, "", "  ")
+		if err != nil {
+			return "", fmt.Errorf("encode previous checkpoint: %w", err)
+		}
+
 		input.WriteString("<previous_checkpoint>\n")
-		input.WriteString(previous.Summary)
+		input.Write(summary)
 		input.WriteString("\n</previous_checkpoint>\n\n")
 	}
 
@@ -210,7 +228,7 @@ func (g *Generator) generatorInput(previous *Checkpoint, messages []kit.Message)
 	input.WriteString(flatten(messages))
 	input.WriteString("\n</context>")
 
-	return input.String()
+	return input.String(), nil
 }
 
 func (g *Generator) generatorOutput(response kit.ModelResponse) (*Checkpoint, error) {
@@ -228,10 +246,16 @@ func (g *Generator) generatorOutput(response kit.ModelResponse) (*Checkpoint, er
 		return nil, errors.New("checkpoint model returned an empty response")
 	}
 
-	return &Checkpoint{
-		Summary: strings.TrimSpace(text.Text),
-		Usage:   response.Usage,
-	}, nil
+	var summary Summary
+	if err := json.Unmarshal([]byte(text.Text), &summary); err != nil {
+		return nil, fmt.Errorf("decode checkpoint: %w", err)
+	}
+
+	if strings.TrimSpace(summary.Objective) == "" {
+		return nil, errors.New("checkpoint model returned no objective")
+	}
+
+	return &Checkpoint{Summary: summary, Usage: response.Usage}, nil
 }
 
 func countTurns(messages []kit.Message) int {

@@ -27,7 +27,7 @@ func TestAutomaticCheckpointDuringExecution(t *testing.T) {
 		}},
 	)
 	checkpointModel := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
-		Message:      kit.NewModelMessage(kit.NewTextContent("checkpointed context")),
+		Message:      kit.NewModelMessage(kit.NewTextContent(`{"objective": "checkpointed context", "progress": [], "context": [], "next": []}`)),
 		FinishReason: kit.FinishReasonStop,
 	}})
 
@@ -104,7 +104,7 @@ func TestAutomaticCheckpointRetainsCurrentInput(t *testing.T) {
 		}},
 	)
 	checkpointModel := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
-		Message:      kit.NewModelMessage(kit.NewTextContent("checkpointed context")),
+		Message:      kit.NewModelMessage(kit.NewTextContent(`{"objective": "checkpointed context", "progress": [], "context": [], "next": []}`)),
 		FinishReason: kit.FinishReasonStop,
 	}})
 
@@ -157,6 +157,6 @@ func TestAutomaticCheckpointRetainsCurrentInput(t *testing.T) {
 	}
 }
 
-func checkpointMessage(summary string) string {
-	return checkpoint.Checkpoint{Summary: summary}.Message().TextContent().Text
+func checkpointMessage(objective string) string {
+	return checkpoint.Checkpoint{Summary: checkpoint.Summary{Objective: objective}}.Message().TextContent().Text
 }
