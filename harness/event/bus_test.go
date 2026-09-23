@@ -3,7 +3,9 @@ package event
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/vitaliipsl/crappy/harness/entry"
 )
@@ -119,5 +121,58 @@ func TestBusSubscribeReplaysEntries(t *testing.T) {
 	got := receiveEvent(t, subscription)
 	if got.EntryID != appended[0].ID || got.Type != appended[0].Type {
 		t.Fatalf("event = %#v, want entry %#v", got, appended[0])
+	}
+}
+
+func TestBusCloseStopsSubscribers(t *testing.T) {
+	t.Parallel()
+
+	bus := NewBus("session-1", entry.NewMemoryStore())
+
+	subscription, err := bus.Subscribe(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("Subscribe() error = %v", err)
+	}
+
+	bus.Close()
+	bus.Close()
+
+	select {
+	case <-subscription.Done():
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for subscription to stop")
+	}
+
+	if err := subscription.Err(); !errors.Is(err, ErrClosed) {
+		t.Fatalf("subscription Err() = %v, want ErrClosed", err)
+	}
+}
+
+func TestBusRejectsUseAfterClose(t *testing.T) {
+	t.Parallel()
+
+	entries := entry.NewMemoryStore()
+	bus := NewBus("session-1", entries)
+	bus.Close()
+
+	if _, err := bus.Subscribe(context.Background(), 0); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Subscribe() error = %v, want ErrClosed", err)
+	}
+
+	if err := bus.Emit(context.Background(), "execution-1", "test.event", 1); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Emit() error = %v, want ErrClosed", err)
+	}
+
+	if err := bus.Commit(context.Background(), "execution-1", "test.entry", 1); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Commit() error = %v, want ErrClosed", err)
+	}
+
+	stored, err := entries.List(context.Background(), "session-1", 0)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+
+	if len(stored) != 0 {
+		t.Fatalf("entries = %#v, want none", stored)
 	}
 }

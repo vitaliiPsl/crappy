@@ -26,6 +26,7 @@ type Session struct {
 
 	mu     sync.Mutex
 	active *execution
+	closed bool
 }
 
 func New(
@@ -79,4 +80,18 @@ func (s *Session) Commit(
 	payloads ...any,
 ) error {
 	return s.events.Commit(ctx, executionID, entryType, payloads...)
+}
+
+func (s *Session) Close() {
+	s.mu.Lock()
+	s.closed = true
+	active := s.active
+	s.mu.Unlock()
+
+	if active != nil {
+		active.cancel()
+		<-active.done
+	}
+
+	s.events.Close()
 }

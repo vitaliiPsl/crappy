@@ -15,6 +15,7 @@ import (
 
 var (
 	ErrBusy               = errors.New("session is busy")
+	ErrClosed             = errors.New("session is closed")
 	ErrExecutionNotActive = errors.New("execution is not active")
 )
 
@@ -47,11 +48,16 @@ type ExecutionFinished struct {
 type execution struct {
 	id     string
 	cancel context.CancelFunc
+	done   chan struct{}
 }
 
 func (s *Session) Execute(input kit.Message) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if s.closed {
+		return "", ErrClosed
+	}
 
 	if s.active != nil {
 		return "", ErrBusy
@@ -80,6 +86,7 @@ func (s *Session) Execute(input kit.Message) (string, error) {
 	running := &execution{
 		id:     executionID,
 		cancel: cancel,
+		done:   make(chan struct{}),
 	}
 
 	if err := s.Commit(
@@ -121,11 +128,12 @@ func (s *Session) runExecution(
 ) {
 	defer func() {
 		s.mu.Lock()
-		defer s.mu.Unlock()
-
 		if s.active == execution {
 			s.active = nil
 		}
+		s.mu.Unlock()
+
+		close(execution.done)
 	}()
 
 	stream := agent.Stream(ctx, input)

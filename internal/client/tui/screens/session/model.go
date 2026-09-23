@@ -66,6 +66,8 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case composer.Submit:
 		return m, m.submit(message.Text)
+	case tea.MouseWheelMsg:
+		return m, m.transcript.Update(message)
 	case tea.KeyPressMsg:
 		if message.String() == cancelKey && m.running() {
 			return m, m.cancelExecution(m.executionID)

@@ -3,11 +3,14 @@ package event
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 
 	"github.com/vitaliipsl/crappy/harness/entry"
 )
+
+var ErrClosed = errors.New("event bus is closed")
 
 type Bus struct {
 	sessionID string
@@ -16,6 +19,7 @@ type Bus struct {
 	publishMu   sync.Mutex
 	mu          sync.Mutex
 	subscribers map[*Subscription]struct{}
+	closed      bool
 }
 
 func NewBus(sessionID string, entries entry.Store) *Bus {
@@ -27,9 +31,14 @@ func NewBus(sessionID string, entries entry.Store) *Bus {
 }
 
 func (b *Bus) Subscribe(ctx context.Context, afterID uint64) (*Subscription, error) {
-	subscription := NewSubscription(ctx)
-
 	b.mu.Lock()
+	if b.closed {
+		b.mu.Unlock()
+
+		return nil, ErrClosed
+	}
+
+	subscription := NewSubscription(ctx)
 	b.subscribers[subscription] = struct{}{}
 	b.mu.Unlock()
 
@@ -38,7 +47,6 @@ func (b *Bus) Subscribe(ctx context.Context, afterID uint64) (*Subscription, err
 	entries, err := b.entries.List(ctx, b.sessionID, afterID)
 	if err != nil {
 		subscription.Close()
-		b.remove(subscription)
 
 		return nil, err
 	}
@@ -46,8 +54,6 @@ func (b *Bus) Subscribe(ctx context.Context, afterID uint64) (*Subscription, err
 	subscription.Start(afterID, entries)
 
 	if err := subscription.Err(); err != nil {
-		b.remove(subscription)
-
 		return nil, err
 	}
 
@@ -59,6 +65,10 @@ func (b *Bus) Emit(
 	executionID, eventType string,
 	payload any,
 ) error {
+	if b.isClosed() {
+		return ErrClosed
+	}
+
 	events, err := b.encode(ctx, executionID, eventType, payload)
 	if err != nil {
 		return err
@@ -85,6 +95,10 @@ func (b *Bus) Commit(
 
 	b.publishMu.Lock()
 	defer b.publishMu.Unlock()
+
+	if b.isClosed() {
+		return ErrClosed
+	}
 
 	entries := make([]entry.Entry, len(events))
 	for i, value := range events {
@@ -114,6 +128,26 @@ func (b *Bus) Commit(
 	}
 
 	return nil
+}
+
+func (b *Bus) Close() {
+	b.publishMu.Lock()
+	defer b.publishMu.Unlock()
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.closed {
+		return
+	}
+
+	b.closed = true
+
+	for subscription := range b.subscribers {
+		subscription.stop(ErrClosed)
+	}
+
+	clear(b.subscribers)
 }
 
 func (b *Bus) encode(
@@ -152,6 +186,13 @@ func (b *Bus) emit(event Event) {
 			delete(b.subscribers, subscription)
 		}
 	}
+}
+
+func (b *Bus) isClosed() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.closed
 }
 
 func (b *Bus) removeWhenDone(subscription *Subscription) {

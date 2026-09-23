@@ -76,7 +76,7 @@ func TestRuntimeDeletesClosedSession(t *testing.T) {
 	}
 }
 
-func TestRuntimeRejectsDeletingOpenSession(t *testing.T) {
+func TestRuntimeDeletesOpenSession(t *testing.T) {
 	t.Parallel()
 
 	store := &recordingSessionStore{}
@@ -88,17 +88,31 @@ func TestRuntimeRejectsDeletingOpenSession(t *testing.T) {
 		nil,
 	)
 
-	if _, err := runtime.Session(context.Background(), "session-1"); err != nil {
+	opened, err := runtime.Session(context.Background(), "session-1")
+	if err != nil {
 		t.Fatalf("Session() error = %v", err)
 	}
 
-	err := runtime.DeleteSession(context.Background(), "session-1")
-	if !errors.Is(err, ErrSessionOpen) {
-		t.Fatalf("DeleteSession() error = %v, want ErrSessionOpen", err)
+	if err := runtime.DeleteSession(context.Background(), "session-1"); err != nil {
+		t.Fatalf("DeleteSession() error = %v", err)
 	}
 
-	if store.deleted != "" {
-		t.Fatalf("deleted session = %q, want none", store.deleted)
+	if store.deleted != "session-1" {
+		t.Fatalf("deleted session = %q, want session-1", store.deleted)
+	}
+
+	_, err = opened.Execute(kit.NewUserMessage(kit.NewTextContent("input")))
+	if !errors.Is(err, session.ErrClosed) {
+		t.Fatalf("Execute() on deleted session error = %v, want ErrClosed", err)
+	}
+
+	reopened, err := runtime.Session(context.Background(), "session-1")
+	if err != nil {
+		t.Fatalf("Session() after delete error = %v", err)
+	}
+
+	if reopened == opened {
+		t.Fatal("Session() after delete returned the closed instance")
 	}
 }
 

@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -190,5 +191,27 @@ func TestCancelKeyOnlyFiresWhileRunning(t *testing.T) {
 
 	if _, command := model.Update(tea.KeyPressMsg{Code: tea.KeyEscape}); command == nil {
 		t.Fatal("Update() returned no command for the cancel key while running")
+	}
+}
+
+func TestMouseWheelScrollsTranscript(t *testing.T) {
+	model := New(context.Background(), nil, "session-1")
+	model.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+
+	for i := range 40 {
+		input, err := json.Marshal(kit.NewUserMessage(kit.NewTextContent(fmt.Sprintf("line %d", i))))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		model.applyEvent(event.Event{Type: memory.EntryType, Payload: input})
+	}
+
+	bottom := model.View().Content
+
+	model.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+
+	if model.View().Content == bottom {
+		t.Fatal("mouse wheel up did not scroll the transcript")
 	}
 }

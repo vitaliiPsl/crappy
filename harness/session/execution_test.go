@@ -13,6 +13,7 @@ import (
 
 	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/entry"
+	"github.com/vitaliipsl/crappy/harness/event"
 )
 
 func TestExecuteMaintainsContext(t *testing.T) {
@@ -347,6 +348,91 @@ func TestSessionLifetimeCancelsActiveExecution(t *testing.T) {
 	}
 }
 
+func TestCloseRejectsExecution(t *testing.T) {
+	t.Parallel()
+
+	session, err := New(
+		context.Background(),
+		State{ID: "session-1"},
+		entry.NewMemoryStore(),
+		agent.New(kit.AgentConfig{}, staticModelResolver{kittest.NewModel(t)}),
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	session.Close()
+	session.Close()
+
+	_, err = session.Execute(kit.NewUserMessage(kit.NewTextContent("input")))
+	if !errors.Is(err, ErrClosed) {
+		t.Fatalf("Execute() error = %v, want ErrClosed", err)
+	}
+}
+
+func TestCloseCancelsActiveExecution(t *testing.T) {
+	t.Parallel()
+
+	model := &blockingModel{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+
+	session, err := New(
+		context.Background(),
+		State{ID: "session-1"},
+		entry.NewMemoryStore(),
+		agent.New(kit.AgentConfig{}, staticModelResolver{model}),
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	subscription, err := session.Subscribe(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("Subscribe() error = %v", err)
+	}
+
+	executionID, err := session.Execute(kit.NewUserMessage(kit.NewTextContent("input")))
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	<-model.started
+	session.Close()
+
+	select {
+	case <-subscription.Done():
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for subscription to stop")
+	}
+
+	if err := subscription.Err(); !errors.Is(err, event.ErrClosed) {
+		t.Fatalf("subscription Err() = %v, want event.ErrClosed", err)
+	}
+
+	entries, err := session.Entries(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("Entries() error = %v", err)
+	}
+
+	last := entries[len(entries)-1]
+	if last.ExecutionID != executionID || last.Type != ExecutionFinishedEntryType {
+		t.Fatalf("last entry = %#v, want finished execution %q", last, executionID)
+	}
+
+	var finished ExecutionFinished
+	if err := json.Unmarshal(last.Payload, &finished); err != nil {
+		t.Fatalf("decode finished execution: %v", err)
+	}
+
+	if finished.Outcome != ExecutionCancelled {
+		t.Fatalf("execution outcome = %q, want %q", finished.Outcome, ExecutionCancelled)
+	}
+}
+
 func TestExecuteReconcilesUnfinishedExecutionBeforeContinuing(t *testing.T) {
 	t.Parallel()
 
@@ -449,7 +535,7 @@ func TestRunExecutionReconcilesToolsBeforeCancellation(t *testing.T) {
 
 	session.runExecution(
 		context.Background(),
-		&execution{id: executionID},
+		&execution{id: executionID, done: make(chan struct{})},
 		interruptedAgent{},
 		kit.Message{},
 	)

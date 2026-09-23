@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"errors"
 	"sync"
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
@@ -13,8 +12,6 @@ import (
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/session"
 )
-
-var ErrSessionOpen = errors.New("session is open")
 
 type Runtime struct {
 	ctx context.Context
@@ -57,8 +54,9 @@ func (r *Runtime) DeleteSession(ctx context.Context, sessionID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.opened[sessionID] != nil {
-		return ErrSessionOpen
+	if opened := r.opened[sessionID]; opened != nil {
+		opened.Close()
+		delete(r.opened, sessionID)
 	}
 
 	return r.sessions.Delete(ctx, sessionID)
