@@ -2,7 +2,6 @@ package session
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/vitaliipsl/crappy/harness/checkpoint"
@@ -13,18 +12,17 @@ func (s *Session) checkpoint(
 	ctx context.Context,
 	executionID string,
 ) error {
-	sessionMemory := memory.New(s.state.ID, executionID, s.entries, s.events)
-
-	messages, err := sessionMemory.Context(ctx)
+	entries, err := s.entries.List(ctx, s.state.ID, 0)
 	if err != nil {
 		return fmt.Errorf("read checkpoint context: %w", err)
 	}
 
-	if len(messages) == 0 {
-		return errors.New("no context to checkpoint")
+	previous, messages, err := memory.AfterCheckpoint(entries)
+	if err != nil {
+		return fmt.Errorf("read checkpoint context: %w", err)
 	}
 
-	generated, err := s.checkpoints.Generate(ctx, messages)
+	generated, err := s.checkpoints.Generate(ctx, previous, messages)
 	if err != nil {
 		return err
 	}

@@ -7,6 +7,7 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
 	"github.com/vitaliipsl/crappy/harness/agent"
+	"github.com/vitaliipsl/crappy/harness/checkpoint"
 )
 
 type ContributorOption func(*Contributor)
@@ -17,7 +18,7 @@ func WithTrigger(trigger Trigger) ContributorOption {
 	}
 }
 
-func WithEstimator(estimator Estimator) ContributorOption {
+func WithEstimator(estimator checkpoint.Estimator) ContributorOption {
 	return func(contributor *Contributor) {
 		contributor.estimator = estimator
 	}
@@ -25,7 +26,7 @@ func WithEstimator(estimator Estimator) ContributorOption {
 
 type Contributor struct {
 	trigger   Trigger
-	estimator Estimator
+	estimator checkpoint.Estimator
 }
 
 var _ agent.Contributor = (*Contributor)(nil)
@@ -33,7 +34,7 @@ var _ agent.Contributor = (*Contributor)(nil)
 func New(options ...ContributorOption) *Contributor {
 	contributor := &Contributor{
 		trigger:   WhenInputExceedsRatio(DefaultThresholdRatio),
-		estimator: &CharacterEstimator{},
+		estimator: &checkpoint.CharacterEstimator{},
 	}
 
 	for _, option := range options {

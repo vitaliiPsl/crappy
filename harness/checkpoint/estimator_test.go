@@ -1,4 +1,4 @@
-package automatic
+package checkpoint
 
 import (
 	"testing"

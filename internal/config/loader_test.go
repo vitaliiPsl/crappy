@@ -158,6 +158,10 @@ model_id: model
 	if got, want := loaded.Checkpoint.ThresholdTokens, defaultCheckpointThresholdTokens; got != want {
 		t.Fatalf("checkpoint threshold = %d, want %d", got, want)
 	}
+
+	if got, want := loaded.Checkpoint.RetainedTokens, defaultCheckpointRetainedTokens; got != want {
+		t.Fatalf("checkpoint retained tokens = %d, want %d", got, want)
+	}
 }
 
 func TestLoadFileDisablesCheckpointing(t *testing.T) {

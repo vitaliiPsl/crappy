@@ -1,6 +1,7 @@
 package checkpoint
 
 import (
+	"cmp"
 	"context"
 	_ "embed"
 	"errors"
@@ -15,41 +16,58 @@ var ErrContextOverflow = errors.New("the smallest checkpoint chunk exceeds the m
 //go:embed prompt.md
 var DefaultPrompt string
 
-const DefaultMaxOutputTokens int32 = 4096
+const (
+	DefaultMaxOutputTokens int32 = 4096
+	DefaultRetainedTokens  int   = 20_000
+)
 
 type ModelResolver interface {
 	Resolve(context.Context) (kit.Model, error)
 }
 
-type GeneratorOption func(*Generator)
-
-func WithPrompt(prompt string) GeneratorOption {
-	return func(generator *Generator) {
-		generator.prompt = prompt
-	}
+type Config struct {
+	Prompt          string
+	MaxOutputTokens int32
+	RetainedTokens  *int
 }
 
-func WithMaxOutputTokens(limit int32) GeneratorOption {
+func (c Config) withDefaults() Config {
+	c.Prompt = cmp.Or(c.Prompt, DefaultPrompt)
+	c.MaxOutputTokens = cmp.Or(c.MaxOutputTokens, DefaultMaxOutputTokens)
+
+	retained := DefaultRetainedTokens
+	if c.RetainedTokens != nil {
+		retained = *c.RetainedTokens
+	}
+
+	c.RetainedTokens = &retained
+
+	return c
+}
+
+type GeneratorOption func(*Generator)
+
+func WithEstimator(estimator Estimator) GeneratorOption {
 	return func(generator *Generator) {
-		generator.maxOutputTokens = limit
+		generator.estimator = estimator
 	}
 }
 
 type Generator struct {
-	models          ModelResolver
-	prompt          string
-	maxOutputTokens int32
+	config    Config
+	models    ModelResolver
+	estimator Estimator
 }
 
-func NewGenerator(models ModelResolver, options ...GeneratorOption) (*Generator, error) {
+func NewGenerator(config Config, models ModelResolver, options ...GeneratorOption) (*Generator, error) {
 	if models == nil {
 		return nil, errors.New("model resolver is required")
 	}
 
 	generator := &Generator{
-		models:          models,
-		prompt:          DefaultPrompt,
-		maxOutputTokens: DefaultMaxOutputTokens,
+		config:    config.withDefaults(),
+		models:    models,
+		estimator: &CharacterEstimator{},
 	}
 
 	for _, option := range options {
@@ -61,6 +79,46 @@ func NewGenerator(models ModelResolver, options ...GeneratorOption) (*Generator,
 
 func (g *Generator) Generate(
 	ctx context.Context,
+	previous *Checkpoint,
+	messages []kit.Message,
+) (*Checkpoint, error) {
+	if len(messages) == 0 {
+		return nil, errors.New("no messages to checkpoint")
+	}
+
+	keepFrom := g.keepFrom(messages)
+
+	checkpoint, err := g.summarize(ctx, previous, messages[:keepFrom])
+	if err != nil {
+		return nil, err
+	}
+
+	checkpoint.Retained = len(messages) - keepFrom
+
+	return checkpoint, nil
+}
+
+func (g *Generator) keepFrom(messages []kit.Message) int {
+	keepFrom := len(messages)
+	tokens := 0
+
+	for i := len(messages) - 1; i > 0; i-- {
+		tokens += g.estimator.EstimateMessage(messages[i])
+		if tokens > *g.config.RetainedTokens {
+			break
+		}
+
+		if messages[i].Role != kit.RoleTool {
+			keepFrom = i
+		}
+	}
+
+	return keepFrom
+}
+
+func (g *Generator) summarize(
+	ctx context.Context,
+	previous *Checkpoint,
 	messages []kit.Message,
 ) (*Checkpoint, error) {
 	resolved, err := g.models.Resolve(ctx)
@@ -68,12 +126,12 @@ func (g *Generator) Generate(
 		return nil, fmt.Errorf("resolve model: %w", err)
 	}
 
-	checkpoint, err := g.generate(ctx, resolved, nil, messages)
+	checkpoint, err := g.generate(ctx, resolved, previous, messages)
 	if !errors.Is(err, kit.ErrContextLength) {
 		return checkpoint, err
 	}
 
-	return g.generateChunks(ctx, resolved, messages)
+	return g.generateChunks(ctx, resolved, previous, messages)
 }
 
 func (g *Generator) generate(
@@ -83,14 +141,14 @@ func (g *Generator) generate(
 	messages []kit.Message,
 ) (*Checkpoint, error) {
 	response, err := model.Generate(ctx, kit.ModelRequest{
-		Instructions: g.prompt,
+		Instructions: g.config.Prompt,
 		Messages: []kit.Message{
 			kit.NewUserMessage(
 				kit.NewTextContent(g.generatorInput(previous, messages)),
 			),
 		},
 		Config: kit.GenerationConfig{
-			MaxOutputTokens: &g.maxOutputTokens,
+			MaxOutputTokens: &g.config.MaxOutputTokens,
 		},
 	})
 	if err != nil {
@@ -103,6 +161,7 @@ func (g *Generator) generate(
 func (g *Generator) generateChunks(
 	ctx context.Context,
 	model kit.Model,
+	checkpoint *Checkpoint,
 	messages []kit.Message,
 ) (*Checkpoint, error) {
 	chunkTurns := countTurns(messages) / 2
@@ -110,10 +169,7 @@ func (g *Generator) generateChunks(
 		return nil, ErrContextOverflow
 	}
 
-	var (
-		checkpoint *Checkpoint
-		usage      kit.Usage
-	)
+	var usage kit.Usage
 
 	for len(messages) > 0 {
 		chunk, remaining := firstTurns(messages, chunkTurns)

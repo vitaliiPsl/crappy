@@ -87,10 +87,60 @@ func TestContextStartsAtLatestCheckpoint(t *testing.T) {
 	}
 
 	want := []kit.Message{
-		kit.NewUserMessage(kit.NewTextContent("summary")),
+		checkpointMessage("summary"),
 		kit.NewModelMessage(kit.NewTextContent("new")),
 	}
 	if !reflect.DeepEqual(contextMessages, want) {
 		t.Fatalf("Context() = %#v, want %#v", contextMessages, want)
 	}
+}
+
+func TestContextRetainsMessagesBeforeCheckpoint(t *testing.T) {
+	t.Parallel()
+
+	store := entry.NewMemoryStore()
+	bus := event.NewBus("session-1", store)
+	memory := New("session-1", "execution-1", store, bus)
+
+	if err := memory.Record(
+		context.Background(),
+		kit.NewUserMessage(kit.NewTextContent("summarized")),
+		kit.NewModelMessage(kit.NewTextContent("retained")),
+	); err != nil {
+		t.Fatalf("Record() error = %v", err)
+	}
+
+	if err := bus.Commit(
+		context.Background(),
+		"",
+		checkpoint.EntryType,
+		checkpoint.Checkpoint{Summary: "summary", Retained: 1},
+	); err != nil {
+		t.Fatalf("Commit(checkpoint) error = %v", err)
+	}
+
+	if err := memory.Record(
+		context.Background(),
+		kit.NewUserMessage(kit.NewTextContent("after")),
+	); err != nil {
+		t.Fatalf("Record(after) error = %v", err)
+	}
+
+	contextMessages, err := memory.Context(context.Background())
+	if err != nil {
+		t.Fatalf("Context() error = %v", err)
+	}
+
+	want := []kit.Message{
+		checkpointMessage("summary"),
+		kit.NewModelMessage(kit.NewTextContent("retained")),
+		kit.NewUserMessage(kit.NewTextContent("after")),
+	}
+	if !reflect.DeepEqual(contextMessages, want) {
+		t.Fatalf("Context() = %#v, want %#v", contextMessages, want)
+	}
+}
+
+func checkpointMessage(summary string) kit.Message {
+	return checkpoint.Checkpoint{Summary: summary}.Message()
 }

@@ -36,7 +36,17 @@ func (m *entryMemory) Context(ctx context.Context) ([]kit.Message, error) {
 		return nil, err
 	}
 
-	return contextMessages(entries)
+	latest, messages, err := AfterCheckpoint(entries)
+	if err != nil {
+		return nil, err
+	}
+
+	context := make([]kit.Message, 0, len(messages)+1)
+	if latest != nil {
+		context = append(context, latest.Message())
+	}
+
+	return append(context, messages...), nil
 }
 
 func (m *entryMemory) History(ctx context.Context) ([]kit.Message, error) {
@@ -57,7 +67,7 @@ func (m *entryMemory) Record(ctx context.Context, messages ...kit.Message) error
 	return m.events.Commit(ctx, m.executionID, EntryType, payloads...)
 }
 
-func contextMessages(entries []entry.Entry) ([]kit.Message, error) {
+func AfterCheckpoint(entries []entry.Entry) (*checkpoint.Checkpoint, []kit.Message, error) {
 	for i := len(entries) - 1; i >= 0; i-- {
 		if entries[i].Type != checkpoint.EntryType {
 			continue
@@ -65,21 +75,32 @@ func contextMessages(entries []entry.Entry) ([]kit.Message, error) {
 
 		var latest checkpoint.Checkpoint
 		if err := json.Unmarshal(entries[i].Payload, &latest); err != nil {
-			return nil, fmt.Errorf("decode checkpoint entry %d: %w", entries[i].ID, err)
+			return nil, nil, fmt.Errorf("decode checkpoint entry %d: %w", entries[i].ID, err)
 		}
 
-		projected, err := messages(entries[i+1:])
+		messages, err := messages(entries[retainedFrom(entries[:i], latest.Retained):])
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
-		return append(
-			[]kit.Message{kit.NewUserMessage(kit.NewTextContent(latest.Summary))},
-			projected...,
-		), nil
+		return &latest, messages, nil
 	}
 
-	return messages(entries)
+	messages, err := messages(entries)
+
+	return nil, messages, err
+}
+
+func retainedFrom(entries []entry.Entry, retained int) int {
+	start := len(entries)
+	for start > 0 && retained > 0 {
+		start--
+		if entries[start].Type == EntryType {
+			retained--
+		}
+	}
+
+	return start
 }
 
 func messages(entries []entry.Entry) ([]kit.Message, error) {
@@ -89,13 +110,22 @@ func messages(entries []entry.Entry) ([]kit.Message, error) {
 			continue
 		}
 
-		var message kit.Message
-		if err := json.Unmarshal(value.Payload, &message); err != nil {
-			return nil, fmt.Errorf("decode message entry %d: %w", value.ID, err)
+		message, err := decode(value)
+		if err != nil {
+			return nil, err
 		}
 
 		messages = append(messages, message)
 	}
 
 	return messages, nil
+}
+
+func decode(value entry.Entry) (kit.Message, error) {
+	var message kit.Message
+	if err := json.Unmarshal(value.Payload, &message); err != nil {
+		return kit.Message{}, fmt.Errorf("decode message entry %d: %w", value.ID, err)
+	}
+
+	return message, nil
 }

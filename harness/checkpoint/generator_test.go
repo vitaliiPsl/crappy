@@ -21,15 +21,14 @@ func TestGeneratorGenerate(t *testing.T) {
 	}}}
 
 	generator, err := NewGenerator(
+		Config{Prompt: "summarize", MaxOutputTokens: 512, RetainedTokens: &retainNothing},
 		staticModelResolver{model},
-		WithPrompt("summarize"),
-		WithMaxOutputTokens(512),
 	)
 	if err != nil {
 		t.Fatalf("NewGenerator() error = %v", err)
 	}
 
-	checkpoint, err := generator.Generate(context.Background(), []kit.Message{
+	checkpoint, err := generator.Generate(context.Background(), nil, []kit.Message{
 		kit.NewUserMessage(
 			kit.NewTextContent("build a harness"),
 		),
@@ -94,7 +93,7 @@ func TestGeneratorChunksAtModelTurnBoundaries(t *testing.T) {
 
 	resolveCalls := 0
 
-	generator, err := NewGenerator(modelResolverFunc(func(
+	generator, err := NewGenerator(Config{RetainedTokens: &retainNothing}, modelResolverFunc(func(
 		_ context.Context,
 	) (kit.Model, error) {
 		resolveCalls++
@@ -105,7 +104,7 @@ func TestGeneratorChunksAtModelTurnBoundaries(t *testing.T) {
 		t.Fatalf("NewGenerator() error = %v", err)
 	}
 
-	checkpoint, err := generator.Generate(context.Background(), messages)
+	checkpoint, err := generator.Generate(context.Background(), nil, messages)
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -147,12 +146,12 @@ func TestGeneratorReturnsContextOverflowForSingleTurn(t *testing.T) {
 
 	model := &checkpointModel{results: []modelResult{{err: kit.ErrContextLength}}}
 
-	generator, err := NewGenerator(staticModelResolver{model})
+	generator, err := NewGenerator(Config{RetainedTokens: &retainNothing}, staticModelResolver{model})
 	if err != nil {
 		t.Fatalf("NewGenerator() error = %v", err)
 	}
 
-	_, err = generator.Generate(context.Background(), []kit.Message{
+	_, err = generator.Generate(context.Background(), nil, []kit.Message{
 		kit.NewUserMessage(kit.NewTextContent("one")),
 		kit.NewModelMessage(kit.NewTextContent("response one")),
 	})
@@ -173,7 +172,7 @@ func TestGeneratorShrinksRejectedChunks(t *testing.T) {
 		{response: checkpointResponse("four", kit.Usage{InputTokens: 1})},
 	}}
 
-	generator, err := NewGenerator(staticModelResolver{model})
+	generator, err := NewGenerator(Config{RetainedTokens: &retainNothing}, staticModelResolver{model})
 	if err != nil {
 		t.Fatalf("NewGenerator() error = %v", err)
 	}
@@ -187,7 +186,7 @@ func TestGeneratorShrinksRejectedChunks(t *testing.T) {
 		)
 	}
 
-	checkpoint, err := generator.Generate(context.Background(), messages)
+	checkpoint, err := generator.Generate(context.Background(), nil, messages)
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -212,19 +211,139 @@ func TestGeneratorShrinksRejectedChunks(t *testing.T) {
 	}
 }
 
+func TestGeneratorUpdatesPreviousCheckpoint(t *testing.T) {
+	t.Parallel()
+
+	model := &checkpointModel{results: []modelResult{{
+		response: checkpointResponse("updated", kit.Usage{}),
+	}}}
+
+	generator, err := NewGenerator(Config{RetainedTokens: &retainNothing}, staticModelResolver{model})
+	if err != nil {
+		t.Fatalf("NewGenerator() error = %v", err)
+	}
+
+	if _, err := generator.Generate(
+		context.Background(),
+		&Checkpoint{Summary: "previous"},
+		[]kit.Message{kit.NewUserMessage(kit.NewTextContent("new work"))},
+	); err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	input := model.requests[0].Messages[0].TextContent().Text
+	if !strings.Contains(input, "<previous_checkpoint>\nprevious") ||
+		!strings.Contains(input, "new work") {
+		t.Fatalf("input = %q", input)
+	}
+}
+
+func TestGeneratorKeepFrom(t *testing.T) {
+	t.Parallel()
+
+	call := kit.NewToolCall("call-1", "search", map[string]any{})
+	result := kit.NewToolResult(call, kit.NewToolOutput(kit.NewTextContent("found")), nil)
+	messages := []kit.Message{
+		kit.NewUserMessage(kit.NewTextContent("old")),
+		kit.NewModelMessage(kit.NewToolCallContent(call)),
+		kit.NewToolMessage(kit.NewToolResultContent(result)),
+		kit.NewModelMessage(kit.NewTextContent("recent")),
+	}
+
+	estimator := CharacterEstimator{}
+	recent := estimator.EstimateMessage(messages[3])
+	toolResult := estimator.EstimateMessage(messages[2])
+
+	tests := []struct {
+		name     string
+		retained int
+		want     int
+	}{
+		{name: "nothing fits", retained: 0, want: 4},
+		{name: "last message", retained: recent, want: 3},
+		{name: "never splits tool result from its call", retained: recent + toolResult, want: 3},
+		{name: "always summarizes the first message", retained: 1 << 20, want: 1},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			generator, err := NewGenerator(
+				Config{RetainedTokens: &test.retained},
+				staticModelResolver{&checkpointModel{}},
+			)
+			if err != nil {
+				t.Fatalf("NewGenerator() error = %v", err)
+			}
+
+			if got := generator.keepFrom(messages); got != test.want {
+				t.Fatalf("keepFrom() = %d, want %d", got, test.want)
+			}
+		})
+	}
+}
+
 func TestGeneratorValidatesInputs(t *testing.T) {
 	t.Parallel()
 
-	if _, err := NewGenerator(nil); err == nil {
-		t.Fatal("NewGenerator(nil) error = nil")
+	if _, err := NewGenerator(Config{}, nil); err == nil {
+		t.Fatal("NewGenerator(Config{}, nil) error = nil")
 	}
 
 	if _, err := NewGenerator(
+		Config{},
 		staticModelResolver{&checkpointModel{}},
 	); err != nil {
 		t.Fatalf("NewGenerator() error = %v", err)
 	}
 }
+
+func TestGeneratorCountsRetainedMessages(t *testing.T) {
+	t.Parallel()
+
+	model := &checkpointModel{results: []modelResult{{
+		response: checkpointResponse("summary", kit.Usage{}),
+	}}}
+	retained := 1 << 20
+
+	generator, err := NewGenerator(Config{RetainedTokens: &retained}, staticModelResolver{model})
+	if err != nil {
+		t.Fatalf("NewGenerator() error = %v", err)
+	}
+
+	checkpoint, err := generator.Generate(context.Background(), nil, []kit.Message{
+		kit.NewUserMessage(kit.NewTextContent("summarized")),
+		kit.NewModelMessage(kit.NewTextContent("retained")),
+	})
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	if got, want := checkpoint.Retained, 1; got != want {
+		t.Fatalf("Retained = %d, want %d", got, want)
+	}
+
+	input := model.requests[0].Messages[0].TextContent().Text
+	if strings.Contains(input, "retained") {
+		t.Fatalf("input contains retained message: %q", input)
+	}
+}
+
+func TestGeneratorRejectsEmptyMessages(t *testing.T) {
+	t.Parallel()
+
+	generator, err := NewGenerator(Config{}, staticModelResolver{&checkpointModel{}})
+	if err != nil {
+		t.Fatalf("NewGenerator() error = %v", err)
+	}
+
+	if _, err := generator.Generate(context.Background(), nil, nil); err == nil {
+		t.Fatal("Generate() error = nil, want error")
+	}
+}
+
+var retainNothing = 0
 
 type modelResult struct {
 	response kit.ModelResponse

@@ -67,7 +67,7 @@ func newRuntime(ctx context.Context) (*runtime.Runtime, error) {
 		model.Retry(settings.Retry),
 	)
 
-	generator, err := checkpoint.NewGenerator(modelResolver)
+	generator, err := checkpoint.NewGenerator(config.CheckpointConfig(), modelResolver)
 	if err != nil {
 		return nil, fmt.Errorf("create checkpoint generator: %w", err)
 	}
