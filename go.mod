@@ -8,7 +8,7 @@ require (
 	charm.land/lipgloss/v2 v2.0.2
 	github.com/go-playground/validator/v10 v10.25.0
 	github.com/google/uuid v1.6.0
-	github.com/vitaliiPsl/crappy-adk v0.11.0
+	github.com/vitaliiPsl/crappy-adk v0.11.1-0.20260924012954-59b4711910e7
 	gopkg.in/yaml.v3 v3.0.1
 )
 

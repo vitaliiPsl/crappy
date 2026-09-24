@@ -2,6 +2,7 @@ package automatic
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
@@ -66,6 +67,89 @@ func TestContributorCheckpointsBeforeModelRequest(t *testing.T) {
 	if got, want := messages[0].TextContent().Text, "checkpoint"; got != want {
 		t.Fatalf("request message = %q, want %q", got, want)
 	}
+}
+
+func TestContributorCheckpointsAndRetriesOnContextOverflow(t *testing.T) {
+	t.Parallel()
+
+	model := kittest.NewModelWithConfig(
+		t,
+		kit.ModelConfig{InputLimit: 100},
+		kittest.ModelResult{Error: kit.ErrContextLength},
+		kittest.ModelResult{Response: kit.ModelResponse{
+			Message:      kit.NewModelMessage(kit.NewTextContent("done")),
+			FinishReason: kit.FinishReasonStop,
+		}},
+	)
+	memory := &testMemory{}
+	checkpointed := 0
+	built := buildAgent(t, model, memory, func(context.Context) error {
+		checkpointed++
+		memory.context = []kit.Message{kit.NewUserMessage(kit.NewTextContent("checkpoint"))}
+
+		return nil
+	})
+
+	if _, err := built.Run(context.Background(), kit.NewUserMessage(kit.NewTextContent("original"))); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if checkpointed != 1 {
+		t.Fatalf("checkpoint calls = %d, want 1", checkpointed)
+	}
+
+	model.AssertCallCount(t, 2)
+
+	if got, want := model.CallAt(1).Messages[0].TextContent().Text, "checkpoint"; got != want {
+		t.Fatalf("retried request message = %q, want %q", got, want)
+	}
+}
+
+func TestContributorIgnoresOtherModelErrors(t *testing.T) {
+	t.Parallel()
+
+	model := kittest.NewModelWithConfig(
+		t,
+		kit.ModelConfig{InputLimit: 100},
+		kittest.ModelResult{Error: kit.ErrRateLimit},
+	)
+	built := buildAgent(t, model, &testMemory{}, func(context.Context) error {
+		t.Fatal("checkpoint called for a non-overflow error")
+
+		return nil
+	})
+
+	_, err := built.Run(context.Background(), kit.NewUserMessage(kit.NewTextContent("original")))
+	if !errors.Is(err, kit.ErrRateLimit) {
+		t.Fatalf("Run() error = %v, want ErrRateLimit", err)
+	}
+
+	model.AssertCallCount(t, 1)
+}
+
+func buildAgent(
+	t *testing.T,
+	model kit.Model,
+	memory kit.Memory,
+	checkpoint func(context.Context) error,
+) kit.Agent {
+	t.Helper()
+
+	factory := harnessagent.New(
+		kit.AgentConfig{},
+		staticModelResolver{model},
+		harnessagent.WithContributors(New(WithEstimator(fixedEstimator{}))),
+	)
+
+	built, err := factory.Build(context.Background(), harnessagent.BuildRequest{
+		Memory:     memory,
+		Checkpoint: checkpoint,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	return built
 }
 
 func TestContributorUsesLastModelUsage(t *testing.T) {

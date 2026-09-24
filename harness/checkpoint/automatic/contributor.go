@@ -2,6 +2,7 @@ package automatic
 
 import (
 	"context"
+	"errors"
 
 	adkagent "github.com/vitaliiPsl/crappy-adk/agent"
 	"github.com/vitaliiPsl/crappy-adk/kit"
@@ -55,6 +56,9 @@ func (c *Contributor) Contribute(
 			adkagent.WithOnModelRequest(
 				c.beforeModelRequest(build.Request.Checkpoint, inputLimit),
 			),
+			adkagent.WithOnModelError(
+				c.onModelError(build.Request.Checkpoint),
+			),
 		},
 	}, nil
 }
@@ -74,19 +78,41 @@ func (c *Contributor) beforeModelRequest(
 			return request, nil
 		}
 
-		if err := checkpoint(run.Context); err != nil {
-			return kit.ModelRequest{}, err
-		}
-
-		messages, err := run.Memory.Context(run.Context)
-		if err != nil {
-			return kit.ModelRequest{}, err
-		}
-
-		request.Messages = messages
-
-		return request, nil
+		return compact(run, checkpoint, request)
 	}
+}
+
+func (c *Contributor) onModelError(checkpoint func(context.Context) error) kit.OnModelError {
+	return func(
+		run *kit.RunContext,
+		request kit.ModelRequest,
+		err error,
+	) (kit.ModelRequest, error) {
+		if !errors.Is(err, kit.ErrContextLength) {
+			return kit.ModelRequest{}, err
+		}
+
+		return compact(run, checkpoint, request)
+	}
+}
+
+func compact(
+	run *kit.RunContext,
+	checkpoint func(context.Context) error,
+	request kit.ModelRequest,
+) (kit.ModelRequest, error) {
+	if err := checkpoint(run.Context); err != nil {
+		return kit.ModelRequest{}, err
+	}
+
+	messages, err := run.Memory.Context(run.Context)
+	if err != nil {
+		return kit.ModelRequest{}, err
+	}
+
+	request.Messages = messages
+
+	return request, nil
 }
 
 func (c *Contributor) inputTokens(
