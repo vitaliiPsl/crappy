@@ -76,6 +76,24 @@ func (s *MemoryStore) List(ctx context.Context, sessionID string, afterID uint64
 	return cloneEntries(history[start:]), nil
 }
 
+func (s *MemoryStore) Latest(ctx context.Context, sessionID, entryType string) (Entry, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return Entry{}, false, err
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	history := s.entries[sessionID]
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Type == entryType {
+			return cloneEntries(history[i : i+1])[0], true, nil
+		}
+	}
+
+	return Entry{}, false, nil
+}
+
 func cloneEntries(entries []Entry) []Entry {
 	cloned := make([]Entry, len(entries))
 	for i, entry := range entries {

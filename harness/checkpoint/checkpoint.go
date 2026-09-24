@@ -25,10 +25,10 @@ type Summary struct {
 type Checkpoint struct {
 	Summary
 
-	Retained     int       `json:"retained"`
-	TokensBefore int       `json:"tokens_before"`
-	TokensAfter  int       `json:"tokens_after"`
-	Usage        kit.Usage `json:"usage"`
+	Retained     []kit.Message `json:"retained"`
+	TokensBefore int           `json:"tokens_before"`
+	TokensAfter  int           `json:"tokens_after"`
+	Usage        kit.Usage     `json:"usage"`
 }
 
 func (c Checkpoint) Message() kit.Message {

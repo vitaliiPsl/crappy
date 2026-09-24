@@ -1,13 +1,13 @@
 package jsonl
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"time"
 
 	"github.com/vitaliipsl/crappy/harness/entry"
@@ -64,35 +64,112 @@ func (s *entryStore) List(
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
-	if state.entries != nil {
-		return entriesAfter(state.entries, afterID), nil
-	}
-
-	path := filepath.Join(s.storage.root, sessionID, transcriptFilename)
-
-	file, err := os.OpenFile(path, os.O_RDWR, 0)
-	if errors.Is(err, os.ErrNotExist) {
-		state.entries = make([]entry.Entry, 0)
-
-		return []entry.Entry{}, nil
-	}
-
-	if err != nil {
-		return nil, fmt.Errorf("open transcript: %w", err)
-	}
-
-	defer func() {
-		_ = file.Close()
-	}()
-
-	entries, err := loadEntries(ctx, file)
+	index, err := s.index(ctx, sessionID, state)
 	if err != nil {
 		return nil, err
 	}
 
-	state.entries = entries
+	entries := make([]entry.Entry, 0)
 
-	return entriesAfter(state.entries, afterID), nil
+	err = s.scan(ctx, sessionID, index.offsetAfter(afterID), func(value entry.Entry, _ int64) bool {
+		if value.ID > afterID {
+			entries = append(entries, value)
+		}
+
+		return true
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return entries, nil
+}
+
+func (s *entryStore) Latest(
+	ctx context.Context,
+	sessionID, entryType string,
+) (entry.Entry, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return entry.Entry{}, false, err
+	}
+
+	state, err := s.storage.state(sessionID)
+	if err != nil {
+		return entry.Entry{}, false, err
+	}
+
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	index, err := s.index(ctx, sessionID, state)
+	if err != nil {
+		return entry.Entry{}, false, err
+	}
+
+	latest, found := index.latest[entryType]
+	if !found {
+		return entry.Entry{}, false, nil
+	}
+
+	var value entry.Entry
+
+	err = s.scan(ctx, sessionID, latest.offset, func(current entry.Entry, _ int64) bool {
+		value = current
+
+		return false
+	})
+	if err != nil {
+		return entry.Entry{}, false, err
+	}
+
+	if value.ID != latest.id {
+		return entry.Entry{}, false, fmt.Errorf("transcript index is stale for entry %d", latest.id)
+	}
+
+	return value, true, nil
+}
+
+func (s *entryStore) index(
+	ctx context.Context,
+	sessionID string,
+	state *sessionState,
+) (*transcriptIndex, error) {
+	if state.index != nil {
+		return state.index, nil
+	}
+
+	index := newTranscriptIndex()
+	if err := s.scan(ctx, sessionID, 0, index.add); err != nil {
+		return nil, err
+	}
+
+	state.index = index
+
+	return index, nil
+}
+
+func (s *entryStore) scan(
+	ctx context.Context,
+	sessionID string,
+	offset int64,
+	visit func(entry.Entry, int64) bool,
+) (resultErr error) {
+	path := filepath.Join(s.storage.root, sessionID, transcriptFilename)
+
+	file, err := os.OpenFile(path, os.O_RDWR, 0)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+
+	if err != nil {
+		return fmt.Errorf("open transcript: %w", err)
+	}
+
+	defer func() {
+		resultErr = errors.Join(resultErr, file.Close())
+	}()
+
+	return scanEntries(ctx, file, offset, visit)
 }
 
 func (s *entryStore) append(
@@ -127,21 +204,19 @@ func (s *entryStore) append(
 		return nil, fmt.Errorf("protect transcript: %w", err)
 	}
 
-	if state.entries == nil {
-		entries, err := loadEntries(ctx, file)
-		if err != nil {
-			return nil, err
-		}
-
-		state.entries = entries
+	index, err := s.index(ctx, sessionID, state)
+	if err != nil {
+		return nil, err
 	}
 
-	prepared := prepareEntries(sessionID, entries, lastEntryID(state.entries))
+	prepared := prepareEntries(sessionID, entries, index.lastID)
 
-	encoded, err := encodeEntries(prepared)
+	lines, err := encodeEntries(prepared)
 	if err != nil {
 		return nil, fmt.Errorf("encode transcript entries: %w", err)
 	}
+
+	encoded := bytes.Join(lines, nil)
 
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -160,24 +235,27 @@ func (s *entryStore) append(
 	}
 
 	if err != nil {
-		state.entries = nil
+		state.index = nil
 
 		return nil, rollback(file, offset, fmt.Errorf("append transcript: %w", err))
 	}
 
 	if err := ctx.Err(); err != nil {
-		state.entries = nil
+		state.index = nil
 
 		return nil, rollback(file, offset, err)
 	}
 
 	if err := file.Sync(); err != nil {
-		state.entries = nil
+		state.index = nil
 
 		return nil, rollback(file, offset, fmt.Errorf("sync transcript: %w", err))
 	}
 
-	state.entries = append(state.entries, cloneEntries(prepared)...)
+	for i, value := range prepared {
+		index.add(value, offset)
+		offset += int64(len(lines[i]))
+	}
 
 	if newFile {
 		if err := syncDirectory(directory); err != nil {
@@ -206,32 +284,6 @@ func prepareEntries(
 	}
 
 	return prepared
-}
-
-func entriesAfter(entries []entry.Entry, afterID uint64) []entry.Entry {
-	start := sort.Search(len(entries), func(index int) bool {
-		return entries[index].ID > afterID
-	})
-
-	return cloneEntries(entries[start:])
-}
-
-func lastEntryID(entries []entry.Entry) uint64 {
-	if len(entries) == 0 {
-		return 0
-	}
-
-	return entries[len(entries)-1].ID
-}
-
-func cloneEntries(entries []entry.Entry) []entry.Entry {
-	cloned := make([]entry.Entry, len(entries))
-	for index, current := range entries {
-		current.Payload = append([]byte(nil), current.Payload...)
-		cloned[index] = current
-	}
-
-	return cloned
 }
 
 func rollback(file *os.File, offset int64, cause error) error {

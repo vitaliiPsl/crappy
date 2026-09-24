@@ -295,3 +295,47 @@ func TestEntryStoreHonorsCanceledContext(t *testing.T) {
 		t.Fatalf("List() error = %v, want context.Canceled", err)
 	}
 }
+
+func TestEntryStoreLatestAndListAfterAcrossReopen(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join(t.TempDir(), "sessions")
+	store := openStorage(t, root).EntryStore()
+
+	if _, err := store.Append(context.Background(), "session-1",
+		entry.Entry{Type: "message", Payload: json.RawMessage(`1`)},
+		entry.Entry{Type: "checkpoint", Payload: json.RawMessage(`2`)},
+		entry.Entry{Type: "message", Payload: json.RawMessage(`3`)},
+	); err != nil {
+		t.Fatalf("Append() error = %v", err)
+	}
+
+	if _, err := store.Append(context.Background(), "session-1",
+		entry.Entry{Type: "message", Payload: json.RawMessage(`4`)},
+	); err != nil {
+		t.Fatalf("Append() error = %v", err)
+	}
+
+	for name, current := range map[string]entry.Store{
+		"same store": store,
+		"reopened":   openStorage(t, root).EntryStore(),
+	} {
+		latest, found, err := current.Latest(context.Background(), "session-1", "checkpoint")
+		if err != nil || !found || latest.ID != 2 {
+			t.Fatalf("%s: Latest() = %#v, %v, %v, want entry 2", name, latest, found, err)
+		}
+
+		after, err := current.List(context.Background(), "session-1", latest.ID)
+		if err != nil {
+			t.Fatalf("%s: List() error = %v", name, err)
+		}
+
+		if len(after) != 2 || after[0].ID != 3 || after[1].ID != 4 {
+			t.Fatalf("%s: List(after 2) = %#v, want entries 3 and 4", name, after)
+		}
+
+		if _, found, err := current.Latest(context.Background(), "session-1", "missing"); err != nil || found {
+			t.Fatalf("%s: Latest(missing) = %v, %v, want not found", name, found, err)
+		}
+	}
+}

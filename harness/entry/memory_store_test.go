@@ -183,3 +183,29 @@ func TestMemoryStoreConcurrentAppend(t *testing.T) {
 		}
 	}
 }
+
+func TestMemoryStoreLatest(t *testing.T) {
+	t.Parallel()
+
+	store := NewMemoryStore()
+	if _, err := store.Append(context.Background(), "session-1",
+		Entry{Type: "a", Payload: json.RawMessage(`1`)},
+		Entry{Type: "b", Payload: json.RawMessage(`2`)},
+		Entry{Type: "a", Payload: json.RawMessage(`3`)},
+	); err != nil {
+		t.Fatalf("Append() error = %v", err)
+	}
+
+	latest, ok, err := store.Latest(context.Background(), "session-1", "a")
+	if err != nil || !ok {
+		t.Fatalf("Latest() = %v, %v, want entry", ok, err)
+	}
+
+	if latest.ID != 3 || string(latest.Payload) != `3` {
+		t.Fatalf("Latest() = %#v, want entry 3", latest)
+	}
+
+	if _, ok, err := store.Latest(context.Background(), "session-1", "missing"); err != nil || ok {
+		t.Fatalf("Latest(missing) = %v, %v, want not found", ok, err)
+	}
+}

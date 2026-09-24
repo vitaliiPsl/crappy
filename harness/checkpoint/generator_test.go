@@ -367,7 +367,7 @@ func TestGeneratorValidatesInputs(t *testing.T) {
 	}
 }
 
-func TestGeneratorCountsRetainedMessages(t *testing.T) {
+func TestGeneratorRetainsRecentMessages(t *testing.T) {
 	t.Parallel()
 
 	model := &checkpointModel{results: []modelResult{{
@@ -388,8 +388,9 @@ func TestGeneratorCountsRetainedMessages(t *testing.T) {
 		t.Fatalf("Generate() error = %v", err)
 	}
 
-	if got, want := checkpoint.Retained, 1; got != want {
-		t.Fatalf("Retained = %d, want %d", got, want)
+	want := []kit.Message{kit.NewModelMessage(kit.NewTextContent("retained"))}
+	if !reflect.DeepEqual(checkpoint.Retained, want) {
+		t.Fatalf("Retained = %#v, want %#v", checkpoint.Retained, want)
 	}
 
 	if checkpoint.TokensBefore <= 0 || checkpoint.TokensAfter <= 0 {

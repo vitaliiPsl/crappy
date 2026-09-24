@@ -12,23 +12,27 @@ import (
 	"github.com/vitaliipsl/crappy/harness/entry"
 )
 
-func loadEntries(
+func scanEntries(
 	ctx context.Context,
 	file *os.File,
-) ([]entry.Entry, error) {
+	offset int64,
+	visit func(entry.Entry, int64) bool,
+) error {
 	info, err := file.Stat()
 	if err != nil {
-		return nil, fmt.Errorf("stat transcript: %w", err)
+		return fmt.Errorf("stat transcript: %w", err)
 	}
 
-	entries := make([]entry.Entry, 0)
+	if _, err := file.Seek(offset, io.SeekStart); err != nil {
+		return fmt.Errorf("seek transcript: %w", err)
+	}
+
 	buffered := bufio.NewReader(file)
-	lineNumber := 0
-	completeBytes := int64(0)
+	completeBytes := offset
 
 	for {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return err
 		}
 
 		line, err := buffered.ReadBytes('\n')
@@ -37,58 +41,58 @@ func loadEntries(
 		}
 
 		if err != nil {
-			return nil, fmt.Errorf("read transcript: %w", err)
+			return fmt.Errorf("read transcript: %w", err)
 		}
 
-		lineNumber++
-
-		current, err := decodeEntry(line, lineNumber)
+		current, err := decodeEntry(line, completeBytes)
 		if err != nil {
-			return nil, err
+			return err
 		}
 
-		entries = append(entries, current)
+		if !visit(current, completeBytes) {
+			return nil
+		}
+
 		completeBytes += int64(len(line))
 	}
 
 	if completeBytes == info.Size() {
-		return entries, nil
+		return nil
 	}
 
 	if err := file.Truncate(completeBytes); err != nil {
-		return nil, fmt.Errorf("repair transcript: %w", err)
+		return fmt.Errorf("repair transcript: %w", err)
 	}
 
 	if err := file.Sync(); err != nil {
-		return nil, fmt.Errorf("sync repaired transcript: %w", err)
+		return fmt.Errorf("sync repaired transcript: %w", err)
 	}
 
-	return entries, nil
+	return nil
 }
 
-func encodeEntries(entries []entry.Entry) ([]byte, error) {
-	var encoded []byte
+func encodeEntries(entries []entry.Entry) ([][]byte, error) {
+	lines := make([][]byte, len(entries))
 
-	for _, current := range entries {
+	for i, current := range entries {
 		line, err := json.Marshal(current)
 		if err != nil {
 			return nil, err
 		}
 
-		encoded = append(encoded, line...)
-		encoded = append(encoded, '\n')
+		lines[i] = append(line, '\n')
 	}
 
-	return encoded, nil
+	return lines, nil
 }
 
 func decodeEntry(
 	line []byte,
-	lineNumber int,
+	offset int64,
 ) (entry.Entry, error) {
 	var current entry.Entry
 	if err := json.Unmarshal(line, &current); err != nil {
-		return entry.Entry{}, fmt.Errorf("decode transcript line %d: %w", lineNumber, err)
+		return entry.Entry{}, fmt.Errorf("decode transcript entry at offset %d: %w", offset, err)
 	}
 
 	return current, nil

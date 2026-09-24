@@ -25,7 +25,7 @@ func renderCheckpoint(generated checkpoint.Checkpoint, width int) string {
 		checkpointLabel,
 		tokensLabel(generated.TokensBefore),
 		tokensLabel(generated.TokensAfter),
-		retainedLabel(generated.Retained),
+		retainedLabel(len(generated.Retained)),
 	)
 
 	return renderDivider(label, checkpointStyle, width)

@@ -228,7 +228,7 @@ func TestCheckpointEventsUpdateTranscript(t *testing.T) {
 
 	payload, err := json.Marshal(checkpoint.Checkpoint{
 		Summary:  checkpoint.Summary{Objective: "ship compaction"},
-		Retained: 2,
+		Retained: []kit.Message{kit.NewUserMessage(kit.NewTextContent("kept"))},
 	})
 	if err != nil {
 		t.Fatal(err)

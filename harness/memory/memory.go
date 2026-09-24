@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
@@ -14,15 +15,17 @@ import (
 
 const EntryType = "message"
 
-type entryMemory struct {
+var _ kit.Memory = (*Memory)(nil)
+
+type Memory struct {
 	sessionID   string
 	executionID string
 	entries     entry.Store
 	events      event.Publisher
 }
 
-func New(sessionID, executionID string, entries entry.Store, events event.Publisher) kit.Memory {
-	return &entryMemory{
+func New(sessionID, executionID string, entries entry.Store, events event.Publisher) *Memory {
+	return &Memory{
 		sessionID:   sessionID,
 		executionID: executionID,
 		entries:     entries,
@@ -30,26 +33,20 @@ func New(sessionID, executionID string, entries entry.Store, events event.Publis
 	}
 }
 
-func (m *entryMemory) Context(ctx context.Context) ([]kit.Message, error) {
-	entries, err := m.entries.List(ctx, m.sessionID, 0)
+func (m *Memory) Context(ctx context.Context) ([]kit.Message, error) {
+	latest, messages, err := m.Current(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	latest, messages, err := AfterCheckpoint(entries)
-	if err != nil {
-		return nil, err
+	if latest == nil {
+		return messages, nil
 	}
 
-	context := make([]kit.Message, 0, len(messages)+1)
-	if latest != nil {
-		context = append(context, latest.Message())
-	}
-
-	return append(context, messages...), nil
+	return append([]kit.Message{latest.Message()}, messages...), nil
 }
 
-func (m *entryMemory) History(ctx context.Context) ([]kit.Message, error) {
+func (m *Memory) History(ctx context.Context) ([]kit.Message, error) {
 	entries, err := m.entries.List(ctx, m.sessionID, 0)
 	if err != nil {
 		return nil, err
@@ -58,7 +55,7 @@ func (m *entryMemory) History(ctx context.Context) ([]kit.Message, error) {
 	return messages(entries)
 }
 
-func (m *entryMemory) Record(ctx context.Context, messages ...kit.Message) error {
+func (m *Memory) Record(ctx context.Context, messages ...kit.Message) error {
 	payloads := make([]any, len(messages))
 	for i, message := range messages {
 		payloads[i] = message
@@ -67,40 +64,41 @@ func (m *entryMemory) Record(ctx context.Context, messages ...kit.Message) error
 	return m.events.Commit(ctx, m.executionID, EntryType, payloads...)
 }
 
-func AfterCheckpoint(entries []entry.Entry) (*checkpoint.Checkpoint, []kit.Message, error) {
-	for i := len(entries) - 1; i >= 0; i-- {
-		if entries[i].Type != checkpoint.EntryType {
-			continue
-		}
-
-		var latest checkpoint.Checkpoint
-		if err := json.Unmarshal(entries[i].Payload, &latest); err != nil {
-			return nil, nil, fmt.Errorf("decode checkpoint entry %d: %w", entries[i].ID, err)
-		}
-
-		messages, err := messages(entries[retainedFrom(entries[:i], latest.Retained):])
-		if err != nil {
-			return nil, nil, err
-		}
-
-		return &latest, messages, nil
+func (m *Memory) Current(ctx context.Context) (*checkpoint.Checkpoint, []kit.Message, error) {
+	stored, found, err := m.entries.Latest(ctx, m.sessionID, checkpoint.EntryType)
+	if err != nil {
+		return nil, nil, err
 	}
 
-	messages, err := messages(entries)
+	var (
+		latest  *checkpoint.Checkpoint
+		afterID uint64
+	)
 
-	return nil, messages, err
-}
-
-func retainedFrom(entries []entry.Entry, retained int) int {
-	start := len(entries)
-	for start > 0 && retained > 0 {
-		start--
-		if entries[start].Type == EntryType {
-			retained--
+	if found {
+		latest = &checkpoint.Checkpoint{}
+		if err := json.Unmarshal(stored.Payload, latest); err != nil {
+			return nil, nil, fmt.Errorf("decode checkpoint entry %d: %w", stored.ID, err)
 		}
+
+		afterID = stored.ID
 	}
 
-	return start
+	after, err := m.entries.List(ctx, m.sessionID, afterID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	messages, err := messages(after)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if latest == nil {
+		return nil, messages, nil
+	}
+
+	return latest, append(slices.Clone(latest.Retained), messages...), nil
 }
 
 func messages(entries []entry.Entry) ([]kit.Message, error) {

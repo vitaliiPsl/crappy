@@ -130,8 +130,12 @@ func TestCheckpointRendersPendingThenCompacted(t *testing.T) {
 	}
 
 	model.AppendCheckpoint("execution-1", checkpoint.Checkpoint{
-		Summary:      checkpoint.Summary{Objective: "ship compaction"},
-		Retained:     3,
+		Summary: checkpoint.Summary{Objective: "ship compaction"},
+		Retained: []kit.Message{
+			kit.NewUserMessage(kit.NewTextContent("one")),
+			kit.NewUserMessage(kit.NewTextContent("two")),
+			kit.NewUserMessage(kit.NewTextContent("three")),
+		},
 		TokensBefore: 120_400,
 		TokensAfter:  850,
 	})

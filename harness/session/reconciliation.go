@@ -7,19 +7,17 @@ import (
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
-	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/memory"
 )
 
 var errUnrecordedToolResult = errors.New("tool result was not recorded before execution ended; the tool may have changed external state, so verify it before retrying")
 
 func (s *Session) reconcileExecutions(ctx context.Context) error {
-	entries, err := s.entries.List(ctx, s.state.ID, 0)
+	executionID, err := s.unfinishedExecution(ctx)
 	if err != nil {
-		return fmt.Errorf("list entries: %w", err)
+		return err
 	}
 
-	executionID := unfinishedExecution(entries)
 	if executionID == "" {
 		return nil
 	}
@@ -43,9 +41,9 @@ func (s *Session) reconcileExecutions(ctx context.Context) error {
 func (s *Session) reconcileTools(ctx context.Context, executionID string) error {
 	agentMemory := memory.New(s.state.ID, executionID, s.entries, s.events)
 
-	messages, err := agentMemory.History(ctx)
+	_, messages, err := agentMemory.Current(ctx)
 	if err != nil {
-		return fmt.Errorf("read history: %w", err)
+		return fmt.Errorf("read context: %w", err)
 	}
 
 	for _, call := range unresolvedToolCalls(messages) {
@@ -60,17 +58,22 @@ func (s *Session) reconcileTools(ctx context.Context, executionID string) error 
 	return nil
 }
 
-func unfinishedExecution(entries []entry.Entry) string {
-	for index := len(entries) - 1; index >= 0; index-- {
-		switch value := entries[index]; value.Type {
-		case ExecutionStartedEntryType:
-			return value.ExecutionID
-		case ExecutionFinishedEntryType:
-			return ""
-		}
+func (s *Session) unfinishedExecution(ctx context.Context) (string, error) {
+	started, found, err := s.entries.Latest(ctx, s.state.ID, ExecutionStartedEntryType)
+	if err != nil || !found {
+		return "", err
 	}
 
-	return ""
+	finished, _, err := s.entries.Latest(ctx, s.state.ID, ExecutionFinishedEntryType)
+	if err != nil {
+		return "", err
+	}
+
+	if finished.ID > started.ID {
+		return "", nil
+	}
+
+	return started.ExecutionID, nil
 }
 
 func unresolvedToolCalls(messages []kit.Message) []kit.ToolCall {

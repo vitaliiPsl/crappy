@@ -11,13 +11,9 @@ import (
 func (s *Session) checkpoint(
 	ctx context.Context,
 	executionID string,
+	agentMemory *memory.Memory,
 ) error {
-	entries, err := s.entries.List(ctx, s.state.ID, 0)
-	if err != nil {
-		return fmt.Errorf("read checkpoint context: %w", err)
-	}
-
-	previous, messages, err := memory.AfterCheckpoint(entries)
+	previous, messages, err := agentMemory.Current(ctx)
 	if err != nil {
 		return fmt.Errorf("read checkpoint context: %w", err)
 	}

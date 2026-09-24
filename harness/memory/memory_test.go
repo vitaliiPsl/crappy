@@ -95,7 +95,7 @@ func TestContextStartsAtLatestCheckpoint(t *testing.T) {
 	}
 }
 
-func TestContextRetainsMessagesBeforeCheckpoint(t *testing.T) {
+func TestContextIncludesRetainedMessages(t *testing.T) {
 	t.Parallel()
 
 	store := entry.NewMemoryStore()
@@ -114,7 +114,10 @@ func TestContextRetainsMessagesBeforeCheckpoint(t *testing.T) {
 		context.Background(),
 		"",
 		checkpoint.EntryType,
-		checkpoint.Checkpoint{Summary: checkpoint.Summary{Objective: "summary"}, Retained: 1},
+		checkpoint.Checkpoint{
+			Summary:  checkpoint.Summary{Objective: "summary"},
+			Retained: []kit.Message{kit.NewModelMessage(kit.NewTextContent("retained"))},
+		},
 	); err != nil {
 		t.Fatalf("Commit(checkpoint) error = %v", err)
 	}

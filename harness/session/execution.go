@@ -75,7 +75,7 @@ func (s *Session) Execute(input kit.Message) (string, error) {
 		ExecutionID: executionID,
 		Memory:      agentMemory,
 		Checkpoint: func(ctx context.Context) error {
-			return s.checkpoint(ctx, executionID)
+			return s.checkpoint(ctx, executionID, agentMemory)
 		},
 	})
 	if err != nil {
