@@ -103,8 +103,23 @@ func (g *Generator) Generate(
 	}
 
 	checkpoint.Retained = len(messages) - keepFrom
+	checkpoint.TokensBefore = g.estimateContext(previous, messages)
+	checkpoint.TokensAfter = g.estimateContext(checkpoint, messages[keepFrom:])
 
 	return checkpoint, nil
+}
+
+func (g *Generator) estimateContext(checkpoint *Checkpoint, messages []kit.Message) int {
+	tokens := 0
+	if checkpoint != nil {
+		tokens += g.estimator.EstimateMessage(checkpoint.Message())
+	}
+
+	for _, message := range messages {
+		tokens += g.estimator.EstimateMessage(message)
+	}
+
+	return tokens
 }
 
 func (g *Generator) keepFrom(messages []kit.Message) int {

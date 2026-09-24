@@ -7,7 +7,10 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kit"
 )
 
-const EntryType = "checkpoint"
+const (
+	EntryType        = "checkpoint"
+	StartedEventType = "checkpoint.started"
+)
 
 const messagePreamble = "The conversation before this point was compacted into the following checkpoint. " +
 	"The messages after it are kept verbatim."
@@ -22,8 +25,10 @@ type Summary struct {
 type Checkpoint struct {
 	Summary
 
-	Retained int       `json:"retained"`
-	Usage    kit.Usage `json:"usage"`
+	Retained     int       `json:"retained"`
+	TokensBefore int       `json:"tokens_before"`
+	TokensAfter  int       `json:"tokens_after"`
+	Usage        kit.Usage `json:"usage"`
 }
 
 func (c Checkpoint) Message() kit.Message {

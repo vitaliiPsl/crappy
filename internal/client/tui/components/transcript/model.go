@@ -7,6 +7,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
+
+	"github.com/vitaliipsl/crappy/harness/checkpoint"
 )
 
 type Model struct {
@@ -80,6 +82,14 @@ func (m *Model) Append(executionID string, message kit.Message) {
 
 func (m *Model) Apply(executionID string, event kit.AgentEvent) {
 	m.execution(executionID).apply(event)
+}
+
+func (m *Model) StartCheckpoint(executionID string) {
+	m.execution(executionID).startCheckpoint()
+}
+
+func (m *Model) AppendCheckpoint(executionID string, generated checkpoint.Checkpoint) {
+	m.execution(executionID).appendCheckpoint(generated)
 }
 
 func (m *Model) Finish(executionID string) {

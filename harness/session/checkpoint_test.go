@@ -56,11 +56,34 @@ func TestAutomaticCheckpointDuringExecution(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 
+	subscription, err := session.Subscribe(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("Subscribe() error = %v", err)
+	}
+
+	t.Cleanup(subscription.Close)
+
 	executionID, err := session.Execute(
 		kit.NewUserMessage(kit.NewTextContent("start")),
 	)
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
+	}
+
+	started := false
+	for {
+		received := receiveEvent(t, subscription)
+		if received.Type == checkpoint.StartedEventType {
+			started = received.ExecutionID == executionID
+		}
+
+		if received.Type == checkpoint.EntryType {
+			break
+		}
+	}
+
+	if !started {
+		t.Fatal("checkpoint started event was not emitted before the checkpoint entry")
 	}
 
 	waitSessionIdle(t, session)

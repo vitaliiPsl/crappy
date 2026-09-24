@@ -392,6 +392,10 @@ func TestGeneratorCountsRetainedMessages(t *testing.T) {
 		t.Fatalf("Retained = %d, want %d", got, want)
 	}
 
+	if checkpoint.TokensBefore <= 0 || checkpoint.TokensAfter <= 0 {
+		t.Fatalf("tokens = %d → %d, want positive estimates", checkpoint.TokensBefore, checkpoint.TokensAfter)
+	}
+
 	input := model.requests[0].Messages[0].TextContent().Text
 	if strings.Contains(input, "retained") {
 		t.Fatalf("input contains retained message: %q", input)

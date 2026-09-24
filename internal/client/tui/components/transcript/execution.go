@@ -4,6 +4,16 @@ import (
 	"strings"
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
+
+	"github.com/vitaliipsl/crappy/harness/checkpoint"
+)
+
+type executionStatus int
+
+const (
+	executionRunning executionStatus = iota
+	executionCheckpointing
+	executionFinished
 )
 
 type execution struct {
@@ -11,15 +21,16 @@ type execution struct {
 	items  []item
 	tools  map[string]*toolUse
 	stream stream
-	done   bool
+	status executionStatus
 
 	rendered string
 	width    int
 }
 
 type item struct {
-	role    kit.Role
-	content []contentItem
+	role       kit.Role
+	content    []contentItem
+	checkpoint *checkpoint.Checkpoint
 }
 
 type contentItem struct {
@@ -54,9 +65,21 @@ func (e *execution) apply(event kit.AgentEvent) {
 	e.stream.apply(event)
 }
 
+func (e *execution) startCheckpoint() {
+	e.status = executionCheckpointing
+}
+
+func (e *execution) appendCheckpoint(generated checkpoint.Checkpoint) {
+	if e.status == executionCheckpointing {
+		e.status = executionRunning
+	}
+
+	e.items = append(e.items, item{checkpoint: &generated})
+}
+
 func (e *execution) finish() {
 	e.stream.reset()
-	e.done = true
+	e.status = executionFinished
 }
 
 func (e *execution) newItem(message kit.Message) (item, bool) {
@@ -104,7 +127,7 @@ func (e *execution) newItem(message kit.Message) (item, bool) {
 }
 
 func (e *execution) render(width int) string {
-	if e.done && e.width == width {
+	if e.status == executionFinished && e.width == width {
 		return e.rendered
 	}
 
@@ -121,9 +144,13 @@ func (e *execution) render(width int) string {
 		}
 	}
 
+	if e.status == executionCheckpointing {
+		sections = append(sections, renderPendingCheckpoint(width))
+	}
+
 	rendered := strings.Join(sections, sectionSeparator)
 
-	if e.done {
+	if e.status == executionFinished {
 		e.rendered = rendered
 		e.width = width
 	}

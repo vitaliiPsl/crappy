@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
+
+	"github.com/vitaliipsl/crappy/harness/checkpoint"
 )
 
 func TestDurableMessageReplacesStream(t *testing.T) {
@@ -115,5 +117,41 @@ func TestExecutionsAreSeparate(t *testing.T) {
 	view := model.View()
 	if !strings.Contains(view, "first") || !strings.Contains(view, "second") {
 		t.Fatalf("view = %q, want both executions", view)
+	}
+}
+
+func TestCheckpointRendersPendingThenCompacted(t *testing.T) {
+	model := New()
+	model.SetSize(80, 20)
+	model.StartCheckpoint("execution-1")
+
+	if view := model.View(); !strings.Contains(view, checkpointPendingLabel) {
+		t.Fatalf("view = %q, want pending checkpoint", view)
+	}
+
+	model.AppendCheckpoint("execution-1", checkpoint.Checkpoint{
+		Summary:      checkpoint.Summary{Objective: "ship compaction"},
+		Retained:     3,
+		TokensBefore: 120_400,
+		TokensAfter:  850,
+	})
+
+	view := model.View()
+	if strings.Contains(view, checkpointPendingLabel) ||
+		!strings.Contains(view, checkpointLabel) ||
+		!strings.Contains(view, "120.4k → 850 tokens") ||
+		!strings.Contains(view, "kept 3 messages") {
+		t.Fatalf("view = %q, want compacted checkpoint", view)
+	}
+}
+
+func TestFinishClearsPendingCheckpoint(t *testing.T) {
+	model := New()
+	model.SetSize(80, 20)
+	model.StartCheckpoint("execution-1")
+	model.Finish("execution-1")
+
+	if view := model.View(); strings.Contains(view, checkpointPendingLabel) {
+		t.Fatalf("view = %q, want no pending checkpoint after finish", view)
 	}
 }

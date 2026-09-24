@@ -26,6 +26,9 @@ var (
 	toolSuccessStyle = toolBaseStyle.BorderForeground(theme.Default.Success)
 	toolErrorStyle   = toolBaseStyle.BorderForeground(theme.Default.Error)
 
+	checkpointStyle        = lipgloss.NewStyle().Foreground(theme.Default.Muted)
+	checkpointPendingStyle = lipgloss.NewStyle().Foreground(theme.Default.Primary)
+
 	emptyTitleStyle = lipgloss.NewStyle().Foreground(theme.Default.Primary).Bold(true)
 	emptyTextStyle  = lipgloss.NewStyle().Foreground(theme.Default.Subtle)
 )

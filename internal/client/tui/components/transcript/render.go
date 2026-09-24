@@ -18,6 +18,10 @@ const (
 )
 
 func renderMessage(value item, width int) string {
+	if value.checkpoint != nil {
+		return renderCheckpoint(*value.checkpoint, width)
+	}
+
 	switch value.role {
 	case kit.RoleUser:
 		content := renderContentItems(

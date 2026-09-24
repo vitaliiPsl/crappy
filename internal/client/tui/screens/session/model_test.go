@@ -12,6 +12,7 @@ import (
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
+	"github.com/vitaliipsl/crappy/harness/checkpoint"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/memory"
 	harnesssession "github.com/vitaliipsl/crappy/harness/session"
@@ -213,5 +214,29 @@ func TestMouseWheelScrollsTranscript(t *testing.T) {
 
 	if model.View().Content == bottom {
 		t.Fatal("mouse wheel up did not scroll the transcript")
+	}
+}
+
+func TestCheckpointEventsUpdateTranscript(t *testing.T) {
+	model := New(context.Background(), nil, "session-1")
+	model.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+	model.applyEvent(event.Event{Type: checkpoint.StartedEventType, ExecutionID: "execution-1"})
+
+	if view := model.View().Content; !strings.Contains(view, "Compacting context") {
+		t.Fatalf("view = %q, want pending checkpoint", view)
+	}
+
+	payload, err := json.Marshal(checkpoint.Checkpoint{
+		Summary:  checkpoint.Summary{Objective: "ship compaction"},
+		Retained: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	model.applyEvent(event.Event{Type: checkpoint.EntryType, ExecutionID: "execution-1", Payload: payload})
+
+	if view := model.View().Content; !strings.Contains(view, "Context compacted") {
+		t.Fatalf("view = %q, want compacted checkpoint", view)
 	}
 }

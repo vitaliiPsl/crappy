@@ -22,6 +22,10 @@ func (s *Session) checkpoint(
 		return fmt.Errorf("read checkpoint context: %w", err)
 	}
 
+	if err := s.Emit(ctx, executionID, checkpoint.StartedEventType, nil); err != nil {
+		return err
+	}
+
 	generated, err := s.checkpoints.Generate(ctx, previous, messages)
 	if err != nil {
 		return err

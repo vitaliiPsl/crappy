@@ -5,6 +5,7 @@ import (
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
+	"github.com/vitaliipsl/crappy/harness/checkpoint"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/memory"
 	harnesssession "github.com/vitaliipsl/crappy/harness/session"
@@ -30,6 +31,17 @@ func (m *Model) applyEvent(value event.Event) {
 		}
 
 		m.transcript.Apply(value.ExecutionID, agentEvent)
+	case checkpoint.StartedEventType:
+		m.transcript.StartCheckpoint(value.ExecutionID)
+	case checkpoint.EntryType:
+		var generated checkpoint.Checkpoint
+		if err := json.Unmarshal(value.Payload, &generated); err != nil {
+			m.notice = errorNotice(err)
+
+			return
+		}
+
+		m.transcript.AppendCheckpoint(value.ExecutionID, generated)
 	case harnesssession.ExecutionStartedEntryType:
 		m.executionID = value.ExecutionID
 		m.notice = notice{}
