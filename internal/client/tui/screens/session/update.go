@@ -18,8 +18,29 @@ func (m *Model) submit(text string) tea.Cmd {
 	}
 
 	m.notice = notice{}
+	input := kit.NewUserMessage(kit.NewTextContent(text))
 
-	return m.execute(kit.NewUserMessage(kit.NewTextContent(text)))
+	if m.sessionID == "" {
+		return m.create(input)
+	}
+
+	return m.execute(input)
+}
+
+func (m *Model) handleCreated(message createdMsg) tea.Cmd {
+	if message.target != m {
+		return nil
+	}
+
+	if message.err != nil {
+		m.notice = errorNotice(message.err)
+
+		return nil
+	}
+
+	m.sessionID = message.state.ID
+
+	return tea.Batch(m.subscribe(), m.execute(message.input))
 }
 
 func (m *Model) handleSubscribed(message subscribedMsg) tea.Cmd {

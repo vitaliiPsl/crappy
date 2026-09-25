@@ -2,7 +2,6 @@ package sessions
 
 import (
 	tea "charm.land/bubbletea/v2"
-	"github.com/google/uuid"
 
 	"github.com/vitaliipsl/crappy/harness/session"
 	"github.com/vitaliipsl/crappy/internal/client/tui/navigation"
@@ -23,7 +22,7 @@ type deletedMsg struct {
 
 func (m *Model) load() tea.Cmd {
 	return func() tea.Msg {
-		sessions, err := m.runtime.Sessions(m.ctx)
+		sessions, err := m.runtime.List(m.ctx)
 
 		return loadedMsg{target: m, sessions: sessions, err: err}
 	}
@@ -31,7 +30,7 @@ func (m *Model) load() tea.Cmd {
 
 func (m *Model) deleteSession(sessionID string) tea.Cmd {
 	return func() tea.Msg {
-		err := m.runtime.DeleteSession(m.ctx, sessionID)
+		err := m.runtime.Delete(m.ctx, sessionID)
 
 		return deletedMsg{target: m, sessionID: sessionID, err: err}
 	}
@@ -44,7 +43,7 @@ func open(sessionID string) tea.Cmd {
 }
 
 func openNew() tea.Cmd {
-	return open(uuid.NewString())
+	return open("")
 }
 
 func back() tea.Cmd {

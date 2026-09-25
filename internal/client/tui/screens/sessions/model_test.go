@@ -8,7 +8,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/google/uuid"
 
 	"github.com/vitaliipsl/crappy/harness/session"
 	"github.com/vitaliipsl/crappy/internal/client/tui/navigation"
@@ -60,15 +59,14 @@ func TestEnterOpensSelectedSession(t *testing.T) {
 	}
 }
 
-func TestNewOpensGeneratedSession(t *testing.T) {
+func TestNewOpensUncreatedSession(t *testing.T) {
 	model := testModel("current", nil)
 
 	_, command := model.Update(tea.KeyPressMsg(tea.Key{Code: 'n'}))
 	action := command().(navigation.Action)
-	sessionID := action.Route().Param(routes.ParamSessionID)
 
-	if action.Operation() != navigation.OperationReset || uuid.Validate(sessionID) != nil {
-		t.Fatalf("action = %#v, want reset to UUID session", action)
+	if action.Operation() != navigation.OperationReset || action.Route().Param(routes.ParamSessionID) != "" {
+		t.Fatalf("action = %#v, want reset to a new session without an ID", action)
 	}
 }
 
@@ -172,7 +170,7 @@ func TestViewFitsWindow(t *testing.T) {
 }
 
 func testModel(currentID string, sessions []session.State) *Model {
-	appRuntime := runtime.NewRuntime(
+	appRuntime := runtime.New(
 		context.Background(),
 		staticSessionStore{sessions: sessions},
 		nil,
@@ -189,6 +187,14 @@ type staticSessionStore struct {
 
 func (s staticSessionStore) List(context.Context) ([]session.State, error) {
 	return s.sessions, nil
+}
+
+func (staticSessionStore) Get(context.Context, string) (session.State, error) {
+	return session.State{}, session.ErrNotFound
+}
+
+func (staticSessionStore) Save(context.Context, session.State) error {
+	return nil
 }
 
 func (staticSessionStore) Delete(context.Context, string) error {

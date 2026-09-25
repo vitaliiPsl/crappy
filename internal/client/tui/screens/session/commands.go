@@ -6,6 +6,8 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
 	"github.com/vitaliipsl/crappy/harness/event"
+	harnesssession "github.com/vitaliipsl/crappy/harness/session"
+	"github.com/vitaliipsl/crappy/internal/runtime"
 )
 
 const subscriptionStartEntryID uint64 = 0
@@ -26,6 +28,15 @@ type eventMsg struct {
 }
 
 func (eventMsg) Broadcast() {}
+
+type createdMsg struct {
+	target *Model
+	state  harnesssession.State
+	input  kit.Message
+	err    error
+}
+
+func (createdMsg) Broadcast() {}
 
 type executeResultMsg struct {
 	target *Model
@@ -69,6 +80,14 @@ func (m *Model) waitForEvent() tea.Cmd {
 			err:    subscription.Err(),
 			open:   open,
 		}
+	}
+}
+
+func (m *Model) create(input kit.Message) tea.Cmd {
+	return func() tea.Msg {
+		state, err := m.runtime.Create(m.ctx, runtime.CreateOptions{Title: inputTitle(input)})
+
+		return createdMsg{target: m, state: state, input: input, err: err}
 	}
 }
 

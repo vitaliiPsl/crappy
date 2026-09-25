@@ -5,9 +5,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
+	"time"
 
 	"github.com/vitaliipsl/crappy/harness/entry"
+	"github.com/vitaliipsl/crappy/harness/session"
 )
 
 func TestSessionStoreListsMaterializedSessions(t *testing.T) {
@@ -49,8 +52,72 @@ func TestSessionStoreListsMaterializedSessions(t *testing.T) {
 		t.Fatalf("List() after reopen error = %v", err)
 	}
 
-	if len(states) != 2 || states[0].ID != "session-1" || states[1].ID != "session-2" {
-		t.Fatalf("List() = %#v, want both sessions in ID order", states)
+	if len(states) != 2 {
+		t.Fatalf("List() = %#v, want both sessions", states)
+	}
+}
+
+func TestSessionStoreSavesAndGetsState(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join(t.TempDir(), "sessions")
+	createdAt := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
+	want := session.State{ID: "session-1", CreatedAt: createdAt, UpdatedAt: createdAt.Add(time.Hour)}
+
+	if err := openStorage(t, root).SessionStore().Save(context.Background(), want); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	got, err := openStorage(t, root).SessionStore().Get(context.Background(), "session-1")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+
+	if !got.CreatedAt.Equal(want.CreatedAt) || !got.UpdatedAt.Equal(want.UpdatedAt) || got.ID != want.ID {
+		t.Fatalf("Get() = %#v, want %#v", got, want)
+	}
+
+	assertMode(t, filepath.Join(root, "session-1", stateFilename), 0o600)
+}
+
+func TestSessionStoreGetReturnsNotFound(t *testing.T) {
+	t.Parallel()
+
+	storage := openStorage(t, filepath.Join(t.TempDir(), "sessions"))
+
+	if _, err := storage.SessionStore().Get(context.Background(), "missing"); !errors.Is(err, session.ErrNotFound) {
+		t.Fatalf("Get() error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestSessionStoreListsMostRecentlyUpdatedFirst(t *testing.T) {
+	t.Parallel()
+
+	store := openStorage(t, filepath.Join(t.TempDir(), "sessions")).SessionStore()
+	base := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
+
+	for id, updatedAt := range map[string]time.Time{
+		"older":  base,
+		"newest": base.Add(2 * time.Hour),
+		"newer":  base.Add(time.Hour),
+	} {
+		if err := store.Save(context.Background(), session.State{ID: id, CreatedAt: base, UpdatedAt: updatedAt}); err != nil {
+			t.Fatalf("Save(%s) error = %v", id, err)
+		}
+	}
+
+	states, err := store.List(context.Background())
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+
+	got := make([]string, len(states))
+	for i, value := range states {
+		got[i] = value.ID
+	}
+
+	if want := []string{"newest", "newer", "older"}; !slices.Equal(got, want) {
+		t.Fatalf("List() order = %v, want %v", got, want)
 	}
 }
 

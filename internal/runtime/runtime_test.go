@@ -16,26 +16,26 @@ import (
 func TestRuntimeOwnsSession(t *testing.T) {
 	t.Parallel()
 
-	runtime := NewRuntime(
+	runtime := New(
 		context.Background(),
-		staticSessionStore{},
+		staticSessionStore{states: []session.State{{ID: "session-1"}}},
 		entry.NewMemoryStore(),
 		agent.New(kit.AgentConfig{}, staticModelResolver{kittest.NewModel(t)}),
 		nil,
 	)
 
-	first, err := runtime.Session(context.Background(), "session-1")
+	first, err := runtime.Open(context.Background(), "session-1")
 	if err != nil {
-		t.Fatalf("first Session() error = %v", err)
+		t.Fatalf("first Open() error = %v", err)
 	}
 
-	second, err := runtime.Session(context.Background(), "session-1")
+	second, err := runtime.Open(context.Background(), "session-1")
 	if err != nil {
-		t.Fatalf("second Session() error = %v", err)
+		t.Fatalf("second Open() error = %v", err)
 	}
 
 	if first != second {
-		t.Fatal("Session() returned different instances for the same ID")
+		t.Fatal("Open() returned different instances for the same ID")
 	}
 }
 
@@ -43,7 +43,7 @@ func TestRuntimeListsStoredSessions(t *testing.T) {
 	t.Parallel()
 
 	want := []session.State{{ID: "session-1"}}
-	runtime := NewRuntime(
+	runtime := New(
 		context.Background(),
 		staticSessionStore{states: want},
 		entry.NewMemoryStore(),
@@ -51,13 +51,13 @@ func TestRuntimeListsStoredSessions(t *testing.T) {
 		nil,
 	)
 
-	got, err := runtime.Sessions(context.Background())
+	got, err := runtime.List(context.Background())
 	if err != nil {
-		t.Fatalf("Sessions() error = %v", err)
+		t.Fatalf("List() error = %v", err)
 	}
 
 	if len(got) != 1 || got[0].ID != want[0].ID {
-		t.Fatalf("Sessions() = %#v, want %#v", got, want)
+		t.Fatalf("List() = %#v, want %#v", got, want)
 	}
 }
 
@@ -65,10 +65,10 @@ func TestRuntimeDeletesClosedSession(t *testing.T) {
 	t.Parallel()
 
 	store := &recordingSessionStore{}
-	runtime := NewRuntime(context.Background(), store, nil, nil, nil)
+	runtime := New(context.Background(), store, nil, nil, nil)
 
-	if err := runtime.DeleteSession(context.Background(), "session-1"); err != nil {
-		t.Fatalf("DeleteSession() error = %v", err)
+	if err := runtime.Delete(context.Background(), "session-1"); err != nil {
+		t.Fatalf("Delete() error = %v", err)
 	}
 
 	if store.deleted != "session-1" {
@@ -79,8 +79,8 @@ func TestRuntimeDeletesClosedSession(t *testing.T) {
 func TestRuntimeDeletesOpenSession(t *testing.T) {
 	t.Parallel()
 
-	store := &recordingSessionStore{}
-	runtime := NewRuntime(
+	store := &recordingSessionStore{saved: []session.State{{ID: "session-1"}}}
+	runtime := New(
 		context.Background(),
 		store,
 		entry.NewMemoryStore(),
@@ -88,13 +88,13 @@ func TestRuntimeDeletesOpenSession(t *testing.T) {
 		nil,
 	)
 
-	opened, err := runtime.Session(context.Background(), "session-1")
+	opened, err := runtime.Open(context.Background(), "session-1")
 	if err != nil {
-		t.Fatalf("Session() error = %v", err)
+		t.Fatalf("Open() error = %v", err)
 	}
 
-	if err := runtime.DeleteSession(context.Background(), "session-1"); err != nil {
-		t.Fatalf("DeleteSession() error = %v", err)
+	if err := runtime.Delete(context.Background(), "session-1"); err != nil {
+		t.Fatalf("Delete() error = %v", err)
 	}
 
 	if store.deleted != "session-1" {
@@ -106,13 +106,43 @@ func TestRuntimeDeletesOpenSession(t *testing.T) {
 		t.Fatalf("Execute() on deleted session error = %v, want ErrClosed", err)
 	}
 
-	reopened, err := runtime.Session(context.Background(), "session-1")
+	reopened, err := runtime.Open(context.Background(), "session-1")
 	if err != nil {
-		t.Fatalf("Session() after delete error = %v", err)
+		t.Fatalf("Open() after delete error = %v", err)
 	}
 
 	if reopened == opened {
-		t.Fatal("Session() after delete returned the closed instance")
+		t.Fatal("Open() after delete returned the closed instance")
+	}
+}
+
+func TestRuntimeCreateSavesSession(t *testing.T) {
+	t.Parallel()
+
+	store := &recordingSessionStore{}
+	runtime := New(context.Background(), store, entry.NewMemoryStore(), nil, nil)
+
+	created, err := runtime.Create(context.Background(), CreateOptions{Title: "Fix compaction"})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	if created.ID == "" || created.Title != "Fix compaction" || created.CreatedAt.IsZero() {
+		t.Fatalf("Create() = %#v, want titled session with ID and timestamps", created)
+	}
+
+	if len(store.saved) != 1 || store.saved[0] != created {
+		t.Fatalf("saved = %#v, want created session", store.saved)
+	}
+}
+
+func TestRuntimeOpenRequiresCreatedSession(t *testing.T) {
+	t.Parallel()
+
+	runtime := New(context.Background(), &recordingSessionStore{}, entry.NewMemoryStore(), nil, nil)
+
+	if _, err := runtime.Open(context.Background(), "missing"); !errors.Is(err, session.ErrNotFound) {
+		t.Fatalf("Open() error = %v, want ErrNotFound", err)
 	}
 }
 
@@ -124,16 +154,47 @@ func (s staticSessionStore) List(context.Context) ([]session.State, error) {
 	return s.states, nil
 }
 
+func (s staticSessionStore) Get(_ context.Context, sessionID string) (session.State, error) {
+	for _, state := range s.states {
+		if state.ID == sessionID {
+			return state, nil
+		}
+	}
+
+	return session.State{}, session.ErrNotFound
+}
+
+func (staticSessionStore) Save(context.Context, session.State) error {
+	return nil
+}
+
 func (staticSessionStore) Delete(context.Context, string) error {
 	return nil
 }
 
 type recordingSessionStore struct {
 	deleted string
+	saved   []session.State
 }
 
 func (*recordingSessionStore) List(context.Context) ([]session.State, error) {
 	return nil, nil
+}
+
+func (s *recordingSessionStore) Get(_ context.Context, sessionID string) (session.State, error) {
+	for i := len(s.saved) - 1; i >= 0; i-- {
+		if s.saved[i].ID == sessionID {
+			return s.saved[i], nil
+		}
+	}
+
+	return session.State{}, session.ErrNotFound
+}
+
+func (s *recordingSessionStore) Save(_ context.Context, state session.State) error {
+	s.saved = append(s.saved, state)
+
+	return nil
 }
 
 func (s *recordingSessionStore) Delete(_ context.Context, sessionID string) error {

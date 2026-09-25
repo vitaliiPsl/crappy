@@ -2,7 +2,11 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"sync"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
@@ -12,6 +16,10 @@ import (
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/session"
 )
+
+type CreateOptions struct {
+	Title string
+}
 
 type Runtime struct {
 	ctx context.Context
@@ -25,7 +33,7 @@ type Runtime struct {
 	opened map[string]*session.Session
 }
 
-func NewRuntime(
+func New(
 	ctx context.Context,
 	sessions session.Store,
 	entries entry.Store,
@@ -42,11 +50,27 @@ func NewRuntime(
 	}
 }
 
-func (r *Runtime) Sessions(ctx context.Context) ([]session.State, error) {
+func (r *Runtime) Create(ctx context.Context, options CreateOptions) (session.State, error) {
+	now := time.Now().UTC()
+	state := session.State{
+		ID:        uuid.NewString(),
+		Title:     options.Title,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	if err := r.sessions.Save(ctx, state); err != nil {
+		return session.State{}, fmt.Errorf("save session: %w", err)
+	}
+
+	return state, nil
+}
+
+func (r *Runtime) List(ctx context.Context) ([]session.State, error) {
 	return r.sessions.List(ctx)
 }
 
-func (r *Runtime) DeleteSession(ctx context.Context, sessionID string) error {
+func (r *Runtime) Delete(ctx context.Context, sessionID string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -62,7 +86,7 @@ func (r *Runtime) DeleteSession(ctx context.Context, sessionID string) error {
 	return r.sessions.Delete(ctx, sessionID)
 }
 
-func (r *Runtime) Session(ctx context.Context, sessionID string) (*session.Session, error) {
+func (r *Runtime) Open(ctx context.Context, sessionID string) (*session.Session, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -74,7 +98,10 @@ func (r *Runtime) Session(ctx context.Context, sessionID string) (*session.Sessi
 		return existing, nil
 	}
 
-	state := session.State{ID: sessionID}
+	state, err := r.sessions.Get(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
 
 	opened, err := session.New(
 		r.ctx,
@@ -97,7 +124,7 @@ func (r *Runtime) Subscribe(
 	sessionID string,
 	afterEntryID uint64,
 ) (*event.Subscription, error) {
-	opened, err := r.Session(ctx, sessionID)
+	opened, err := r.Open(ctx, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +137,7 @@ func (r *Runtime) Execute(
 	sessionID string,
 	input kit.Message,
 ) (string, error) {
-	opened, err := r.Session(ctx, sessionID)
+	opened, err := r.Open(ctx, sessionID)
 	if err != nil {
 		return "", err
 	}
@@ -123,7 +150,7 @@ func (r *Runtime) Cancel(
 	sessionID string,
 	executionID string,
 ) error {
-	opened, err := r.Session(ctx, sessionID)
+	opened, err := r.Open(ctx, sessionID)
 	if err != nil {
 		return err
 	}

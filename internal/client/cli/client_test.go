@@ -27,9 +27,9 @@ func TestClientRunsSession(t *testing.T) {
 			FinishReason: kit.FinishReasonStop,
 		},
 	})
-	runtime := runtime.NewRuntime(
+	runtime := runtime.New(
 		context.Background(),
-		emptySessionStore{},
+		stubSessionStore{},
 		entry.NewMemoryStore(),
 		agent.New(kit.AgentConfig{}, staticModelResolver{model}),
 		nil,
@@ -52,13 +52,21 @@ func TestClientRunsSession(t *testing.T) {
 	}
 }
 
-type emptySessionStore struct{}
+type stubSessionStore struct{}
 
-func (emptySessionStore) List(context.Context) ([]session.State, error) {
+func (stubSessionStore) List(context.Context) ([]session.State, error) {
 	return nil, nil
 }
 
-func (emptySessionStore) Delete(context.Context, string) error {
+func (stubSessionStore) Get(_ context.Context, sessionID string) (session.State, error) {
+	return session.State{ID: sessionID}, nil
+}
+
+func (stubSessionStore) Save(context.Context, session.State) error {
+	return nil
+}
+
+func (stubSessionStore) Delete(context.Context, string) error {
 	return nil
 }
 

@@ -4,7 +4,6 @@ import (
 	"context"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/google/uuid"
 
 	"github.com/vitaliipsl/crappy/internal/client/tui/navigation"
 	"github.com/vitaliipsl/crappy/internal/client/tui/routes"
@@ -14,12 +13,12 @@ import (
 )
 
 func Run(ctx context.Context, appRuntime *runtime.Runtime) error {
-	sessions, err := appRuntime.Sessions(ctx)
+	sessions, err := appRuntime.List(ctx)
 	if err != nil {
 		return err
 	}
 
-	sessionID := uuid.NewString()
+	var sessionID string
 	if len(sessions) > 0 {
 		sessionID = sessions[0].ID
 	}

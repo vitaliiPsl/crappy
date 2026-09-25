@@ -1,6 +1,7 @@
 package sessions
 
 import (
+	"cmp"
 	"fmt"
 	"strings"
 
@@ -119,7 +120,7 @@ func (m *Model) sessionView(index int) string {
 		style = selectedSessionStyle
 	}
 
-	label := style.Render(value.ID)
+	label := style.Render(cmp.Or(value.Title, value.ID))
 	if value.ID == m.currentID {
 		label += currentStyle.Render(currentSuffix)
 	}

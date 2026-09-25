@@ -90,7 +90,7 @@ func newRuntime(ctx context.Context) (*runtime.Runtime, error) {
 		return nil, fmt.Errorf("open session storage: %w", err)
 	}
 
-	return runtime.NewRuntime(
+	return runtime.New(
 		ctx,
 		storage.SessionStore(),
 		storage.EntryStore(),

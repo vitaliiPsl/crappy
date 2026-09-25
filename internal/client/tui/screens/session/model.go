@@ -42,6 +42,10 @@ func New(ctx context.Context, runtime *runtime.Runtime, sessionID string) *Model
 }
 
 func (m *Model) Init() tea.Cmd {
+	if m.sessionID == "" {
+		return m.composer.Init()
+	}
+
 	return tea.Batch(m.composer.Init(), m.subscribe())
 }
 
@@ -56,6 +60,8 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.handleSubscribed(message)
 	case eventMsg:
 		return m, m.handleEvent(message)
+	case createdMsg:
+		return m, m.handleCreated(message)
 	case executeResultMsg:
 		m.handleExecuteResult(message)
 

@@ -11,10 +11,6 @@ import (
 	"github.com/vitaliipsl/crappy/harness/event"
 )
 
-type State struct {
-	ID string
-}
-
 type Session struct {
 	ctx   context.Context
 	state State
