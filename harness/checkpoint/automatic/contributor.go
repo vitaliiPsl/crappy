@@ -64,7 +64,7 @@ func (c *Contributor) Contribute(
 }
 
 func (c *Contributor) beforeModelRequest(
-	checkpoint func(context.Context) error,
+	checkpoint func(context.Context) (*checkpoint.Checkpoint, error),
 	inputLimit int,
 ) kit.OnModelRequest {
 	return func(
@@ -82,7 +82,9 @@ func (c *Contributor) beforeModelRequest(
 	}
 }
 
-func (c *Contributor) onModelError(checkpoint func(context.Context) error) kit.OnModelError {
+func (c *Contributor) onModelError(
+	checkpoint func(context.Context) (*checkpoint.Checkpoint, error),
+) kit.OnModelError {
 	return func(
 		run *kit.RunContext,
 		request kit.ModelRequest,
@@ -98,12 +100,15 @@ func (c *Contributor) onModelError(checkpoint func(context.Context) error) kit.O
 
 func compact(
 	run *kit.RunContext,
-	checkpoint func(context.Context) error,
+	checkpoint func(context.Context) (*checkpoint.Checkpoint, error),
 	request kit.ModelRequest,
 ) (kit.ModelRequest, error) {
-	if err := checkpoint(run.Context); err != nil {
+	created, err := checkpoint(run.Context)
+	if err != nil {
 		return kit.ModelRequest{}, err
 	}
+
+	run.Usage.Add(created.Usage)
 
 	messages, err := run.Memory.Context(run.Context)
 	if err != nil {

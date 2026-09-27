@@ -7,13 +7,15 @@ import (
 	adkagent "github.com/vitaliiPsl/crappy-adk/agent"
 	"github.com/vitaliiPsl/crappy-adk/kit"
 	adktool "github.com/vitaliiPsl/crappy-adk/x/tool"
+
+	"github.com/vitaliipsl/crappy/harness/checkpoint"
 )
 
 type BuildRequest struct {
 	SessionID   string
 	ExecutionID string
 	Memory      kit.Memory
-	Checkpoint  func(context.Context) error
+	Checkpoint  func(context.Context) (*checkpoint.Checkpoint, error)
 }
 
 type ModelResolver interface {

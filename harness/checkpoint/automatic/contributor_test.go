@@ -9,6 +9,7 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kittest"
 
 	harnessagent "github.com/vitaliipsl/crappy/harness/agent"
+	"github.com/vitaliipsl/crappy/harness/checkpoint"
 )
 
 func TestContributorCheckpointsBeforeModelRequest(t *testing.T) {
@@ -20,6 +21,7 @@ func TestContributorCheckpointsBeforeModelRequest(t *testing.T) {
 		kittest.ModelResult{Response: kit.ModelResponse{
 			Message:      kit.NewModelMessage(kit.NewTextContent("done")),
 			FinishReason: kit.FinishReasonStop,
+			Usage:        kit.Usage{InputTokens: 10, OutputTokens: 2},
 		}},
 	)
 	memory := &testMemory{}
@@ -34,25 +36,33 @@ func TestContributorCheckpointsBeforeModelRequest(t *testing.T) {
 
 	built, err := factory.Build(context.Background(), harnessagent.BuildRequest{
 		Memory: memory,
-		Checkpoint: func(context.Context) error {
+		Checkpoint: func(context.Context) (*checkpoint.Checkpoint, error) {
 			checkpointed++
 			memory.context = []kit.Message{
 				kit.NewUserMessage(kit.NewTextContent("checkpoint")),
 			}
 
-			return nil
+			return &checkpoint.Checkpoint{Usage: kit.Usage{InputTokens: 50, OutputTokens: 5}}, nil
 		},
 	})
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
 
-	_, err = built.Run(
+	response, err := built.Run(
 		context.Background(),
 		kit.NewUserMessage(kit.NewTextContent("original")),
 	)
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
+	}
+
+	if got, want := response.Usage, (kit.Usage{InputTokens: 60, OutputTokens: 7}); got != want {
+		t.Fatalf("response usage = %#v, want %#v", got, want)
+	}
+
+	if got, want := response.LastUsage, (kit.Usage{InputTokens: 10, OutputTokens: 2}); got != want {
+		t.Fatalf("response last usage = %#v, want %#v", got, want)
 	}
 
 	if checkpointed != 1 {
@@ -83,11 +93,11 @@ func TestContributorCheckpointsAndRetriesOnContextOverflow(t *testing.T) {
 	)
 	memory := &testMemory{}
 	checkpointed := 0
-	built := buildAgent(t, model, memory, func(context.Context) error {
+	built := buildAgent(t, model, memory, func(context.Context) (*checkpoint.Checkpoint, error) {
 		checkpointed++
 		memory.context = []kit.Message{kit.NewUserMessage(kit.NewTextContent("checkpoint"))}
 
-		return nil
+		return &checkpoint.Checkpoint{}, nil
 	})
 
 	if _, err := built.Run(context.Background(), kit.NewUserMessage(kit.NewTextContent("original"))); err != nil {
@@ -113,10 +123,10 @@ func TestContributorIgnoresOtherModelErrors(t *testing.T) {
 		kit.ModelConfig{InputLimit: 100},
 		kittest.ModelResult{Error: kit.ErrRateLimit},
 	)
-	built := buildAgent(t, model, &testMemory{}, func(context.Context) error {
+	built := buildAgent(t, model, &testMemory{}, func(context.Context) (*checkpoint.Checkpoint, error) {
 		t.Fatal("checkpoint called for a non-overflow error")
 
-		return nil
+		return nil, nil
 	})
 
 	_, err := built.Run(context.Background(), kit.NewUserMessage(kit.NewTextContent("original")))
@@ -131,7 +141,7 @@ func buildAgent(
 	t *testing.T,
 	model kit.Model,
 	memory kit.Memory,
-	checkpoint func(context.Context) error,
+	checkpoint func(context.Context) (*checkpoint.Checkpoint, error),
 ) kit.Agent {
 	t.Helper()
 

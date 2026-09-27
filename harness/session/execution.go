@@ -10,6 +10,7 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
 	"github.com/vitaliipsl/crappy/harness/agent"
+	"github.com/vitaliipsl/crappy/harness/checkpoint"
 	"github.com/vitaliipsl/crappy/harness/memory"
 )
 
@@ -74,7 +75,7 @@ func (s *Session) Execute(input kit.Message) (string, error) {
 		SessionID:   s.state.ID,
 		ExecutionID: executionID,
 		Memory:      agentMemory,
-		Checkpoint: func(ctx context.Context) error {
+		Checkpoint: func(ctx context.Context) (*checkpoint.Checkpoint, error) {
 			return s.checkpoint(ctx, executionID, agentMemory)
 		},
 	})
