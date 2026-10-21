@@ -1,4 +1,4 @@
-package session
+package execution
 
 import (
 	"context"
@@ -12,8 +12,8 @@ import (
 
 var errUnrecordedToolResult = errors.New("tool result was not recorded before execution ended; the tool may have changed external state, so verify it before retrying")
 
-func (s *Session) reconcileExecutions(ctx context.Context) error {
-	executionID, err := s.unfinishedExecution(ctx)
+func (e *Executor) Reconcile(ctx context.Context) error {
+	executionID, err := e.unfinishedExecution(ctx)
 	if err != nil {
 		return err
 	}
@@ -22,15 +22,15 @@ func (s *Session) reconcileExecutions(ctx context.Context) error {
 		return nil
 	}
 
-	if err := s.reconcileTools(ctx, executionID); err != nil {
+	if err := e.reconcileTools(ctx, executionID); err != nil {
 		return fmt.Errorf("reconcile tools for execution %s: %w", executionID, err)
 	}
 
-	if err := s.Commit(
+	if err := e.events.Commit(
 		ctx,
 		executionID,
-		ExecutionFinishedEntryType,
-		ExecutionFinished{Outcome: ExecutionInterrupted},
+		FinishedEntryType,
+		Finished{Outcome: Interrupted},
 	); err != nil {
 		return fmt.Errorf("interrupt execution %s: %w", executionID, err)
 	}
@@ -38,8 +38,8 @@ func (s *Session) reconcileExecutions(ctx context.Context) error {
 	return nil
 }
 
-func (s *Session) reconcileTools(ctx context.Context, executionID string) error {
-	agentMemory := memory.New(s.state.ID, executionID, s.entries, s.events)
+func (e *Executor) reconcileTools(ctx context.Context, executionID string) error {
+	agentMemory := memory.New(e.sessionID, executionID, e.entries, e.events)
 
 	_, messages, err := agentMemory.Current(ctx)
 	if err != nil {
@@ -58,13 +58,13 @@ func (s *Session) reconcileTools(ctx context.Context, executionID string) error 
 	return nil
 }
 
-func (s *Session) unfinishedExecution(ctx context.Context) (string, error) {
-	started, found, err := s.entries.Latest(ctx, s.state.ID, ExecutionStartedEntryType)
+func (e *Executor) unfinishedExecution(ctx context.Context) (string, error) {
+	started, found, err := e.entries.Latest(ctx, e.sessionID, StartedEntryType)
 	if err != nil || !found {
 		return "", err
 	}
 
-	finished, _, err := s.entries.Latest(ctx, s.state.ID, ExecutionFinishedEntryType)
+	finished, _, err := e.entries.Latest(ctx, e.sessionID, FinishedEntryType)
 	if err != nil {
 		return "", err
 	}

@@ -14,8 +14,8 @@ import (
 
 	"github.com/vitaliipsl/crappy/harness/checkpoint"
 	"github.com/vitaliipsl/crappy/harness/event"
+	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/memory"
-	harnesssession "github.com/vitaliipsl/crappy/harness/session"
 )
 
 func TestEventsUpdateTranscript(t *testing.T) {
@@ -37,7 +37,7 @@ func TestEventsUpdateTranscript(t *testing.T) {
 	}
 
 	model.applyEvent(event.Event{
-		Type:    harnesssession.AgentEventType,
+		Type:    execution.AgentEventType,
 		Payload: agentEvent,
 	})
 
@@ -82,9 +82,9 @@ func TestExecutionLifecycleDrivesStatus(t *testing.T) {
 
 	model.applyEvent(executionEvent(
 		t,
-		harnesssession.ExecutionStartedEntryType,
+		execution.StartedEntryType,
 		"execution-1",
-		harnesssession.ExecutionStarted{},
+		execution.Started{},
 	))
 
 	if !model.running() {
@@ -97,9 +97,9 @@ func TestExecutionLifecycleDrivesStatus(t *testing.T) {
 
 	model.applyEvent(executionEvent(
 		t,
-		harnesssession.ExecutionFinishedEntryType,
+		execution.FinishedEntryType,
 		"execution-1",
-		harnesssession.ExecutionFinished{Outcome: harnesssession.ExecutionCompleted},
+		execution.Finished{Outcome: execution.Completed},
 	))
 
 	if model.running() {
@@ -117,16 +117,16 @@ func TestFailedExecutionIsSurfaced(t *testing.T) {
 
 	model.applyEvent(executionEvent(
 		t,
-		harnesssession.ExecutionStartedEntryType,
+		execution.StartedEntryType,
 		"execution-1",
-		harnesssession.ExecutionStarted{},
+		execution.Started{},
 	))
 	model.applyEvent(executionEvent(
 		t,
-		harnesssession.ExecutionFinishedEntryType,
+		execution.FinishedEntryType,
 		"execution-1",
-		harnesssession.ExecutionFinished{
-			Outcome: harnesssession.ExecutionFailed,
+		execution.Finished{
+			Outcome: execution.Failed,
 			Error:   "model exploded",
 		},
 	))
@@ -137,9 +137,9 @@ func TestFailedExecutionIsSurfaced(t *testing.T) {
 }
 
 func TestInterruptedExecutionIsSurfaced(t *testing.T) {
-	for _, outcome := range []harnesssession.ExecutionOutcome{
-		harnesssession.ExecutionCancelled,
-		harnesssession.ExecutionInterrupted,
+	for _, outcome := range []execution.Outcome{
+		execution.Cancelled,
+		execution.Interrupted,
 	} {
 		t.Run(string(outcome), func(t *testing.T) {
 			model := New(context.Background(), nil, "session-1")
@@ -147,9 +147,9 @@ func TestInterruptedExecutionIsSurfaced(t *testing.T) {
 
 			model.applyEvent(executionEvent(
 				t,
-				harnesssession.ExecutionFinishedEntryType,
+				execution.FinishedEntryType,
 				"execution-1",
-				harnesssession.ExecutionFinished{Outcome: outcome},
+				execution.Finished{Outcome: outcome},
 			))
 
 			if !strings.Contains(model.View().Content, interruptedLabel) {
@@ -165,9 +165,9 @@ func TestSubmitIsIgnoredWhileBusy(t *testing.T) {
 
 	model.applyEvent(executionEvent(
 		t,
-		harnesssession.ExecutionStartedEntryType,
+		execution.StartedEntryType,
 		"execution-1",
-		harnesssession.ExecutionStarted{},
+		execution.Started{},
 	))
 
 	if command := model.submit("second message"); command != nil {
@@ -185,9 +185,9 @@ func TestCancelKeyOnlyFiresWhileRunning(t *testing.T) {
 
 	model.applyEvent(executionEvent(
 		t,
-		harnesssession.ExecutionStartedEntryType,
+		execution.StartedEntryType,
 		"execution-1",
-		harnesssession.ExecutionStarted{},
+		execution.Started{},
 	))
 
 	if _, command := model.Update(tea.KeyPressMsg{Code: tea.KeyEscape}); command == nil {

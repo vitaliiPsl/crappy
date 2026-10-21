@@ -1,4 +1,4 @@
-package session
+package execution
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"github.com/vitaliipsl/crappy/harness/memory"
 )
 
-func (s *Session) checkpoint(
+func (e *Executor) checkpoint(
 	ctx context.Context,
 	executionID string,
 	agentMemory *memory.Memory,
@@ -18,16 +18,16 @@ func (s *Session) checkpoint(
 		return nil, fmt.Errorf("read checkpoint context: %w", err)
 	}
 
-	if err := s.Emit(ctx, executionID, checkpoint.StartedEventType, nil); err != nil {
+	if err := e.events.Emit(ctx, executionID, checkpoint.StartedEventType, nil); err != nil {
 		return nil, err
 	}
 
-	generated, err := s.checkpoints.Generate(ctx, previous, messages)
+	generated, err := e.checkpoints.Generate(ctx, previous, messages)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := s.Commit(ctx, executionID, checkpoint.EntryType, generated); err != nil {
+	if err := e.events.Commit(ctx, executionID, checkpoint.EntryType, generated); err != nil {
 		return nil, fmt.Errorf("commit checkpoint: %w", err)
 	}
 

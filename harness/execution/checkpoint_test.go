@@ -1,4 +1,4 @@
-package session
+package execution
 
 import (
 	"context"
@@ -40,11 +40,11 @@ func TestAutomaticCheckpointDuringExecution(t *testing.T) {
 	}
 
 	store := entry.NewMemoryStore()
-
-	session, err := New(
-		context.Background(),
-		State{ID: "session-1"},
+	bus := event.NewBus("session-1", store)
+	executor := NewExecutor(
+		"session-1",
 		store,
+		bus,
 		agent.New(
 			kit.AgentConfig{},
 			staticModelResolver{agentModel},
@@ -52,23 +52,23 @@ func TestAutomaticCheckpointDuringExecution(t *testing.T) {
 		),
 		generator,
 	)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
 
-	subscription, err := session.Subscribe(context.Background(), 0)
+	subscription, err := bus.Subscribe(context.Background(), 0)
 	if err != nil {
 		t.Fatalf("Subscribe() error = %v", err)
 	}
 
 	t.Cleanup(subscription.Close)
 
-	executionID, err := session.Execute(
+	execution, err := executor.Start(
+		context.Background(),
 		kit.NewUserMessage(kit.NewTextContent("start")),
 	)
 	if err != nil {
-		t.Fatalf("Execute() error = %v", err)
+		t.Fatalf("Start() error = %v", err)
 	}
+
+	executionID := execution.ID()
 
 	started := false
 	for {
@@ -86,7 +86,7 @@ func TestAutomaticCheckpointDuringExecution(t *testing.T) {
 		t.Fatal("checkpoint started event was not emitted before the checkpoint entry")
 	}
 
-	waitSessionIdle(t, session)
+	waitDone(t, execution)
 
 	messages := agentModel.CallAt(0).Messages
 	if got, want := len(messages), 1; got != want {
@@ -145,9 +145,7 @@ func TestAutomaticCheckpointRetainsCurrentInput(t *testing.T) {
 		t.Fatalf("Record() error = %v", err)
 	}
 
-	session, err := New(
-		context.Background(),
-		State{ID: "session-1"},
+	executor := newExecutor(
 		store,
 		agent.New(
 			kit.AgentConfig{},
@@ -156,15 +154,16 @@ func TestAutomaticCheckpointRetainsCurrentInput(t *testing.T) {
 		),
 		generator,
 	)
+
+	execution, err := executor.Start(
+		context.Background(),
+		kit.NewUserMessage(kit.NewTextContent("current")),
+	)
 	if err != nil {
-		t.Fatalf("New() error = %v", err)
+		t.Fatalf("Start() error = %v", err)
 	}
 
-	if _, err := session.Execute(kit.NewUserMessage(kit.NewTextContent("current"))); err != nil {
-		t.Fatalf("Execute() error = %v", err)
-	}
-
-	waitSessionIdle(t, session)
+	waitDone(t, execution)
 
 	messages := agentModel.CallAt(0).Messages
 	want := []string{checkpointMessage("checkpointed context"), "earlier response", "current"}

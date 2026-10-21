@@ -1,6 +1,6 @@
 package session
 
-import harnesssession "github.com/vitaliipsl/crappy/harness/session"
+import "github.com/vitaliipsl/crappy/harness/execution"
 
 type noticeKind uint8
 
@@ -19,11 +19,11 @@ func errorNotice(err error) notice {
 	return notice{kind: noticeError, message: err.Error()}
 }
 
-func executionNotice(finished harnesssession.ExecutionFinished) notice {
+func executionNotice(finished execution.Finished) notice {
 	switch finished.Outcome {
-	case harnesssession.ExecutionFailed:
+	case execution.Failed:
 		return notice{kind: noticeError, message: finished.Error}
-	case harnesssession.ExecutionCancelled, harnesssession.ExecutionInterrupted:
+	case execution.Cancelled, execution.Interrupted:
 		return notice{kind: noticeInterrupted}
 	}
 

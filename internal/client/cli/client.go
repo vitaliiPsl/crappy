@@ -11,7 +11,7 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
 	"github.com/vitaliipsl/crappy/harness/event"
-	"github.com/vitaliipsl/crappy/harness/session"
+	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/internal/runtime"
 )
 
@@ -112,7 +112,7 @@ func (c *Client) Run(ctx context.Context) error {
 				return nil
 			}
 
-			if value.Type == session.ExecutionStartedEntryType {
+			if value.Type == execution.StartedEntryType {
 				activeExecutionID = value.ExecutionID
 			}
 
@@ -132,7 +132,7 @@ func (c *Client) Run(ctx context.Context) error {
 
 func (c *Client) handleEvent(value event.Event) (string, error) {
 	switch value.Type {
-	case session.AgentEventType:
+	case execution.AgentEventType:
 		var agentEvent kit.AgentEvent
 		if err := json.Unmarshal(value.Payload, &agentEvent); err != nil {
 			return "", fmt.Errorf("decode agent event: %w", err)
@@ -147,8 +147,8 @@ func (c *Client) handleEvent(value event.Event) (string, error) {
 		if _, err := io.WriteString(c.output, agentEvent.Content.Text.Text); err != nil {
 			return "", fmt.Errorf("write content delta: %w", err)
 		}
-	case session.ExecutionFinishedEntryType:
-		var finished session.ExecutionFinished
+	case execution.FinishedEntryType:
+		var finished execution.Finished
 		if err := json.Unmarshal(value.Payload, &finished); err != nil {
 			return "", fmt.Errorf("decode execution result: %w", err)
 		}
@@ -157,7 +157,7 @@ func (c *Client) handleEvent(value event.Event) (string, error) {
 			return "", fmt.Errorf("finish response: %w", err)
 		}
 
-		if finished.Outcome == session.ExecutionFailed {
+		if finished.Outcome == execution.Failed {
 			if _, err := fmt.Fprintf(c.output, "error: %s\n", finished.Error); err != nil {
 				return "", fmt.Errorf("write execution error: %w", err)
 			}

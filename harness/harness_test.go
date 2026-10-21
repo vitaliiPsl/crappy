@@ -14,6 +14,7 @@ import (
 
 	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/entry"
+	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/session"
 	"github.com/vitaliipsl/crappy/internal/storage/jsonl"
 )
@@ -230,7 +231,7 @@ func TestLookupContextDoesNotOwnExecution(t *testing.T) {
 	close(model.release)
 
 	finished := waitFinished(t, opened, id)
-	if finished.Outcome != session.ExecutionCompleted {
+	if finished.Outcome != execution.Completed {
 		t.Fatalf("execution outcome = %+v", finished)
 	}
 }
@@ -264,7 +265,7 @@ func TestShutdownOwnsSessionsAndRejectsFurtherOpens(t *testing.T) {
 
 	waitSignal(t, subscription.Done())
 
-	if finished := waitFinished(t, opened, id); finished.Outcome != session.ExecutionCancelled {
+	if finished := waitFinished(t, opened, id); finished.Outcome != execution.Cancelled {
 		t.Fatalf("execution outcome = %+v", finished)
 	}
 
@@ -409,7 +410,7 @@ func TestSessionsRemainPersistentAcrossHosts(t *testing.T) {
 		t.Fatal("new host reused a closed session instance")
 	}
 
-	if finished := waitFinished(t, reopened, id); finished.Outcome != session.ExecutionCompleted {
+	if finished := waitFinished(t, reopened, id); finished.Outcome != execution.Completed {
 		t.Fatalf("restored execution = %+v", finished)
 	}
 
@@ -419,7 +420,7 @@ func TestSessionsRemainPersistentAcrossHosts(t *testing.T) {
 	}
 }
 
-func waitFinished(t *testing.T, opened *session.Session, id string) session.ExecutionFinished {
+func waitFinished(t *testing.T, opened *session.Session, id string) execution.Finished {
 	t.Helper()
 
 	ticker := time.NewTicker(time.Millisecond)
@@ -435,8 +436,8 @@ func waitFinished(t *testing.T, opened *session.Session, id string) session.Exec
 		}
 
 		for _, value := range entries {
-			if value.ExecutionID == id && value.Type == session.ExecutionFinishedEntryType {
-				var finished session.ExecutionFinished
+			if value.ExecutionID == id && value.Type == execution.FinishedEntryType {
+				var finished execution.Finished
 				if err := json.Unmarshal(value.Payload, &finished); err != nil {
 					t.Fatal(err)
 				}

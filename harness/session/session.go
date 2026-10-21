@@ -9,19 +9,19 @@ import (
 	"github.com/vitaliipsl/crappy/harness/checkpoint"
 	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/event"
+	"github.com/vitaliipsl/crappy/harness/execution"
 )
 
 type Session struct {
 	ctx   context.Context
 	state State
 
-	entries     entry.Store
-	events      *event.Bus
-	agents      *agent.Factory
-	checkpoints *checkpoint.Generator
+	entries  entry.Store
+	events   *event.Bus
+	executor *execution.Executor
 
 	mu     sync.Mutex
-	active *execution
+	active *execution.Execution
 	closed bool
 }
 
@@ -35,15 +35,14 @@ func New(
 	events := event.NewBus(state.ID, entries)
 
 	session := &Session{
-		ctx:         ctx,
-		state:       state,
-		entries:     entries,
-		events:      events,
-		agents:      agents,
-		checkpoints: checkpoints,
+		ctx:      ctx,
+		state:    state,
+		entries:  entries,
+		events:   events,
+		executor: execution.NewExecutor(state.ID, entries, events, agents, checkpoints),
 	}
 
-	if err := session.reconcileExecutions(ctx); err != nil {
+	if err := session.executor.Reconcile(ctx); err != nil {
 		return nil, fmt.Errorf("reconcile executions: %w", err)
 	}
 
@@ -85,8 +84,8 @@ func (s *Session) Close() {
 	s.mu.Unlock()
 
 	if active != nil {
-		active.cancel()
-		<-active.done
+		active.Cancel()
+		<-active.Done()
 	}
 
 	s.events.Close()

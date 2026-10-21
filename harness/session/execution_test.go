@@ -14,6 +14,7 @@ import (
 	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/event"
+	"github.com/vitaliipsl/crappy/harness/execution"
 )
 
 func TestExecuteMaintainsContext(t *testing.T) {
@@ -75,14 +76,14 @@ func TestExecuteMaintainsContext(t *testing.T) {
 	}
 
 	wantTypes := []string{
-		ExecutionStartedEntryType,
+		execution.StartedEntryType,
 		"message",
 		"message",
-		ExecutionFinishedEntryType,
-		ExecutionStartedEntryType,
+		execution.FinishedEntryType,
+		execution.StartedEntryType,
 		"message",
 		"message",
-		ExecutionFinishedEntryType,
+		execution.FinishedEntryType,
 	}
 	for i, wantType := range wantTypes {
 		if entries[i].Type != wantType {
@@ -102,7 +103,7 @@ func TestExecuteMaintainsContext(t *testing.T) {
 		}
 	}
 
-	var firstStarted ExecutionStarted
+	var firstStarted execution.Started
 	if err := json.Unmarshal(entries[0].Payload, &firstStarted); err != nil {
 		t.Fatalf("decode first started execution: %v", err)
 	}
@@ -120,12 +121,12 @@ func TestExecuteMaintainsContext(t *testing.T) {
 		t.Fatalf("first output = %q, want %q", got, want)
 	}
 
-	var firstFinished ExecutionFinished
+	var firstFinished execution.Finished
 	if err := json.Unmarshal(entries[3].Payload, &firstFinished); err != nil {
 		t.Fatalf("decode first finished execution: %v", err)
 	}
 
-	if got, want := firstFinished.Outcome, ExecutionCompleted; got != want {
+	if got, want := firstFinished.Outcome, execution.Completed; got != want {
 		t.Fatalf("first execution outcome = %q, want %q", got, want)
 	}
 
@@ -146,7 +147,7 @@ func TestExecuteMaintainsContext(t *testing.T) {
 		t.Fatalf("second output = %q, want %q", got, want)
 	}
 
-	var secondFinished ExecutionFinished
+	var secondFinished execution.Finished
 	if err := json.Unmarshal(entries[7].Payload, &secondFinished); err != nil {
 		t.Fatalf("decode second finished execution: %v", err)
 	}
@@ -187,7 +188,7 @@ func TestExecuteRejectsConcurrentExecution(t *testing.T) {
 
 	if len(entries) == 0 ||
 		entries[0].ExecutionID != executionID ||
-		entries[0].Type != ExecutionStartedEntryType {
+		entries[0].Type != execution.StartedEntryType {
 		t.Fatalf("first entry = %#v, want started execution %q", entries, executionID)
 	}
 
@@ -232,16 +233,16 @@ func TestExecuteRecordsFailure(t *testing.T) {
 	}
 
 	last := entries[len(entries)-1]
-	if last.ExecutionID != executionID || last.Type != ExecutionFinishedEntryType {
+	if last.ExecutionID != executionID || last.Type != execution.FinishedEntryType {
 		t.Fatalf("last entry = %#v, want finished execution %q", last, executionID)
 	}
 
-	var finished ExecutionFinished
+	var finished execution.Finished
 	if err := json.Unmarshal(last.Payload, &finished); err != nil {
 		t.Fatalf("decode finished execution: %v", err)
 	}
 
-	if got, want := finished.Outcome, ExecutionFailed; got != want {
+	if got, want := finished.Outcome, execution.Failed; got != want {
 		t.Fatalf("execution outcome = %q, want %q", got, want)
 	}
 
@@ -291,12 +292,12 @@ func TestCancelActiveExecution(t *testing.T) {
 		t.Fatalf("Entries() error = %v", err)
 	}
 
-	var finished ExecutionFinished
+	var finished execution.Finished
 	if err := json.Unmarshal(entries[len(entries)-1].Payload, &finished); err != nil {
 		t.Fatalf("decode finished execution: %v", err)
 	}
 
-	if got, want := finished.Outcome, ExecutionCancelled; got != want {
+	if got, want := finished.Outcome, execution.Cancelled; got != want {
 		t.Fatalf("execution outcome = %q, want %q", got, want)
 	}
 
@@ -338,13 +339,13 @@ func TestSessionLifetimeCancelsActiveExecution(t *testing.T) {
 		t.Fatalf("Entries() error = %v", err)
 	}
 
-	var finished ExecutionFinished
+	var finished execution.Finished
 	if err := json.Unmarshal(entries[len(entries)-1].Payload, &finished); err != nil {
 		t.Fatalf("decode finished execution: %v", err)
 	}
 
-	if finished.Outcome != ExecutionCancelled {
-		t.Fatalf("execution outcome = %q, want %q", finished.Outcome, ExecutionCancelled)
+	if finished.Outcome != execution.Cancelled {
+		t.Fatalf("execution outcome = %q, want %q", finished.Outcome, execution.Cancelled)
 	}
 }
 
@@ -419,17 +420,17 @@ func TestCloseCancelsActiveExecution(t *testing.T) {
 	}
 
 	last := entries[len(entries)-1]
-	if last.ExecutionID != executionID || last.Type != ExecutionFinishedEntryType {
+	if last.ExecutionID != executionID || last.Type != execution.FinishedEntryType {
 		t.Fatalf("last entry = %#v, want finished execution %q", last, executionID)
 	}
 
-	var finished ExecutionFinished
+	var finished execution.Finished
 	if err := json.Unmarshal(last.Payload, &finished); err != nil {
 		t.Fatalf("decode finished execution: %v", err)
 	}
 
-	if finished.Outcome != ExecutionCancelled {
-		t.Fatalf("execution outcome = %q, want %q", finished.Outcome, ExecutionCancelled)
+	if finished.Outcome != execution.Cancelled {
+		t.Fatalf("execution outcome = %q, want %q", finished.Outcome, execution.Cancelled)
 	}
 }
 
@@ -488,84 +489,17 @@ func TestExecuteReconcilesUnfinishedExecutionBeforeContinuing(t *testing.T) {
 		t.Fatalf("Entries() error = %v", err)
 	}
 
-	var interrupted ExecutionFinished
+	var interrupted execution.Finished
 	if err := json.Unmarshal(entries[3].Payload, &interrupted); err != nil {
 		t.Fatalf("decode interrupted execution: %v", err)
 	}
 
-	if interrupted.Outcome != ExecutionInterrupted {
-		t.Fatalf("reconciled outcome = %q, want %q", interrupted.Outcome, ExecutionInterrupted)
+	if interrupted.Outcome != execution.Interrupted {
+		t.Fatalf("reconciled outcome = %q, want %q", interrupted.Outcome, execution.Interrupted)
 	}
 
-	if entries[4].ExecutionID != secondID || entries[4].Type != ExecutionStartedEntryType {
+	if entries[4].ExecutionID != secondID || entries[4].Type != execution.StartedEntryType {
 		t.Fatalf("next execution entry = %#v", entries[4])
-	}
-}
-
-func TestRunExecutionReconcilesToolsBeforeCancellation(t *testing.T) {
-	t.Parallel()
-
-	store := entry.NewMemoryStore()
-
-	session, err := New(context.Background(), State{ID: "session-1"}, store, nil, nil)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-
-	executionID := "execution-1"
-	call := kit.NewToolCall("call-1", "write", nil)
-
-	if err := session.Commit(
-		context.Background(),
-		executionID,
-		ExecutionStartedEntryType,
-		ExecutionStarted{},
-	); err != nil {
-		t.Fatalf("commit execution start: %v", err)
-	}
-
-	if err := session.Commit(
-		context.Background(),
-		executionID,
-		"message",
-		kit.NewModelMessage(kit.NewToolCallContent(call)),
-	); err != nil {
-		t.Fatalf("commit tool call: %v", err)
-	}
-
-	session.runExecution(
-		context.Background(),
-		&execution{id: executionID, done: make(chan struct{})},
-		interruptedAgent{},
-		kit.Message{},
-	)
-
-	entries, err := session.Entries(context.Background(), 0)
-	if err != nil {
-		t.Fatalf("Entries() error = %v", err)
-	}
-
-	if got, want := len(entries), 4; got != want {
-		t.Fatalf("entries = %d, want %d", got, want)
-	}
-
-	var message kit.Message
-	if err := json.Unmarshal(entries[2].Payload, &message); err != nil {
-		t.Fatalf("decode reconciled message: %v", err)
-	}
-
-	results := message.ToolResults()
-	if len(results) != 1 || results[0].Call.ID != call.ID {
-		t.Fatalf("reconciled results = %+v, want interrupted tool result", results)
-	}
-
-	var finished ExecutionFinished
-	if err := json.Unmarshal(entries[3].Payload, &finished); err != nil {
-		t.Fatalf("decode finished execution: %v", err)
-	}
-
-	if finished.Outcome != ExecutionCancelled {
-		t.Fatalf("execution outcome = %q, want %q", finished.Outcome, ExecutionCancelled)
 	}
 }
 
@@ -580,7 +514,7 @@ func waitSessionIdle(t *testing.T, session *Session) {
 
 	for {
 		session.mu.Lock()
-		idle := session.active == nil
+		idle := !session.running()
 		session.mu.Unlock()
 
 		if idle {
@@ -600,8 +534,6 @@ type blockingModel struct {
 	release chan struct{}
 }
 
-type interruptedAgent struct{}
-
 type finishFailingStore struct {
 	entry.Store
 	err     error
@@ -614,22 +546,12 @@ func (s *finishFailingStore) Append(
 	entries ...entry.Entry,
 ) ([]entry.Entry, error) {
 	for _, current := range entries {
-		if current.Type == ExecutionFinishedEntryType && s.failing.Load() {
+		if current.Type == execution.FinishedEntryType && s.failing.Load() {
 			return nil, s.err
 		}
 	}
 
 	return s.Store.Append(ctx, sessionID, entries...)
-}
-
-func (interruptedAgent) Run(context.Context, kit.Message) (kit.AgentResponse, error) {
-	return kit.AgentResponse{}, context.Canceled
-}
-
-func (interruptedAgent) Stream(context.Context, kit.Message) *kit.Stream[kit.AgentEvent, kit.AgentResponse] {
-	return kit.NewStream(func(kit.Emitter[kit.AgentEvent]) (kit.AgentResponse, error) {
-		return kit.AgentResponse{}, context.Canceled
-	})
 }
 
 func (m *blockingModel) Config() kit.ModelConfig {

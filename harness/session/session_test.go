@@ -12,6 +12,7 @@ import (
 	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/entry"
 	harnessevent "github.com/vitaliipsl/crappy/harness/event"
+	"github.com/vitaliipsl/crappy/harness/execution"
 )
 
 func TestSessionID(t *testing.T) {
@@ -204,7 +205,7 @@ func TestExecutePublishesEntriesAndAgentEvents(t *testing.T) {
 		events[i] = receiveEvent(t, subscription)
 	}
 
-	if events[0].EntryID != 1 || events[0].Type != ExecutionStartedEntryType {
+	if events[0].EntryID != 1 || events[0].Type != execution.StartedEntryType {
 		t.Fatalf("first event = %#v, want execution started entry 1", events[0])
 	}
 
@@ -212,7 +213,7 @@ func TestExecutePublishesEntriesAndAgentEvents(t *testing.T) {
 		t.Fatalf("second event = %#v, want message entry 2", events[1])
 	}
 
-	if events[2].EntryID != 0 || events[2].Type != AgentEventType {
+	if events[2].EntryID != 0 || events[2].Type != execution.AgentEventType {
 		t.Fatalf("third event = %#v, want transient content delta", events[2])
 	}
 
@@ -231,11 +232,11 @@ func TestExecutePublishesEntriesAndAgentEvents(t *testing.T) {
 		t.Fatalf("fourth event = %#v, want message entry 3", events[3])
 	}
 
-	if events[4].EntryID != 0 || events[4].Type != AgentEventType {
+	if events[4].EntryID != 0 || events[4].Type != execution.AgentEventType {
 		t.Fatalf("fifth event = %#v, want transient agent message", events[4])
 	}
 
-	if events[5].EntryID != 4 || events[5].Type != ExecutionFinishedEntryType {
+	if events[5].EntryID != 4 || events[5].Type != execution.FinishedEntryType {
 		t.Fatalf("sixth event = %#v, want execution finished entry 4", events[5])
 	}
 
