@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -34,27 +35,22 @@ func TestExecuteMaintainsContext(t *testing.T) {
 	)
 	store := entry.NewMemoryStore()
 
-	session, err := New(
-		context.Background(),
-		State{ID: "session-1"},
+	session := newAgentSession(context.Background(),
+		"session-1",
 		store,
 		agent.New(kit.AgentConfig{}, staticModelResolver{model}),
-		nil,
-	)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
+		nil)
 
 	firstInput := kit.NewUserMessage(kit.NewTextContent("first input"))
 
-	firstID, err := session.Execute(firstInput)
+	firstID, err := session.Execute(context.Background(), execution.Request{Executor: execution.AgentName, Input: firstInput})
 	if err != nil {
 		t.Fatalf("first Execute() error = %v", err)
 	}
 
 	waitSessionIdle(t, session)
 
-	secondID, err := session.Execute(kit.NewUserMessage(kit.NewTextContent("second input")))
+	secondID, err := session.Execute(context.Background(), execution.Request{Executor: execution.AgentName, Input: kit.NewUserMessage(kit.NewTextContent("second input"))})
 	if err != nil {
 		t.Fatalf("second Execute() error = %v", err)
 	}
@@ -71,7 +67,7 @@ func TestExecuteMaintainsContext(t *testing.T) {
 		t.Fatalf("Entries() error = %v", err)
 	}
 
-	if got, want := len(entries), 8; got != want {
+	if got, want := len(entries), 10; got != want {
 		t.Fatalf("Entries() returned %d entries, want %d", got, want)
 	}
 
@@ -79,10 +75,12 @@ func TestExecuteMaintainsContext(t *testing.T) {
 		execution.StartedEntryType,
 		"message",
 		"message",
+		execution.AgentFinishedEntryType,
 		execution.FinishedEntryType,
 		execution.StartedEntryType,
 		"message",
 		"message",
+		execution.AgentFinishedEntryType,
 		execution.FinishedEntryType,
 	}
 	for i, wantType := range wantTypes {
@@ -91,13 +89,13 @@ func TestExecuteMaintainsContext(t *testing.T) {
 		}
 	}
 
-	for i, value := range entries[:4] {
+	for i, value := range entries[:5] {
 		if value.ExecutionID != firstID {
 			t.Fatalf("first execution entry %d ID = %q, want %q", i, value.ExecutionID, firstID)
 		}
 	}
 
-	for i, value := range entries[4:] {
+	for i, value := range entries[5:] {
 		if value.ExecutionID != secondID {
 			t.Fatalf("second execution entry %d ID = %q, want %q", i, value.ExecutionID, secondID)
 		}
@@ -108,7 +106,12 @@ func TestExecuteMaintainsContext(t *testing.T) {
 		t.Fatalf("decode first started execution: %v", err)
 	}
 
-	if got, want := firstStarted.Input.Content[0].Text.Text, "first input"; got != want {
+	var firstMessage kit.Message
+	if err := json.Unmarshal(firstStarted.Input, &firstMessage); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := firstMessage.Content[0].Text.Text, "first input"; got != want {
 		t.Fatalf("first execution input = %q, want %q", got, want)
 	}
 
@@ -122,7 +125,7 @@ func TestExecuteMaintainsContext(t *testing.T) {
 	}
 
 	var firstFinished execution.Finished
-	if err := json.Unmarshal(entries[3].Payload, &firstFinished); err != nil {
+	if err := json.Unmarshal(entries[4].Payload, &firstFinished); err != nil {
 		t.Fatalf("decode first finished execution: %v", err)
 	}
 
@@ -130,16 +133,21 @@ func TestExecuteMaintainsContext(t *testing.T) {
 		t.Fatalf("first execution outcome = %q, want %q", got, want)
 	}
 
-	if got, want := firstFinished.Usage.InputTokens, int64(10); got != want {
+	var firstResult execution.AgentFinished
+	if err := json.Unmarshal(entries[3].Payload, &firstResult); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := firstResult.Usage.InputTokens, int64(10); got != want {
 		t.Fatalf("first result input tokens = %d, want %d", got, want)
 	}
 
-	if got, want := firstFinished.LastUsage.OutputTokens, int64(2); got != want {
+	if got, want := firstResult.LastUsage.OutputTokens, int64(2); got != want {
 		t.Fatalf("first result last output tokens = %d, want %d", got, want)
 	}
 
 	var secondOutput kit.Message
-	if err := json.Unmarshal(entries[6].Payload, &secondOutput); err != nil {
+	if err := json.Unmarshal(entries[7].Payload, &secondOutput); err != nil {
 		t.Fatalf("decode second output: %v", err)
 	}
 
@@ -147,8 +155,8 @@ func TestExecuteMaintainsContext(t *testing.T) {
 		t.Fatalf("second output = %q, want %q", got, want)
 	}
 
-	var secondFinished execution.Finished
-	if err := json.Unmarshal(entries[7].Payload, &secondFinished); err != nil {
+	var secondFinished execution.AgentFinished
+	if err := json.Unmarshal(entries[8].Payload, &secondFinished); err != nil {
 		t.Fatalf("decode second finished execution: %v", err)
 	}
 
@@ -165,18 +173,13 @@ func TestExecuteRejectsConcurrentExecution(t *testing.T) {
 		release: make(chan struct{}),
 	}
 
-	session, err := New(
-		context.Background(),
-		State{ID: "session-1"},
+	session := newAgentSession(context.Background(),
+		"session-1",
 		entry.NewMemoryStore(),
 		agent.New(kit.AgentConfig{}, staticModelResolver{model}),
-		nil,
-	)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
+		nil)
 
-	executionID, err := session.Execute(kit.NewUserMessage(kit.NewTextContent("first input")))
+	executionID, err := session.Execute(context.Background(), execution.Request{Executor: execution.AgentName, Input: kit.NewUserMessage(kit.NewTextContent("first input"))})
 	if err != nil {
 		t.Fatalf("first Execute() error = %v", err)
 	}
@@ -194,7 +197,7 @@ func TestExecuteRejectsConcurrentExecution(t *testing.T) {
 
 	<-model.started
 
-	_, err = session.Execute(kit.NewUserMessage(kit.NewTextContent("second input")))
+	_, err = session.Execute(context.Background(), execution.Request{Executor: execution.AgentName, Input: kit.NewUserMessage(kit.NewTextContent("second input"))})
 	if !errors.Is(err, ErrBusy) {
 		t.Fatalf("concurrent Execute() error = %v, want ErrBusy", err)
 	}
@@ -209,18 +212,13 @@ func TestExecuteRecordsFailure(t *testing.T) {
 	wantErr := errors.New("model failed")
 	model := kittest.NewModel(t, kittest.ModelResult{Error: wantErr})
 
-	session, err := New(
-		context.Background(),
-		State{ID: "session-1"},
+	session := newAgentSession(context.Background(),
+		"session-1",
 		entry.NewMemoryStore(),
 		agent.New(kit.AgentConfig{}, staticModelResolver{model}),
-		nil,
-	)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
+		nil)
 
-	executionID, err := session.Execute(kit.NewUserMessage(kit.NewTextContent("input")))
+	executionID, err := session.Execute(context.Background(), execution.Request{Executor: execution.AgentName, Input: kit.NewUserMessage(kit.NewTextContent("input"))})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -259,29 +257,24 @@ func TestCancelActiveExecution(t *testing.T) {
 		release: make(chan struct{}),
 	}
 
-	session, err := New(
-		context.Background(),
-		State{ID: "session-1"},
+	session := newAgentSession(context.Background(),
+		"session-1",
 		entry.NewMemoryStore(),
 		agent.New(kit.AgentConfig{}, staticModelResolver{model}),
-		nil,
-	)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
+		nil)
 
-	executionID, err := session.Execute(kit.NewUserMessage(kit.NewTextContent("input")))
+	executionID, err := session.Execute(context.Background(), execution.Request{Executor: execution.AgentName, Input: kit.NewUserMessage(kit.NewTextContent("input"))})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
 
 	<-model.started
 
-	if err := session.Cancel("other-execution"); !errors.Is(err, ErrExecutionNotActive) {
+	if err := session.Cancel(context.Background(), "other-execution"); !errors.Is(err, ErrExecutionNotActive) {
 		t.Fatalf("Cancel(other) error = %v, want ErrExecutionNotActive", err)
 	}
 
-	if err := session.Cancel(executionID); err != nil {
+	if err := session.Cancel(context.Background(), executionID); err != nil {
 		t.Fatalf("Cancel() error = %v", err)
 	}
 
@@ -301,7 +294,7 @@ func TestCancelActiveExecution(t *testing.T) {
 		t.Fatalf("execution outcome = %q, want %q", got, want)
 	}
 
-	if err := session.Cancel(executionID); !errors.Is(err, ErrExecutionNotActive) {
+	if err := session.Cancel(context.Background(), executionID); !errors.Is(err, ErrExecutionNotActive) {
 		t.Fatalf("Cancel(completed) error = %v, want ErrExecutionNotActive", err)
 	}
 }
@@ -315,18 +308,13 @@ func TestSessionLifetimeCancelsActiveExecution(t *testing.T) {
 		release: make(chan struct{}),
 	}
 
-	session, err := New(
-		ctx,
-		State{ID: "session-1"},
+	session := newAgentSession(ctx,
+		"session-1",
 		entry.NewMemoryStore(),
 		agent.New(kit.AgentConfig{}, staticModelResolver{model}),
-		nil,
-	)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
+		nil)
 
-	if _, err := session.Execute(kit.NewUserMessage(kit.NewTextContent("input"))); err != nil {
+	if _, err := session.Execute(context.Background(), execution.Request{Executor: execution.AgentName, Input: kit.NewUserMessage(kit.NewTextContent("input"))}); err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
 
@@ -352,21 +340,16 @@ func TestSessionLifetimeCancelsActiveExecution(t *testing.T) {
 func TestCloseRejectsExecution(t *testing.T) {
 	t.Parallel()
 
-	session, err := New(
-		context.Background(),
-		State{ID: "session-1"},
+	session := newAgentSession(context.Background(),
+		"session-1",
 		entry.NewMemoryStore(),
 		agent.New(kit.AgentConfig{}, staticModelResolver{kittest.NewModel(t)}),
-		nil,
-	)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
+		nil)
 
 	session.Close()
 	session.Close()
 
-	_, err = session.Execute(kit.NewUserMessage(kit.NewTextContent("input")))
+	_, err := session.Execute(context.Background(), execution.Request{Executor: execution.AgentName, Input: kit.NewUserMessage(kit.NewTextContent("input"))})
 	if !errors.Is(err, ErrClosed) {
 		t.Fatalf("Execute() error = %v, want ErrClosed", err)
 	}
@@ -380,23 +363,18 @@ func TestCloseCancelsActiveExecution(t *testing.T) {
 		release: make(chan struct{}),
 	}
 
-	session, err := New(
-		context.Background(),
-		State{ID: "session-1"},
+	session := newAgentSession(context.Background(),
+		"session-1",
 		entry.NewMemoryStore(),
 		agent.New(kit.AgentConfig{}, staticModelResolver{model}),
-		nil,
-	)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
+		nil)
 
 	subscription, err := session.Subscribe(context.Background(), 0)
 	if err != nil {
 		t.Fatalf("Subscribe() error = %v", err)
 	}
 
-	executionID, err := session.Execute(kit.NewUserMessage(kit.NewTextContent("input")))
+	executionID, err := session.Execute(context.Background(), execution.Request{Executor: execution.AgentName, Input: kit.NewUserMessage(kit.NewTextContent("input"))})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -434,75 +412,6 @@ func TestCloseCancelsActiveExecution(t *testing.T) {
 	}
 }
 
-func TestExecuteReconcilesUnfinishedExecutionBeforeContinuing(t *testing.T) {
-	t.Parallel()
-
-	store := &finishFailingStore{
-		Store: entry.NewMemoryStore(),
-		err:   errors.New("storage unavailable"),
-	}
-	store.failing.Store(true)
-
-	model := kittest.NewModel(t,
-		kittest.ModelResult{Response: kit.ModelResponse{
-			Message:      kit.NewModelMessage(kit.NewTextContent("first")),
-			FinishReason: kit.FinishReasonStop,
-		}},
-		kittest.ModelResult{Response: kit.ModelResponse{
-			Message:      kit.NewModelMessage(kit.NewTextContent("second")),
-			FinishReason: kit.FinishReasonStop,
-		}},
-	)
-
-	session, err := New(
-		context.Background(),
-		State{ID: "session-1"},
-		store,
-		agent.New(kit.AgentConfig{}, staticModelResolver{model}),
-		nil,
-	)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-
-	if _, err := session.Execute(kit.NewUserMessage(kit.NewTextContent("input"))); err != nil {
-		t.Fatalf("Execute() error = %v", err)
-	}
-
-	waitSessionIdle(t, session)
-
-	if _, err := session.Execute(kit.NewUserMessage(kit.NewTextContent("again"))); !errors.Is(err, store.err) {
-		t.Fatalf("Execute() while storage unavailable error = %v, want %v", err, store.err)
-	}
-
-	store.failing.Store(false)
-
-	secondID, err := session.Execute(kit.NewUserMessage(kit.NewTextContent("again")))
-	if err != nil {
-		t.Fatalf("Execute() after storage recovery error = %v", err)
-	}
-
-	waitSessionIdle(t, session)
-
-	entries, err := session.Entries(context.Background(), 0)
-	if err != nil {
-		t.Fatalf("Entries() error = %v", err)
-	}
-
-	var interrupted execution.Finished
-	if err := json.Unmarshal(entries[3].Payload, &interrupted); err != nil {
-		t.Fatalf("decode interrupted execution: %v", err)
-	}
-
-	if interrupted.Outcome != execution.Interrupted {
-		t.Fatalf("reconciled outcome = %q, want %q", interrupted.Outcome, execution.Interrupted)
-	}
-
-	if entries[4].ExecutionID != secondID || entries[4].Type != execution.StartedEntryType {
-		t.Fatalf("next execution entry = %#v", entries[4])
-	}
-}
-
 func waitSessionIdle(t *testing.T, session *Session) {
 	t.Helper()
 
@@ -514,7 +423,7 @@ func waitSessionIdle(t *testing.T, session *Session) {
 
 	for {
 		session.mu.Lock()
-		idle := !session.running()
+		idle := session.activeID == ""
 		session.mu.Unlock()
 
 		if idle {
@@ -585,5 +494,310 @@ func (m *blockingModel) response(ctx context.Context) (kit.ModelResponse, error)
 		}, nil
 	case <-ctx.Done():
 		return kit.ModelResponse{}, ctx.Err()
+	}
+}
+
+func TestFunctionExecutionUsesSessionLifetimeAndDetachedInput(t *testing.T) {
+	t.Parallel()
+
+	started := make(chan execution.ExecuteParams, 1)
+	release := make(chan struct{})
+	store := entry.NewMemoryStore()
+
+	session := New(context.Background(),
+		"session-1",
+		store,
+		WithExecutors(map[string]execution.Executor{
+			"function": execution.Func(func(ctx context.Context, params execution.ExecuteParams) error {
+				started <- params
+
+				<-release
+
+				return params.Events.Commit(ctx, params.ExecutionID, "function.output", params.Input)
+			}),
+		}))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	input := map[string]int{"value": 1}
+
+	value, err := session.Execute(ctx, execution.Request{Executor: "function", Input: input})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	params := <-started
+	if params.SessionID != session.ID() || params.ExecutionID != value || params.Entries != store {
+		t.Fatalf("executor parameters = %+v", params)
+	}
+
+	if value == "" {
+		t.Fatal("submission returned an empty execution ID")
+	}
+
+	input["value"] = 2
+
+	cancel()
+	close(release)
+	waitSessionIdle(t, session)
+
+	entries, err := session.Entries(context.Background(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(entries) != 3 || string(entries[1].Payload) != `{"value":1}` {
+		t.Fatalf("function journal = %+v", entries)
+	}
+
+	var startedEntry execution.Started
+	if err := json.Unmarshal(entries[0].Payload, &startedEntry); err != nil {
+		t.Fatal(err)
+	}
+
+	if string(startedEntry.Input) != `{"value":1}` || startedEntry.StartedAt.IsZero() {
+		t.Fatalf("mutated request = %+v", startedEntry)
+	}
+
+	var finished execution.Finished
+	if err := json.Unmarshal(entries[2].Payload, &finished); err != nil {
+		t.Fatal(err)
+	}
+
+	if finished.Outcome != execution.Completed {
+		t.Fatalf("client cancellation affected invocation: %+v", finished)
+	}
+}
+
+func TestExecuteValidatesBeforeRecording(t *testing.T) {
+	t.Parallel()
+
+	session := New(context.Background(),
+		"session-1",
+		entry.NewMemoryStore(),
+		WithExecutors(map[string]execution.Executor{
+			"work": execution.Func(func(context.Context, execution.ExecuteParams) error {
+				t.Error("invalid request reached executor")
+
+				return nil
+			}),
+		}))
+
+	for _, request := range []execution.Request{
+		{Executor: "missing"},
+		{Executor: "work", Input: json.RawMessage(`invalid`)},
+		{Executor: "work", Input: make(chan int)},
+	} {
+		if _, err := session.Execute(context.Background(), request); err == nil {
+			t.Fatal("invalid request was accepted")
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := session.Execute(ctx, execution.Request{Executor: "work"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled submission = %v", err)
+	}
+
+	entries, err := session.Entries(context.Background(), 0)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("invalid request persisted: %+v, %v", entries, err)
+	}
+}
+
+func TestTerminalPersistenceFailureRetainsOutcome(t *testing.T) {
+	t.Parallel()
+
+	for _, runErr := range []error{nil, errors.New("function failed")} {
+		t.Run(fmt.Sprint(runErr), func(t *testing.T) {
+			store := &finishFailingStore{Store: entry.NewMemoryStore(), err: errors.New("storage unavailable")}
+			store.failing.Store(true)
+
+			var calls atomic.Int32
+
+			session := New(context.Background(),
+				"session-1",
+				store,
+				WithExecutors(map[string]execution.Executor{
+					"work": execution.Func(func(context.Context, execution.ExecuteParams) error {
+						calls.Add(1)
+
+						return runErr
+					}),
+				}))
+
+			request := execution.Request{Executor: "work"}
+
+			first, err := session.Execute(context.Background(), request)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			waitInvocation(t, session)
+
+			if err := session.Cancel(context.Background(), first); !errors.Is(err, ErrExecutionNotActive) {
+				t.Fatalf("cancel after invocation returned = %v", err)
+			}
+
+			if _, err := session.Execute(context.Background(), request); !errors.Is(err, store.err) {
+				t.Fatalf("submission after failed commit = %v", err)
+			}
+
+			store.failing.Store(false)
+
+			if _, err := session.Execute(context.Background(), request); err != nil {
+				t.Fatal(err)
+			}
+
+			waitSessionIdle(t, session)
+
+			entries, err := session.Entries(context.Background(), 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var finished execution.Finished
+			if err := json.Unmarshal(entries[1].Payload, &finished); err != nil {
+				t.Fatal(err)
+			}
+
+			want := execution.Completed
+			if runErr != nil {
+				want = execution.Failed
+
+				if finished.Error != runErr.Error() {
+					t.Fatalf("original failure was lost: %+v", finished)
+				}
+			}
+
+			if finished.Outcome != want || finished.EndedAt.IsZero() || entries[1].ExecutionID != first || calls.Load() != 2 {
+				t.Fatalf("recovered result = %+v, calls = %d", finished, calls.Load())
+			}
+		})
+	}
+}
+
+func waitInvocation(t *testing.T, session *Session) {
+	t.Helper()
+	session.mu.Lock()
+	done := session.done
+	session.mu.Unlock()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("invocation did not finish")
+	}
+}
+
+func TestSubmissionRecoversUnfinishedExecutionBeforeInvokingExecutor(t *testing.T) {
+	t.Parallel()
+
+	store := &finishFailingStore{Store: entry.NewMemoryStore(), err: errors.New("storage unavailable")}
+
+	bus := event.NewBus("session-1", store)
+	if err := bus.Commit(context.Background(), "unfinished", execution.StartedEntryType, execution.Started{
+		Executor: "removed-executor", Input: json.RawMessage(`{"value":1}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var calls atomic.Int32
+
+	session := New(context.Background(),
+		"session-1",
+		store,
+		WithExecutors(map[string]execution.Executor{
+			"work": execution.Func(func(ctx context.Context, params execution.ExecuteParams) error {
+				calls.Add(1)
+
+				entries, err := params.Entries.List(ctx, params.SessionID, 0)
+				if err != nil {
+					return err
+				}
+
+				if len(entries) != 3 || entries[1].Type != execution.FinishedEntryType {
+					t.Errorf("new work started before recovery: %+v", entries)
+				}
+
+				return nil
+			}),
+		}))
+
+	before, err := session.Entries(context.Background(), 0)
+	if err != nil || len(before) != 1 {
+		t.Fatalf("opening changed entries: %+v, %v", before, err)
+	}
+
+	store.failing.Store(true)
+
+	request := execution.Request{Executor: "work"}
+	if _, err := session.Execute(context.Background(), request); !errors.Is(err, store.err) {
+		t.Fatalf("recovery persistence error = %v", err)
+	}
+
+	if calls.Load() != 0 {
+		t.Fatal("executor ran before recovery was durable")
+	}
+
+	if _, err := session.Execute(context.Background(), request); !errors.Is(err, store.err) {
+		t.Fatalf("repeated submission error = %v", err)
+	}
+
+	store.failing.Store(false)
+
+	if _, err := session.Execute(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+
+	waitSessionIdle(t, session)
+
+	entries, err := session.Entries(context.Background(), 0)
+	if err != nil || len(entries) != 4 {
+		t.Fatalf("recovered journal = %+v, %v", entries, err)
+	}
+
+	var previous execution.Finished
+	if err := json.Unmarshal(entries[1].Payload, &previous); err != nil {
+		t.Fatal(err)
+	}
+
+	if previous.Outcome != execution.Interrupted || calls.Load() != 1 {
+		t.Fatalf("previous outcome = %+v, calls = %d", previous, calls.Load())
+	}
+}
+
+func TestSubmissionPreservesPreviouslyFinishedExecution(t *testing.T) {
+	t.Parallel()
+
+	store := entry.NewMemoryStore()
+
+	bus := event.NewBus("session-1", store)
+	if err := bus.Commit(context.Background(), "completed", execution.StartedEntryType, execution.Started{Executor: "work"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := bus.Commit(context.Background(), "completed", execution.FinishedEntryType, execution.Finished{Outcome: execution.Completed}); err != nil {
+		t.Fatal(err)
+	}
+
+	session := New(context.Background(),
+		"session-1",
+		store,
+		WithExecutors(map[string]execution.Executor{
+			"work": execution.Func(func(context.Context, execution.ExecuteParams) error { return nil }),
+		}))
+
+	if _, err := session.Execute(context.Background(), execution.Request{Executor: "work"}); err != nil {
+		t.Fatal(err)
+	}
+
+	waitSessionIdle(t, session)
+
+	entries, err := session.Entries(context.Background(), 0)
+	if err != nil || len(entries) != 4 {
+		t.Fatalf("completed execution changed: %+v, %v", entries, err)
 	}
 }

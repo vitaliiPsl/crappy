@@ -10,6 +10,7 @@ import (
 
 	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/entry"
+	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/session"
 )
 
@@ -101,7 +102,7 @@ func TestRuntimeDeletesOpenSession(t *testing.T) {
 		t.Fatalf("deleted session = %q, want session-1", store.deleted)
 	}
 
-	_, err = opened.Execute(kit.NewUserMessage(kit.NewTextContent("input")))
+	_, err = opened.Execute(context.Background(), execution.Request{Executor: execution.AgentName, Input: kit.NewUserMessage(kit.NewTextContent("input"))})
 	if !errors.Is(err, session.ErrClosed) {
 		t.Fatalf("Execute() on deleted session error = %v, want ErrClosed", err)
 	}

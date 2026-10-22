@@ -137,7 +137,7 @@ func TestFailedExecutionIsSurfaced(t *testing.T) {
 }
 
 func TestInterruptedExecutionIsSurfaced(t *testing.T) {
-	for _, outcome := range []execution.Outcome{
+	for _, outcome := range []execution.Status{
 		execution.Cancelled,
 		execution.Interrupted,
 	} {

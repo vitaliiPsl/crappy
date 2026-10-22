@@ -2,59 +2,60 @@ package session
 
 import (
 	"context"
-	"fmt"
+	"maps"
 	"sync"
 
-	"github.com/vitaliipsl/crappy/harness/agent"
-	"github.com/vitaliipsl/crappy/harness/checkpoint"
 	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
 )
 
 type Session struct {
-	ctx   context.Context
-	state State
+	ctx context.Context
+	id  string
 
-	entries  entry.Store
-	events   *event.Bus
-	executor *execution.Executor
+	entries   entry.Store
+	events    *event.Bus
+	executors map[string]execution.Executor
+
+	activeID string
+	cancel   context.CancelFunc
+	done     chan struct{}
+	pending  *execution.Finished
 
 	mu     sync.Mutex
-	active *execution.Execution
 	closed bool
 }
 
-func New(
-	ctx context.Context,
-	state State,
-	entries entry.Store,
-	agents *agent.Factory,
-	checkpoints *checkpoint.Generator,
-) (*Session, error) {
-	events := event.NewBus(state.ID, entries)
+type Option func(*Session)
 
-	session := &Session{
-		ctx:      ctx,
-		state:    state,
-		entries:  entries,
-		events:   events,
-		executor: execution.NewExecutor(state.ID, entries, events, agents, checkpoints),
+func WithExecutors(executors map[string]execution.Executor) Option {
+	return func(s *Session) {
+		maps.Copy(s.executors, executors)
+	}
+}
+
+func New(ctx context.Context, id string, entries entry.Store, options ...Option) *Session {
+	s := &Session{
+		ctx:       ctx,
+		id:        id,
+		entries:   entries,
+		events:    event.NewBus(id, entries),
+		executors: make(map[string]execution.Executor),
+	}
+	for _, option := range options {
+		option(s)
 	}
 
-	if err := session.executor.Reconcile(ctx); err != nil {
-		return nil, fmt.Errorf("reconcile executions: %w", err)
-	}
-
-	return session, nil
+	return s
 }
 
 func (s *Session) ID() string {
-	return s.state.ID
+	return s.id
 }
 
 func (s *Session) Entries(ctx context.Context, afterID uint64) ([]entry.Entry, error) {
-	return s.entries.List(ctx, s.state.ID, afterID)
+	return s.entries.List(ctx, s.id, afterID)
 }
 
 func (s *Session) Subscribe(ctx context.Context, afterID uint64) (*event.Subscription, error) {
@@ -80,12 +81,12 @@ func (s *Session) Commit(
 func (s *Session) Close() {
 	s.mu.Lock()
 	s.closed = true
-	active := s.active
+	cancel, done := s.cancel, s.done
 	s.mu.Unlock()
 
-	if active != nil {
-		active.Cancel()
-		<-active.Done()
+	if cancel != nil {
+		cancel()
+		<-done
 	}
 
 	s.events.Close()

@@ -41,17 +41,9 @@ func TestAutomaticCheckpointDuringExecution(t *testing.T) {
 
 	store := entry.NewMemoryStore()
 	bus := event.NewBus("session-1", store)
-	executor := NewExecutor(
-		"session-1",
-		store,
-		bus,
-		agent.New(
-			kit.AgentConfig{},
-			staticModelResolver{agentModel},
-			agent.WithContributors(automatic.New()),
-		),
-		generator,
-	)
+	executor := NewAgent(agent.New(
+		kit.AgentConfig{}, staticModelResolver{agentModel}, agent.WithContributors(automatic.New()),
+	), WithCheckpoints(generator))
 
 	subscription, err := bus.Subscribe(context.Background(), 0)
 	if err != nil {
@@ -60,15 +52,11 @@ func TestAutomaticCheckpointDuringExecution(t *testing.T) {
 
 	t.Cleanup(subscription.Close)
 
-	execution, err := executor.Start(
-		context.Background(),
-		kit.NewUserMessage(kit.NewTextContent("start")),
-	)
-	if err != nil {
-		t.Fatalf("Start() error = %v", err)
-	}
+	executionID := "execution-1"
+	done := make(chan error, 1)
 
-	executionID := execution.ID()
+	params := ExecuteParams{SessionID: "session-1", ExecutionID: executionID, Input: agentInput(t, "start"), Entries: store, Events: bus}
+	go func() { done <- executor.Execute(context.Background(), params) }()
 
 	started := false
 	for {
@@ -86,7 +74,9 @@ func TestAutomaticCheckpointDuringExecution(t *testing.T) {
 		t.Fatal("checkpoint started event was not emitted before the checkpoint entry")
 	}
 
-	waitDone(t, execution)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
 
 	messages := agentModel.CallAt(0).Messages
 	if got, want := len(messages), 1; got != want {
@@ -106,11 +96,11 @@ func TestAutomaticCheckpointDuringExecution(t *testing.T) {
 		t.Fatalf("entries = %d, want at least 3", len(entries))
 	}
 
-	if got, want := entries[2].Type, checkpoint.EntryType; got != want {
+	if got, want := entries[1].Type, checkpoint.EntryType; got != want {
 		t.Fatalf("entry 3 type = %q, want %q", got, want)
 	}
 
-	if got := entries[2].ExecutionID; got != executionID {
+	if got := entries[1].ExecutionID; got != executionID {
 		t.Fatalf("checkpoint ExecutionID = %q, want %q", got, executionID)
 	}
 }
@@ -145,25 +135,14 @@ func TestAutomaticCheckpointRetainsCurrentInput(t *testing.T) {
 		t.Fatalf("Record() error = %v", err)
 	}
 
-	executor := newExecutor(
-		store,
-		agent.New(
-			kit.AgentConfig{},
-			staticModelResolver{agentModel},
-			agent.WithContributors(automatic.New()),
-		),
-		generator,
-	)
-
-	execution, err := executor.Start(
-		context.Background(),
-		kit.NewUserMessage(kit.NewTextContent("current")),
-	)
-	if err != nil {
-		t.Fatalf("Start() error = %v", err)
+	executor := NewAgent(agent.New(
+		kit.AgentConfig{}, staticModelResolver{agentModel}, agent.WithContributors(automatic.New()),
+	), WithCheckpoints(generator))
+	if err := executor.Execute(context.Background(), ExecuteParams{
+		SessionID: "session-1", ExecutionID: "execution-1", Input: agentInput(t, "current"), Entries: store, Events: event.NewBus("session-1", store),
+	}); err != nil {
+		t.Fatal(err)
 	}
-
-	waitDone(t, execution)
 
 	messages := agentModel.CallAt(0).Messages
 	want := []string{checkpointMessage("checkpointed context"), "earlier response", "current"}

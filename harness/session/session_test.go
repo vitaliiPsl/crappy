@@ -10,6 +10,7 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kittest"
 
 	"github.com/vitaliipsl/crappy/harness/agent"
+	"github.com/vitaliipsl/crappy/harness/checkpoint"
 	"github.com/vitaliipsl/crappy/harness/entry"
 	harnessevent "github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
@@ -18,16 +19,11 @@ import (
 func TestSessionID(t *testing.T) {
 	t.Parallel()
 
-	session, err := New(
-		context.Background(),
-		State{ID: "session-1"},
+	session := newAgentSession(context.Background(),
+		"session-1",
 		entry.NewMemoryStore(),
 		nil,
-		nil,
-	)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
+		nil)
 
 	if got, want := session.ID(), "session-1"; got != want {
 		t.Fatalf("ID() = %q, want %q", got, want)
@@ -61,10 +57,11 @@ func TestSessionEntries(t *testing.T) {
 		t.Fatalf("Append() other session error = %v", err)
 	}
 
-	session, err := New(context.Background(), State{ID: "session-1"}, store, nil, nil)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
+	session := newAgentSession(context.Background(),
+		"session-1",
+		store,
+		nil,
+		nil)
 
 	entries, err := session.Entries(context.Background(), 1)
 	if err != nil {
@@ -93,10 +90,11 @@ func TestSubscribeReplaysEntries(t *testing.T) {
 		t.Fatalf("Append() error = %v", err)
 	}
 
-	session, err := New(context.Background(), State{ID: "session-1"}, store, nil, nil)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
+	session := newAgentSession(context.Background(),
+		"session-1",
+		store,
+		nil,
+		nil)
 
 	subscription, err := session.Subscribe(context.Background(), 0)
 	if err != nil {
@@ -114,16 +112,11 @@ func TestSubscribeReplaysEntries(t *testing.T) {
 func TestEmitReachesEverySubscriber(t *testing.T) {
 	t.Parallel()
 
-	session, err := New(
-		context.Background(),
-		State{ID: "session-1"},
+	session := newAgentSession(context.Background(),
+		"session-1",
 		entry.NewMemoryStore(),
 		nil,
-		nil,
-	)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
+		nil)
 
 	first, err := session.Subscribe(context.Background(), 0)
 	if err != nil {
@@ -177,16 +170,11 @@ func TestExecutePublishesEntriesAndAgentEvents(t *testing.T) {
 		},
 	})
 
-	session, err := New(
-		context.Background(),
-		State{ID: "session-1"},
+	session := newAgentSession(context.Background(),
+		"session-1",
 		entry.NewMemoryStore(),
 		agent.New(kit.AgentConfig{}, staticModelResolver{model}),
-		nil,
-	)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
+		nil)
 
 	subscription, err := session.Subscribe(context.Background(), 0)
 	if err != nil {
@@ -195,12 +183,12 @@ func TestExecutePublishesEntriesAndAgentEvents(t *testing.T) {
 
 	t.Cleanup(subscription.Close)
 
-	executionID, err := session.Execute(kit.NewUserMessage(kit.NewTextContent("hi")))
+	executionID, err := session.Execute(context.Background(), execution.Request{Executor: execution.AgentName, Input: kit.NewUserMessage(kit.NewTextContent("hi"))})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
 
-	events := make([]harnessevent.Event, 6)
+	events := make([]harnessevent.Event, 7)
 	for i := range events {
 		events[i] = receiveEvent(t, subscription)
 	}
@@ -236,8 +224,8 @@ func TestExecutePublishesEntriesAndAgentEvents(t *testing.T) {
 		t.Fatalf("fifth event = %#v, want transient agent message", events[4])
 	}
 
-	if events[5].EntryID != 4 || events[5].Type != execution.FinishedEntryType {
-		t.Fatalf("sixth event = %#v, want execution finished entry 4", events[5])
+	if events[6].EntryID != 5 || events[6].Type != execution.FinishedEntryType {
+		t.Fatalf("last event = %#v, want execution finished entry 5", events[6])
 	}
 
 	for _, event := range events {
@@ -270,4 +258,8 @@ func receiveEvent(t *testing.T, subscription *harnessevent.Subscription) harness
 
 		return harnessevent.Event{}
 	}
+}
+
+func newAgentSession(ctx context.Context, id string, entries entry.Store, factory *agent.Factory, checkpoints *checkpoint.Generator) *Session {
+	return New(ctx, id, entries, WithExecutors(map[string]execution.Executor{execution.AgentName: execution.NewAgent(factory, execution.WithCheckpoints(checkpoints))}))
 }

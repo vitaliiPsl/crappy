@@ -3,14 +3,19 @@ package execution
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
+	"github.com/vitaliiPsl/crappy-adk/kittest"
 
+	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/entry"
+	"github.com/vitaliipsl/crappy/harness/event"
+	"github.com/vitaliipsl/crappy/harness/memory"
 )
 
-func TestReconcileRecordsMissingToolResults(t *testing.T) {
+func TestAgentCompletesMissingToolResults(t *testing.T) {
 	t.Parallel()
 
 	firstCall := kit.NewToolCall("call-1", "first", nil)
@@ -58,8 +63,8 @@ func TestReconcileRecordsMissingToolResults(t *testing.T) {
 		t.Fatalf("Append() error = %v", err)
 	}
 
-	if err := newExecutor(store, nil, nil).Reconcile(context.Background()); err != nil {
-		t.Fatalf("Reconcile() error = %v", err)
+	if err := (NewAgent(nil)).completeToolResults(context.Background(), ExecuteParams{SessionID: "session-1", ExecutionID: "execution-1", Entries: store, Events: event.NewBus("session-1", store)}); err != nil {
+		t.Fatalf("completeToolResults() error = %v", err)
 	}
 
 	entries, err := store.List(context.Background(), "session-1", 0)
@@ -67,7 +72,7 @@ func TestReconcileRecordsMissingToolResults(t *testing.T) {
 		t.Fatalf("List() error = %v", err)
 	}
 
-	if got, want := len(entries), 5; got != want {
+	if got, want := len(entries), 4; got != want {
 		t.Fatalf("entries = %d, want %d", got, want)
 	}
 
@@ -87,10 +92,6 @@ func TestReconcileRecordsMissingToolResults(t *testing.T) {
 
 	if results[0].Error != errUnrecordedToolResult.Error() {
 		t.Fatalf("tool result error = %q, want %q", results[0].Error, errUnrecordedToolResult)
-	}
-
-	if entries[4].Type != FinishedEntryType {
-		t.Fatalf("last entry = %#v, want execution finished", entries[4])
 	}
 }
 
@@ -153,4 +154,85 @@ func TestUnresolvedToolCalls(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAgentRepairsToolHistoryBeforeBuilding(t *testing.T) {
+	t.Parallel()
+
+	store := &messageFailingStore{Store: entry.NewMemoryStore(), failure: errors.New("storage unavailable"), failing: true}
+	bus := event.NewBus("session-1", store)
+	call := kit.NewToolCall("call-1", "write", nil)
+
+	payload, err := json.Marshal(kit.NewModelMessage(kit.NewToolCallContent(call)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := store.Store.Append(context.Background(), "session-1", entry.Entry{
+		ExecutionID: "previous", Type: memory.EntryType, Payload: payload,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var builds int
+
+	model := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
+		Message: kit.NewModelMessage(kit.NewTextContent("done")), FinishReason: kit.FinishReasonStop,
+	}})
+	configured := NewAgent(agent.New(kit.AgentConfig{}, staticModelResolver{model}, agent.WithContributors(
+		agent.ContributorFunc(func(context.Context, agent.BuildContext) (agent.Contribution, error) {
+			builds++
+
+			return agent.Contribution{}, nil
+		}),
+	)))
+
+	params := ExecuteParams{SessionID: "session-1", ExecutionID: "next", Input: agentInput(t, "continue"), Entries: store, Events: bus}
+	if err := configured.Execute(context.Background(), params); !errors.Is(err, store.failure) {
+		t.Fatalf("failed history repair = %v", err)
+	}
+
+	if builds != 0 {
+		t.Fatal("agent was built before its history was usable")
+	}
+
+	store.failing = false
+
+	if err := configured.Execute(context.Background(), params); err != nil {
+		t.Fatal(err)
+	}
+
+	if builds != 1 {
+		t.Fatalf("agent builds = %d", builds)
+	}
+
+	entries, err := store.List(context.Background(), "session-1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var repaired kit.Message
+	if err := json.Unmarshal(entries[1].Payload, &repaired); err != nil {
+		t.Fatal(err)
+	}
+
+	if entries[1].ExecutionID != "previous" || len(repaired.ToolResults()) != 1 || repaired.ToolResults()[0].Call.ID != call.ID {
+		t.Fatalf("repaired history entry = %+v", entries[1])
+	}
+}
+
+type messageFailingStore struct {
+	entry.Store
+	failure error
+	failing bool
+}
+
+func (s *messageFailingStore) Append(ctx context.Context, sessionID string, values ...entry.Entry) ([]entry.Entry, error) {
+	for _, value := range values {
+		if s.failing && value.Type == memory.EntryType {
+			return nil, s.failure
+		}
+	}
+
+	return s.Store.Append(ctx, sessionID, values...)
 }

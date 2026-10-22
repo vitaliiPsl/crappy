@@ -63,10 +63,6 @@ type Generator struct {
 }
 
 func NewGenerator(config Config, models ModelResolver, options ...GeneratorOption) (*Generator, error) {
-	if models == nil {
-		return nil, errors.New("model resolver is required")
-	}
-
 	schema, err := output.For[Summary]("checkpoint", "Checkpoint of the work so far.")
 	if err != nil {
 		return nil, err

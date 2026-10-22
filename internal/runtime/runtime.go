@@ -14,6 +14,7 @@ import (
 	"github.com/vitaliipsl/crappy/harness/checkpoint"
 	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/event"
+	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/session"
 )
 
@@ -103,16 +104,14 @@ func (r *Runtime) Open(ctx context.Context, sessionID string) (*session.Session,
 		return nil, err
 	}
 
-	opened, err := session.New(
+	opened := session.New(
 		r.ctx,
-		state,
+		state.ID,
 		r.entries,
-		r.agents,
-		r.checkpoints,
+		session.WithExecutors(map[string]execution.Executor{
+			execution.AgentName: execution.NewAgent(r.agents, execution.WithCheckpoints(r.checkpoints)),
+		}),
 	)
-	if err != nil {
-		return nil, err
-	}
 
 	r.opened[sessionID] = opened
 
@@ -142,7 +141,7 @@ func (r *Runtime) Execute(
 		return "", err
 	}
 
-	return opened.Execute(input)
+	return opened.Execute(ctx, execution.Request{Executor: execution.AgentName, Input: input})
 }
 
 func (r *Runtime) Cancel(
@@ -155,5 +154,5 @@ func (r *Runtime) Cancel(
 		return err
 	}
 
-	return opened.Cancel(executionID)
+	return opened.Cancel(ctx, executionID)
 }

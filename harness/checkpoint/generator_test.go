@@ -352,21 +352,6 @@ func TestGeneratorRejectsInvalidSummary(t *testing.T) {
 	}
 }
 
-func TestGeneratorValidatesInputs(t *testing.T) {
-	t.Parallel()
-
-	if _, err := NewGenerator(Config{}, nil); err == nil {
-		t.Fatal("NewGenerator(Config{}, nil) error = nil")
-	}
-
-	if _, err := NewGenerator(
-		Config{},
-		staticModelResolver{&checkpointModel{}},
-	); err != nil {
-		t.Fatalf("NewGenerator() error = %v", err)
-	}
-}
-
 func TestGeneratorRetainsRecentMessages(t *testing.T) {
 	t.Parallel()
 

@@ -1,51 +1,38 @@
 package execution
 
 import (
-	"context"
-
-	"github.com/vitaliiPsl/crappy-adk/kit"
+	"encoding/json"
+	"time"
 )
 
 const (
-	AgentEventType    = "agent.event"
 	StartedEntryType  = "execution.started"
 	FinishedEntryType = "execution.finished"
 )
 
-type Outcome string
+type Status string
 
 const (
-	Completed   Outcome = "completed"
-	Failed      Outcome = "failed"
-	Cancelled   Outcome = "cancelled"
-	Interrupted Outcome = "interrupted"
+	Completed   Status = "completed"
+	Failed      Status = "failed"
+	Cancelled   Status = "cancelled"
+	Interrupted Status = "interrupted"
 )
 
+type Request struct {
+	Executor string `json:"executor"`
+	Input    any    `json:"input"`
+}
+
 type Started struct {
-	Input kit.Message `json:"input"`
+	Executor  string          `json:"executor"`
+	Input     json.RawMessage `json:"input"`
+	CreatedAt time.Time       `json:"created_at"`
+	StartedAt time.Time       `json:"started_at"`
 }
 
 type Finished struct {
-	Outcome   Outcome   `json:"outcome"`
-	Error     string    `json:"error,omitempty"`
-	Usage     kit.Usage `json:"usage"`
-	LastUsage kit.Usage `json:"last_usage"`
-}
-
-type Execution struct {
-	id     string
-	cancel context.CancelFunc
-	done   chan struct{}
-}
-
-func (e *Execution) ID() string {
-	return e.id
-}
-
-func (e *Execution) Cancel() {
-	e.cancel()
-}
-
-func (e *Execution) Done() <-chan struct{} {
-	return e.done
+	Outcome Status    `json:"outcome"`
+	Error   string    `json:"error,omitempty"`
+	EndedAt time.Time `json:"ended_at"`
 }

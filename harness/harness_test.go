@@ -14,33 +14,11 @@ import (
 
 	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/entry"
+	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/session"
 	"github.com/vitaliipsl/crappy/internal/storage/jsonl"
 )
-
-func TestNewValidatesDependencies(t *testing.T) {
-	t.Parallel()
-
-	store := newTestStore()
-	factory := agent.New(kit.AgentConfig{}, testModelResolver{kittest.NewModel(t)})
-	tests := []struct {
-		name   string
-		config Config
-	}{
-		{name: "missing store", config: Config{Agent: factory}},
-		{name: "missing agent", config: Config{Store: store}},
-		{name: "incomplete store", config: Config{Store: testStore{}, Agent: factory}},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if _, err := New(test.config); err == nil {
-				t.Fatal("New() succeeded with invalid configuration")
-			}
-		})
-	}
-}
 
 func TestSessionCreatesMetadataAndSharesInstance(t *testing.T) {
 	t.Parallel()
@@ -216,7 +194,7 @@ func TestLookupContextDoesNotOwnExecution(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	id, err := opened.Execute(kit.NewUserMessage(kit.NewTextContent("work")))
+	id, err := opened.Execute(context.Background(), execution.Request{Executor: execution.AgentName, Input: kit.NewUserMessage(kit.NewTextContent("work"))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +230,7 @@ func TestShutdownOwnsSessionsAndRejectsFurtherOpens(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	id, err := opened.Execute(kit.NewUserMessage(kit.NewTextContent("work")))
+	id, err := opened.Execute(context.Background(), execution.Request{Executor: execution.AgentName, Input: kit.NewUserMessage(kit.NewTextContent("work"))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +255,7 @@ func TestShutdownOwnsSessionsAndRejectsFurtherOpens(t *testing.T) {
 		t.Fatalf("Session after shutdown error = %v", err)
 	}
 
-	if _, err := opened.Execute(kit.Message{}); !errors.Is(err, session.ErrClosed) {
+	if _, err := opened.Execute(context.Background(), execution.Request{Executor: execution.AgentName, Input: kit.Message{}}); !errors.Is(err, session.ErrClosed) {
 		t.Fatalf("execution after shutdown error = %v", err)
 	}
 
@@ -301,7 +279,7 @@ func TestShutdownDeadlineDoesNotAbandonCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := opened.Execute(kit.NewUserMessage(kit.NewTextContent("work"))); err != nil {
+	if _, err := opened.Execute(context.Background(), execution.Request{Executor: execution.AgentName, Input: kit.NewUserMessage(kit.NewTextContent("work"))}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -388,7 +366,7 @@ func TestSessionsRemainPersistentAcrossHosts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	id, err := opened.Execute(kit.NewUserMessage(kit.NewTextContent("saved input")))
+	id, err := opened.Execute(context.Background(), execution.Request{Executor: execution.AgentName, Input: kit.NewUserMessage(kit.NewTextContent("saved input"))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -457,13 +435,7 @@ func waitFinished(t *testing.T, opened *session.Session, id string) execution.Fi
 func newTestHarness(t *testing.T, store Store, model kit.Model) *Harness {
 	t.Helper()
 
-	h, err := New(Config{
-		Store: store,
-		Agent: agent.New(kit.AgentConfig{}, testModelResolver{model}),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	h := New(store, WithExecutors(map[string]execution.Executor{execution.AgentName: execution.NewAgent(agent.New(kit.AgentConfig{}, testModelResolver{model}))}))
 
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -648,5 +620,56 @@ func waitRunning(t *testing.T, h *Harness) {
 		case <-ctx.Done():
 			t.Fatal("Run did not start")
 		}
+	}
+}
+
+func TestRunLeavesSessionHistoryUntouched(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore()
+	if err := store.sessions.Save(context.Background(), session.State{ID: "persisted"}); err != nil {
+		t.Fatal(err)
+	}
+
+	bus := event.NewBus("persisted", store.entries)
+	if err := bus.Commit(context.Background(), "unfinished", execution.StartedEntryType, execution.Started{Executor: "work"}); err != nil {
+		t.Fatal(err)
+	}
+
+	h := New(store, WithExecutors(map[string]execution.Executor{
+		"work": execution.Func(func(context.Context, execution.ExecuteParams) error { return nil }),
+	}))
+
+	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
+
+	opened, err := h.Session(context.Background(), "persisted")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := make(chan error, 1)
+	go func() { result <- h.Run(context.Background()) }()
+
+	waitRunning(t, h)
+
+	entries, err := opened.Entries(context.Background(), 0)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("starting harness changed history: %+v, %v", entries, err)
+	}
+
+	if _, err := opened.Execute(context.Background(), execution.Request{Executor: "work"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if finished := waitFinished(t, opened, "unfinished"); finished.Outcome != execution.Interrupted {
+		t.Fatalf("previous outcome = %+v", finished)
+	}
+
+	if err := h.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := waitError(t, result); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -4,14 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 
-	"github.com/vitaliipsl/crappy/harness/agent"
-	"github.com/vitaliipsl/crappy/harness/checkpoint"
 	"github.com/vitaliipsl/crappy/harness/entry"
+	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/session"
 )
 
@@ -25,17 +25,18 @@ type Store interface {
 	EntryStore() entry.Store
 }
 
-type Config struct {
-	Store       Store
-	Agent       *agent.Factory
-	Checkpoints *checkpoint.Generator
+type Option func(*Harness)
+
+func WithExecutors(executors map[string]execution.Executor) Option {
+	return func(h *Harness) {
+		maps.Copy(h.executors, executors)
+	}
 }
 
 type Harness struct {
-	sessions    session.Store
-	entries     entry.Store
-	agents      *agent.Factory
-	checkpoints *checkpoint.Generator
+	sessions  session.Store
+	entries   entry.Store
+	executors map[string]execution.Executor
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -47,33 +48,24 @@ type Harness struct {
 	running bool
 }
 
-func New(config Config) (*Harness, error) {
-	if config.Store == nil {
-		return nil, errors.New("store is required")
-	}
-
-	sessions, entries := config.Store.SessionStore(), config.Store.EntryStore()
-	if sessions == nil || entries == nil {
-		return nil, errors.New("session and entry stores are required")
-	}
-
-	if config.Agent == nil {
-		return nil, errors.New("agent factory is required")
-	}
-
+func New(store Store, options ...Option) *Harness {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	return &Harness{
-		sessions:    sessions,
-		entries:     entries,
-		agents:      config.Agent,
-		checkpoints: config.Checkpoints,
+	h := &Harness{
+		sessions:  store.SessionStore(),
+		entries:   store.EntryStore(),
+		executors: make(map[string]execution.Executor),
 
 		ctx:    ctx,
 		cancel: cancel,
 		done:   make(chan struct{}),
 		opened: make(map[string]*session.Session),
-	}, nil
+	}
+	for _, option := range options {
+		option(h)
+	}
+
+	return h
 }
 
 func (h *Harness) Session(ctx context.Context, sessionID string) (*session.Session, error) {
@@ -113,10 +105,12 @@ func (h *Harness) Session(ctx context.Context, sessionID string) (*session.Sessi
 		}
 	}
 
-	opened, err := session.New(h.ctx, state, h.entries, h.agents, h.checkpoints)
-	if err != nil {
-		return nil, err
-	}
+	opened := session.New(
+		h.ctx,
+		state.ID,
+		h.entries,
+		session.WithExecutors(h.executors),
+	)
 
 	h.opened[state.ID] = opened
 
