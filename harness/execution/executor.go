@@ -8,6 +8,8 @@ import (
 	"github.com/vitaliipsl/crappy/harness/event"
 )
 
+const DefaultName = "agent"
+
 type ExecuteParams struct {
 	SessionID   string
 	ExecutionID string
@@ -19,15 +21,15 @@ type ExecuteParams struct {
 }
 
 type Executor interface {
-	Execute(context.Context, ExecuteParams) error
+	Execute(context.Context, ExecuteParams) (any, error)
 }
 
 type Resolver interface {
 	Resolve(name string) (Executor, error)
 }
 
-type Func func(context.Context, ExecuteParams) error
+type Func func(context.Context, ExecuteParams) (any, error)
 
-func (f Func) Execute(ctx context.Context, params ExecuteParams) error {
+func (f Func) Execute(ctx context.Context, params ExecuteParams) (any, error) {
 	return f(ctx, params)
 }

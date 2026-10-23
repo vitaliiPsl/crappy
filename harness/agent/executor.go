@@ -1,4 +1,4 @@
-package execution
+package agent
 
 import (
 	"context"
@@ -8,71 +8,57 @@ import (
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
-	"github.com/vitaliipsl/crappy/harness/agent"
-	"github.com/vitaliipsl/crappy/harness/checkpoint"
+	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/memory"
 )
 
 const (
-	AgentName              = "agent"
-	AgentEventType         = "agent.event"
-	AgentFinishedEntryType = "agent.finished"
+	ExecutorName      = "agent"
+	EventType         = "agent.event"
+	FinishedEntryType = "agent.finished"
 )
 
-type Agent struct {
-	factory     *agent.Factory
-	checkpoints *checkpoint.Generator
+type Executor struct {
+	factory *Factory
 }
 
-type AgentOption func(*Agent)
-
-func WithCheckpoints(generator *checkpoint.Generator) AgentOption {
-	return func(a *Agent) { a.checkpoints = generator }
+func NewExecutor(factory *Factory) *Executor {
+	return &Executor{factory: factory}
 }
 
-func NewAgent(factory *agent.Factory, options ...AgentOption) *Agent {
-	a := &Agent{factory: factory}
-	for _, option := range options {
-		option(a)
-	}
-
-	return a
-}
-
-type AgentFinished struct {
+type Finished struct {
 	Usage     kit.Usage `json:"usage"`
 	LastUsage kit.Usage `json:"last_usage"`
 }
 
-func (a *Agent) Execute(ctx context.Context, params ExecuteParams) error {
+func (e *Executor) Execute(ctx context.Context, params execution.ExecuteParams) (any, error) {
 	var input kit.Message
 	if err := json.Unmarshal(params.Input, &input); err != nil {
-		return fmt.Errorf("decode agent input: %w", err)
+		return nil, fmt.Errorf("decode agent input: %w", err)
 	}
 
-	if err := a.completeToolResults(ctx, params); err != nil {
-		return err
+	if err := e.completeToolResults(ctx, params); err != nil {
+		return nil, err
 	}
 
 	agentMemory := memory.New(params.SessionID, params.ExecutionID, params.Entries, params.Events)
 
-	built, err := a.factory.Build(ctx, agent.BuildRequest{
+	built, err := e.factory.Build(ctx, BuildRequest{
 		SessionID:   params.SessionID,
 		ExecutionID: params.ExecutionID,
 		Memory:      agentMemory,
-		Checkpoint: func(ctx context.Context) (*checkpoint.Checkpoint, error) {
-			return a.checkpoint(ctx, params, agentMemory)
-		},
+		Entries:     params.Entries,
+		Events:      params.Events,
 	})
 	if err != nil {
-		return fmt.Errorf("build agent: %w", err)
+		return nil, fmt.Errorf("build agent: %w", err)
 	}
 
 	stream := built.Stream(ctx, input)
 
 	var runErr error
 	for value := range stream.Iter() {
-		if err := params.Events.Emit(ctx, params.ExecutionID, AgentEventType, value); err != nil {
+		if err := params.Events.Emit(ctx, params.ExecutionID, EventType, value); err != nil {
 			runErr = err
 
 			break
@@ -85,24 +71,24 @@ func (a *Agent) Execute(ctx context.Context, params ExecuteParams) error {
 	}
 
 	if runErr != nil {
-		runErr = errors.Join(runErr, a.completeToolResults(context.WithoutCancel(ctx), params))
+		runErr = errors.Join(runErr, e.completeToolResults(context.WithoutCancel(ctx), params))
 	}
 
-	if err := params.Events.Commit(context.WithoutCancel(ctx), params.ExecutionID, AgentFinishedEntryType,
-		AgentFinished{
-			Usage: response.Usage,
+	if err := params.Events.Commit(context.WithoutCancel(ctx), params.ExecutionID, FinishedEntryType,
+		Finished{
+			Usage:     response.Usage,
 			LastUsage: response.LastUsage,
 		},
 	); err != nil {
-		return errors.Join(runErr, fmt.Errorf("record agent result: %w", err))
+		return response, errors.Join(runErr, fmt.Errorf("record agent result: %w", err))
 	}
 
-	return runErr
+	return response, runErr
 }
 
 var errUnrecordedToolResult = errors.New("tool result was not recorded before execution ended; the tool may have changed external state, so verify it before retrying")
 
-func (*Agent) completeToolResults(ctx context.Context, params ExecuteParams) error {
+func (*Executor) completeToolResults(ctx context.Context, params execution.ExecuteParams) error {
 	agentMemory := memory.New(params.SessionID, params.ExecutionID, params.Entries, params.Events)
 
 	_, messages, err := agentMemory.Current(ctx)

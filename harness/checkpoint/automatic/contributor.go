@@ -3,12 +3,14 @@ package automatic
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	adkagent "github.com/vitaliiPsl/crappy-adk/agent"
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
 	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/checkpoint"
+	"github.com/vitaliipsl/crappy/harness/memory"
 )
 
 type ContributorOption func(*Contributor)
@@ -26,14 +28,16 @@ func WithEstimator(estimator checkpoint.Estimator) ContributorOption {
 }
 
 type Contributor struct {
+	generator *checkpoint.Generator
 	trigger   Trigger
 	estimator checkpoint.Estimator
 }
 
 var _ agent.Contributor = (*Contributor)(nil)
 
-func New(options ...ContributorOption) *Contributor {
+func New(generator *checkpoint.Generator, options ...ContributorOption) *Contributor {
 	contributor := &Contributor{
+		generator: generator,
 		trigger:   WhenInputExceedsRatio(DefaultThresholdRatio),
 		estimator: &checkpoint.CharacterEstimator{},
 	}
@@ -54,17 +58,17 @@ func (c *Contributor) Contribute(
 	return agent.Contribution{
 		Options: []adkagent.Option{
 			adkagent.WithOnModelRequest(
-				c.beforeModelRequest(build.Request.Checkpoint, inputLimit),
+				c.beforeModelRequest(build.Request, inputLimit),
 			),
 			adkagent.WithOnModelError(
-				c.onModelError(build.Request.Checkpoint),
+				c.onModelError(build.Request),
 			),
 		},
 	}, nil
 }
 
 func (c *Contributor) beforeModelRequest(
-	checkpoint func(context.Context) (*checkpoint.Checkpoint, error),
+	build agent.BuildRequest,
 	inputLimit int,
 ) kit.OnModelRequest {
 	return func(
@@ -78,12 +82,12 @@ func (c *Contributor) beforeModelRequest(
 			return request, nil
 		}
 
-		return compact(run, checkpoint, request)
+		return c.compact(run, build, request)
 	}
 }
 
 func (c *Contributor) onModelError(
-	checkpoint func(context.Context) (*checkpoint.Checkpoint, error),
+	build agent.BuildRequest,
 ) kit.OnModelError {
 	return func(
 		run *kit.RunContext,
@@ -94,23 +98,38 @@ func (c *Contributor) onModelError(
 			return kit.ModelRequest{}, err
 		}
 
-		return compact(run, checkpoint, request)
+		return c.compact(run, build, request)
 	}
 }
 
-func compact(
+func (c *Contributor) compact(
 	run *kit.RunContext,
-	checkpoint func(context.Context) (*checkpoint.Checkpoint, error),
+	build agent.BuildRequest,
 	request kit.ModelRequest,
 ) (kit.ModelRequest, error) {
-	created, err := checkpoint(run.Context)
+	agentMemory := memory.New(build.SessionID, build.ExecutionID, build.Entries, build.Events)
+
+	previous, messages, err := agentMemory.Current(run.Context)
+	if err != nil {
+		return kit.ModelRequest{}, fmt.Errorf("read checkpoint context: %w", err)
+	}
+
+	if err := build.Events.Emit(run.Context, build.ExecutionID, checkpoint.StartedEventType, nil); err != nil {
+		return kit.ModelRequest{}, err
+	}
+
+	created, err := c.generator.Generate(run.Context, previous, messages)
 	if err != nil {
 		return kit.ModelRequest{}, err
 	}
 
+	if err := build.Events.Commit(run.Context, build.ExecutionID, checkpoint.EntryType, created); err != nil {
+		return kit.ModelRequest{}, fmt.Errorf("commit checkpoint: %w", err)
+	}
+
 	run.Usage.Add(created.Usage)
 
-	messages, err := run.Memory.Context(run.Context)
+	messages, err = run.Memory.Context(run.Context)
 	if err != nil {
 		return kit.ModelRequest{}, err
 	}

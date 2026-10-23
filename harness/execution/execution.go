@@ -31,8 +31,9 @@ type Started struct {
 	StartedAt time.Time       `json:"started_at"`
 }
 
-type Finished struct {
-	Outcome Status    `json:"outcome"`
-	Error   string    `json:"error,omitempty"`
-	EndedAt time.Time `json:"ended_at"`
+type Result struct {
+	Outcome Status          `json:"outcome"`
+	Output  json.RawMessage `json:"output,omitempty"`
+	Error   string          `json:"error,omitempty"`
+	EndedAt time.Time       `json:"ended_at"`
 }

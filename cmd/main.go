@@ -98,12 +98,11 @@ func newHarness(ctx context.Context) (*harness.Harness, session.Store, error) {
 			agent.WithTools(bash.New()),
 			agent.WithTools(filesystem.New()...),
 			agent.WithToolMiddleware(tools.Timeout(settings.Tools)),
-			agent.WithContributors(automatic.New(
+			agent.WithContributors(automatic.New(generator,
 				automatic.WithTrigger(
 					automatic.WhenInputExceedsTokens(config.Checkpoint.ThresholdTokens),
 				),
 			)),
 		),
-		harness.WithCheckpoints(generator),
 	), storage.SessionStore(), nil
 }

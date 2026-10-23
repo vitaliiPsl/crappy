@@ -12,7 +12,6 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
 	"github.com/vitaliipsl/crappy/harness/agent"
-	"github.com/vitaliipsl/crappy/harness/checkpoint"
 	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/session"
@@ -34,7 +33,6 @@ type config struct {
 	models       agent.ModelResolver
 	agentConfig  kit.AgentConfig
 	agentOptions []agent.Option
-	checkpoints  *checkpoint.Generator
 	executors    *execution.Registry
 }
 
@@ -47,10 +45,6 @@ func WithAgentConfig(configured kit.AgentConfig, options ...agent.Option) Option
 		c.agentConfig = configured
 		c.agentOptions = append(c.agentOptions, options...)
 	}
-}
-
-func WithCheckpoints(generator *checkpoint.Generator) Option {
-	return func(c *config) { c.checkpoints = generator }
 }
 
 func WithExecutor(name string, executor execution.Executor) Option {
@@ -79,10 +73,9 @@ func New(store Store, options ...Option) *Harness {
 	}
 
 	if c.models != nil {
-		if _, err := c.executors.Resolve(execution.AgentName); err != nil {
-			c.executors.Register(execution.AgentName, execution.NewAgent(
+		if _, err := c.executors.Resolve(agent.ExecutorName); err != nil {
+			c.executors.Register(agent.ExecutorName, agent.NewExecutor(
 				agent.New(c.agentConfig, c.models, c.agentOptions...),
-				execution.WithCheckpoints(c.checkpoints),
 			))
 		}
 	}

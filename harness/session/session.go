@@ -17,10 +17,7 @@ type Session struct {
 	events    *event.Bus
 	executors execution.Resolver
 
-	activeID string
-	cancel   context.CancelFunc
-	done     chan struct{}
-	pending  *execution.Finished
+	current *Execution
 
 	mu     sync.Mutex
 	closed bool
@@ -67,12 +64,15 @@ func (s *Session) Commit(
 func (s *Session) Close() {
 	s.mu.Lock()
 	s.closed = true
-	cancel, done := s.cancel, s.done
+	current := s.current
 	s.mu.Unlock()
 
-	if cancel != nil {
-		cancel()
-		<-done
+	if current != nil {
+		if current.cancel != nil {
+			current.cancel()
+		}
+
+		<-current.done
 	}
 
 	s.events.Close()

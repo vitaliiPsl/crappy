@@ -10,7 +10,6 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kittest"
 
 	"github.com/vitaliipsl/crappy/harness/agent"
-	"github.com/vitaliipsl/crappy/harness/checkpoint"
 	"github.com/vitaliipsl/crappy/harness/entry"
 	harnessevent "github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
@@ -157,8 +156,7 @@ func TestExecutePublishesEntriesAndAgentEvents(t *testing.T) {
 	session := newAgentSession(context.Background(),
 		"session-1",
 		entry.NewMemoryStore(),
-		agent.New(kit.AgentConfig{}, staticModelResolver{model}),
-		nil)
+		agent.New(kit.AgentConfig{}, staticModelResolver{model}))
 
 	subscription, err := session.Subscribe(context.Background(), 0)
 	if err != nil {
@@ -167,7 +165,7 @@ func TestExecutePublishesEntriesAndAgentEvents(t *testing.T) {
 
 	t.Cleanup(subscription.Close)
 
-	executionID, err := session.Execute(context.Background(), execution.Request{Executor: execution.AgentName, Input: kit.NewUserMessage(kit.NewTextContent("hi"))})
+	current, err := session.Execute(context.Background(), execution.Request{Executor: agent.ExecutorName, Input: kit.NewUserMessage(kit.NewTextContent("hi"))})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -185,7 +183,7 @@ func TestExecutePublishesEntriesAndAgentEvents(t *testing.T) {
 		t.Fatalf("second event = %#v, want message entry 2", events[1])
 	}
 
-	if events[2].EntryID != 0 || events[2].Type != execution.AgentEventType {
+	if events[2].EntryID != 0 || events[2].Type != agent.EventType {
 		t.Fatalf("third event = %#v, want transient content delta", events[2])
 	}
 
@@ -204,7 +202,7 @@ func TestExecutePublishesEntriesAndAgentEvents(t *testing.T) {
 		t.Fatalf("fourth event = %#v, want message entry 3", events[3])
 	}
 
-	if events[4].EntryID != 0 || events[4].Type != execution.AgentEventType {
+	if events[4].EntryID != 0 || events[4].Type != agent.EventType {
 		t.Fatalf("fifth event = %#v, want transient agent message", events[4])
 	}
 
@@ -213,8 +211,8 @@ func TestExecutePublishesEntriesAndAgentEvents(t *testing.T) {
 	}
 
 	for _, event := range events {
-		if event.ExecutionID != executionID {
-			t.Fatalf("ExecutionID = %q, want %q", event.ExecutionID, executionID)
+		if event.ExecutionID != current.ID() {
+			t.Fatalf("ExecutionID = %q, want %q", event.ExecutionID, current.ID())
 		}
 	}
 }
@@ -244,8 +242,8 @@ func receiveEvent(t *testing.T, subscription *harnessevent.Subscription) harness
 	}
 }
 
-func newAgentSession(ctx context.Context, id string, entries entry.Store, factory *agent.Factory, checkpoints *checkpoint.Generator) *Session {
-	return newExecutorSession(ctx, id, entries, execution.AgentName, execution.NewAgent(factory, execution.WithCheckpoints(checkpoints)))
+func newAgentSession(ctx context.Context, id string, entries entry.Store, factory *agent.Factory) *Session {
+	return newExecutorSession(ctx, id, entries, agent.ExecutorName, agent.NewExecutor(factory))
 }
 
 func newExecutorSession(ctx context.Context, id string, entries entry.Store, name string, executor execution.Executor) *Session {

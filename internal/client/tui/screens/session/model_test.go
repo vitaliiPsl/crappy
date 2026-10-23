@@ -12,6 +12,7 @@ import (
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
+	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/checkpoint"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
@@ -37,7 +38,7 @@ func TestEventsUpdateTranscript(t *testing.T) {
 	}
 
 	model.applyEvent(event.Event{
-		Type:    execution.AgentEventType,
+		Type:    agent.EventType,
 		Payload: agentEvent,
 	})
 
@@ -99,7 +100,7 @@ func TestExecutionLifecycleDrivesStatus(t *testing.T) {
 		t,
 		execution.FinishedEntryType,
 		"execution-1",
-		execution.Finished{Outcome: execution.Completed},
+		execution.Result{Outcome: execution.Completed},
 	))
 
 	if model.running() {
@@ -125,7 +126,7 @@ func TestFailedExecutionIsSurfaced(t *testing.T) {
 		t,
 		execution.FinishedEntryType,
 		"execution-1",
-		execution.Finished{
+		execution.Result{
 			Outcome: execution.Failed,
 			Error:   "model exploded",
 		},
@@ -149,7 +150,7 @@ func TestInterruptedExecutionIsSurfaced(t *testing.T) {
 				t,
 				execution.FinishedEntryType,
 				"execution-1",
-				execution.Finished{Outcome: outcome},
+				execution.Result{Outcome: outcome},
 			))
 
 			if !strings.Contains(model.View().Content, interruptedLabel) {

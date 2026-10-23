@@ -1,4 +1,4 @@
-package execution
+package agent
 
 import (
 	"context"
@@ -9,9 +9,9 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kit"
 	"github.com/vitaliiPsl/crappy-adk/kittest"
 
-	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/event"
+	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/memory"
 )
 
@@ -45,7 +45,7 @@ func TestAgentCompletesMissingToolResults(t *testing.T) {
 		"session-1",
 		entry.Entry{
 			ExecutionID: "execution-1",
-			Type:        StartedEntryType,
+			Type:        execution.StartedEntryType,
 			Payload:     json.RawMessage(`{}`),
 		},
 		entry.Entry{
@@ -63,7 +63,7 @@ func TestAgentCompletesMissingToolResults(t *testing.T) {
 		t.Fatalf("Append() error = %v", err)
 	}
 
-	if err := (NewAgent(nil)).completeToolResults(context.Background(), ExecuteParams{SessionID: "session-1", ExecutionID: "execution-1", Entries: store, Events: event.NewBus("session-1", store)}); err != nil {
+	if err := (NewExecutor(nil)).completeToolResults(context.Background(), execution.ExecuteParams{SessionID: "session-1", ExecutionID: "execution-1", Entries: store, Events: event.NewBus("session-1", store)}); err != nil {
 		t.Fatalf("completeToolResults() error = %v", err)
 	}
 
@@ -179,16 +179,16 @@ func TestAgentRepairsToolHistoryBeforeBuilding(t *testing.T) {
 	model := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
 		Message: kit.NewModelMessage(kit.NewTextContent("done")), FinishReason: kit.FinishReasonStop,
 	}})
-	configured := NewAgent(agent.New(kit.AgentConfig{}, staticModelResolver{model}, agent.WithContributors(
-		agent.ContributorFunc(func(context.Context, agent.BuildContext) (agent.Contribution, error) {
+	configured := NewExecutor(New(kit.AgentConfig{}, staticModelResolver{model}, WithContributors(
+		ContributorFunc(func(context.Context, BuildContext) (Contribution, error) {
 			builds++
 
-			return agent.Contribution{}, nil
+			return Contribution{}, nil
 		}),
 	)))
 
-	params := ExecuteParams{SessionID: "session-1", ExecutionID: "next", Input: agentInput(t, "continue"), Entries: store, Events: bus}
-	if err := configured.Execute(context.Background(), params); !errors.Is(err, store.failure) {
+	params := execution.ExecuteParams{SessionID: "session-1", ExecutionID: "next", Input: agentInput(t, "continue"), Entries: store, Events: bus}
+	if _, err := configured.Execute(context.Background(), params); !errors.Is(err, store.failure) {
 		t.Fatalf("failed history repair = %v", err)
 	}
 
@@ -198,7 +198,7 @@ func TestAgentRepairsToolHistoryBeforeBuilding(t *testing.T) {
 
 	store.failing = false
 
-	if err := configured.Execute(context.Background(), params); err != nil {
+	if _, err := configured.Execute(context.Background(), params); err != nil {
 		t.Fatal(err)
 	}
 
@@ -235,4 +235,15 @@ func (s *messageFailingStore) Append(ctx context.Context, sessionID string, valu
 	}
 
 	return s.Store.Append(ctx, sessionID, values...)
+}
+
+func agentInput(t *testing.T, text string) json.RawMessage {
+	t.Helper()
+
+	encoded, err := json.Marshal(kit.NewUserMessage(kit.NewTextContent(text)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return encoded
 }

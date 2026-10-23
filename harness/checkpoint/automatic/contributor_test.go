@@ -2,14 +2,20 @@ package automatic
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
 	"github.com/vitaliiPsl/crappy-adk/kittest"
 
 	harnessagent "github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/checkpoint"
+	"github.com/vitaliipsl/crappy/harness/entry"
+	"github.com/vitaliipsl/crappy/harness/event"
+	"github.com/vitaliipsl/crappy/harness/execution"
+	"github.com/vitaliipsl/crappy/harness/memory"
 )
 
 func TestContributorCheckpointsBeforeModelRequest(t *testing.T) {
@@ -24,35 +30,14 @@ func TestContributorCheckpointsBeforeModelRequest(t *testing.T) {
 			Usage:        kit.Usage{InputTokens: 10, OutputTokens: 2},
 		}},
 	)
-	memory := &testMemory{}
-	checkpointed := 0
-	factory := harnessagent.New(
-		kit.AgentConfig{},
-		staticModelResolver{model},
-		harnessagent.WithContributors(New(
-			WithEstimator(fixedEstimator{request: 80}),
-		)),
-	)
+	checkpointModel := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
+		Message:      kit.NewModelMessage(kit.NewTextContent(`{"objective":"checkpoint"}`)),
+		FinishReason: kit.FinishReasonStop,
+		Usage:        kit.Usage{InputTokens: 50, OutputTokens: 5},
+	}})
+	built := buildAgent(t, model, checkpointModel, WithEstimator(fixedEstimator{request: 80}))
 
-	built, err := factory.Build(context.Background(), harnessagent.BuildRequest{
-		Memory: memory,
-		Checkpoint: func(context.Context) (*checkpoint.Checkpoint, error) {
-			checkpointed++
-			memory.context = []kit.Message{
-				kit.NewUserMessage(kit.NewTextContent("checkpoint")),
-			}
-
-			return &checkpoint.Checkpoint{Usage: kit.Usage{InputTokens: 50, OutputTokens: 5}}, nil
-		},
-	})
-	if err != nil {
-		t.Fatalf("Build() error = %v", err)
-	}
-
-	response, err := built.Run(
-		context.Background(),
-		kit.NewUserMessage(kit.NewTextContent("original")),
-	)
+	response, err := built.Run(context.Background(), kit.NewUserMessage(kit.NewTextContent("original")))
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -65,16 +50,14 @@ func TestContributorCheckpointsBeforeModelRequest(t *testing.T) {
 		t.Fatalf("response last usage = %#v, want %#v", got, want)
 	}
 
-	if checkpointed != 1 {
-		t.Fatalf("checkpoint calls = %d, want 1", checkpointed)
-	}
+	checkpointModel.AssertCallCount(t, 1)
 
 	messages := model.CallAt(0).Messages
 	if got, want := len(messages), 1; got != want {
 		t.Fatalf("request messages = %d, want %d", got, want)
 	}
 
-	if got, want := messages[0].TextContent().Text, "checkpoint"; got != want {
+	if got, want := messages[0].TextContent().Text, checkpointMessage("checkpoint"); got != want {
 		t.Fatalf("request message = %q, want %q", got, want)
 	}
 }
@@ -91,26 +74,20 @@ func TestContributorCheckpointsAndRetriesOnContextOverflow(t *testing.T) {
 			FinishReason: kit.FinishReasonStop,
 		}},
 	)
-	memory := &testMemory{}
-	checkpointed := 0
-	built := buildAgent(t, model, memory, func(context.Context) (*checkpoint.Checkpoint, error) {
-		checkpointed++
-		memory.context = []kit.Message{kit.NewUserMessage(kit.NewTextContent("checkpoint"))}
-
-		return &checkpoint.Checkpoint{}, nil
-	})
+	checkpointModel := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
+		Message:      kit.NewModelMessage(kit.NewTextContent(`{"objective":"checkpoint"}`)),
+		FinishReason: kit.FinishReasonStop,
+	}})
+	built := buildAgent(t, model, checkpointModel, WithEstimator(fixedEstimator{}))
 
 	if _, err := built.Run(context.Background(), kit.NewUserMessage(kit.NewTextContent("original"))); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	if checkpointed != 1 {
-		t.Fatalf("checkpoint calls = %d, want 1", checkpointed)
-	}
-
+	checkpointModel.AssertCallCount(t, 1)
 	model.AssertCallCount(t, 2)
 
-	if got, want := model.CallAt(1).Messages[0].TextContent().Text, "checkpoint"; got != want {
+	if got, want := model.CallAt(1).Messages[0].TextContent().Text, checkpointMessage("checkpoint"); got != want {
 		t.Fatalf("retried request message = %q, want %q", got, want)
 	}
 }
@@ -123,11 +100,8 @@ func TestContributorIgnoresOtherModelErrors(t *testing.T) {
 		kit.ModelConfig{InputLimit: 100},
 		kittest.ModelResult{Error: kit.ErrRateLimit},
 	)
-	built := buildAgent(t, model, &testMemory{}, func(context.Context) (*checkpoint.Checkpoint, error) {
-		t.Fatal("checkpoint called for a non-overflow error")
-
-		return nil, nil
-	})
+	checkpointModel := kittest.NewModel(t)
+	built := buildAgent(t, model, checkpointModel, WithEstimator(fixedEstimator{}))
 
 	_, err := built.Run(context.Background(), kit.NewUserMessage(kit.NewTextContent("original")))
 	if !errors.Is(err, kit.ErrRateLimit) {
@@ -135,25 +109,31 @@ func TestContributorIgnoresOtherModelErrors(t *testing.T) {
 	}
 
 	model.AssertCallCount(t, 1)
+	checkpointModel.AssertCallCount(t, 0)
 }
 
-func buildAgent(
-	t *testing.T,
-	model kit.Model,
-	memory kit.Memory,
-	checkpoint func(context.Context) (*checkpoint.Checkpoint, error),
-) kit.Agent {
+func buildAgent(t *testing.T, model, checkpointModel kit.Model, options ...ContributorOption) kit.Agent {
 	t.Helper()
 
+	generator, err := checkpoint.NewGenerator(checkpoint.Config{}, staticModelResolver{checkpointModel})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store := entry.NewMemoryStore()
+	bus := event.NewBus("session-1", store)
 	factory := harnessagent.New(
 		kit.AgentConfig{},
 		staticModelResolver{model},
-		harnessagent.WithContributors(New(WithEstimator(fixedEstimator{}))),
+		harnessagent.WithContributors(New(generator, options...)),
 	)
 
 	built, err := factory.Build(context.Background(), harnessagent.BuildRequest{
-		Memory:     memory,
-		Checkpoint: checkpoint,
+		SessionID:   "session-1",
+		ExecutionID: "execution-1",
+		Memory:      memory.New("session-1", "execution-1", store, bus),
+		Entries:     store,
+		Events:      bus,
 	})
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
@@ -165,7 +145,7 @@ func buildAgent(
 func TestContributorUsesLastModelUsage(t *testing.T) {
 	t.Parallel()
 
-	contributor := New(WithEstimator(fixedEstimator{request: 1000, message: 7}))
+	contributor := New(nil, WithEstimator(fixedEstimator{request: 1000, message: 7}))
 	run := &kit.RunContext{
 		LastUsage: kit.Usage{InputTokens: 100, OutputTokens: 20},
 		Messages: []kit.Message{
@@ -200,22 +180,180 @@ func (e fixedEstimator) EstimateMessage(kit.Message) int {
 	return e.message
 }
 
-type testMemory struct {
-	context []kit.Message
-	history []kit.Message
+func TestAutomaticCheckpointDuringExecution(t *testing.T) {
+	t.Parallel()
+
+	agentModel := kittest.NewModelWithConfig(
+		t,
+		kit.ModelConfig{InputLimit: 1},
+		kittest.ModelResult{Response: kit.ModelResponse{
+			Message:      kit.NewModelMessage(kit.NewTextContent("done")),
+			FinishReason: kit.FinishReasonStop,
+		}},
+	)
+	checkpointModel := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
+		Message:      kit.NewModelMessage(kit.NewTextContent(`{"objective": "checkpointed context", "progress": [], "context": [], "next": []}`)),
+		FinishReason: kit.FinishReasonStop,
+	}})
+
+	generator, err := checkpoint.NewGenerator(
+		checkpoint.Config{},
+		staticModelResolver{checkpointModel},
+	)
+	if err != nil {
+		t.Fatalf("NewGenerator() error = %v", err)
+	}
+
+	store := entry.NewMemoryStore()
+	bus := event.NewBus("session-1", store)
+	executor := harnessagent.NewExecutor(harnessagent.New(
+		kit.AgentConfig{}, staticModelResolver{agentModel}, harnessagent.WithContributors(New(generator)),
+	))
+
+	subscription, err := bus.Subscribe(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("Subscribe() error = %v", err)
+	}
+
+	t.Cleanup(subscription.Close)
+
+	executionID := "execution-1"
+	done := make(chan error, 1)
+
+	params := execution.ExecuteParams{SessionID: "session-1", ExecutionID: executionID, Input: agentInput(t, "start"), Entries: store, Events: bus}
+	go func() {
+		_, err := executor.Execute(context.Background(), params)
+		done <- err
+	}()
+
+	started := false
+	for {
+		received := receiveEvent(t, subscription)
+		if received.Type == checkpoint.StartedEventType {
+			started = received.ExecutionID == executionID
+		}
+
+		if received.Type == checkpoint.EntryType {
+			break
+		}
+	}
+
+	if !started {
+		t.Fatal("checkpoint started event was not emitted before the checkpoint entry")
+	}
+
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+
+	messages := agentModel.CallAt(0).Messages
+	if got, want := len(messages), 1; got != want {
+		t.Fatalf("request messages = %d, want %d", got, want)
+	}
+
+	if got, want := messages[0].TextContent().Text, checkpointMessage("checkpointed context"); got != want {
+		t.Fatalf("request message = %q, want %q", got, want)
+	}
+
+	entries, err := store.List(context.Background(), "session-1", 0)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+
+	if len(entries) < 3 {
+		t.Fatalf("entries = %d, want at least 3", len(entries))
+	}
+
+	if got, want := entries[1].Type, checkpoint.EntryType; got != want {
+		t.Fatalf("entry 3 type = %q, want %q", got, want)
+	}
+
+	if got := entries[1].ExecutionID; got != executionID {
+		t.Fatalf("checkpoint ExecutionID = %q, want %q", got, executionID)
+	}
 }
 
-func (m *testMemory) Context(context.Context) ([]kit.Message, error) {
-	return append([]kit.Message(nil), m.context...), nil
+func TestAutomaticCheckpointRetainsCurrentInput(t *testing.T) {
+	t.Parallel()
+
+	agentModel := kittest.NewModelWithConfig(
+		t,
+		kit.ModelConfig{InputLimit: 1},
+		kittest.ModelResult{Response: kit.ModelResponse{
+			Message:      kit.NewModelMessage(kit.NewTextContent("done")),
+			FinishReason: kit.FinishReasonStop,
+		}},
+	)
+	checkpointModel := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
+		Message:      kit.NewModelMessage(kit.NewTextContent(`{"objective": "checkpointed context", "progress": [], "context": [], "next": []}`)),
+		FinishReason: kit.FinishReasonStop,
+	}})
+
+	generator, err := checkpoint.NewGenerator(checkpoint.Config{}, staticModelResolver{checkpointModel})
+	if err != nil {
+		t.Fatalf("NewGenerator() error = %v", err)
+	}
+
+	store := entry.NewMemoryStore()
+	if err := memory.New("session-1", "", store, event.NewBus("session-1", store)).Record(
+		context.Background(),
+		kit.NewUserMessage(kit.NewTextContent("earlier")),
+		kit.NewModelMessage(kit.NewTextContent("earlier response")),
+	); err != nil {
+		t.Fatalf("Record() error = %v", err)
+	}
+
+	executor := harnessagent.NewExecutor(harnessagent.New(
+		kit.AgentConfig{}, staticModelResolver{agentModel}, harnessagent.WithContributors(New(generator)),
+	))
+	if _, err := executor.Execute(context.Background(), execution.ExecuteParams{
+		SessionID: "session-1", ExecutionID: "execution-1", Input: agentInput(t, "current"), Entries: store, Events: event.NewBus("session-1", store),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	messages := agentModel.CallAt(0).Messages
+	want := []string{checkpointMessage("checkpointed context"), "earlier response", "current"}
+
+	if got := len(messages); got != len(want) {
+		t.Fatalf("request messages = %d, want %d", got, len(want))
+	}
+
+	for i, text := range want {
+		if got := messages[i].TextContent().Text; got != text {
+			t.Fatalf("request message %d = %q, want %q", i, got, text)
+		}
+	}
 }
 
-func (m *testMemory) History(context.Context) ([]kit.Message, error) {
-	return append([]kit.Message(nil), m.history...), nil
+func checkpointMessage(objective string) string {
+	return checkpoint.Checkpoint{Summary: checkpoint.Summary{Objective: objective}}.Message().TextContent().Text
 }
 
-func (m *testMemory) Record(_ context.Context, messages ...kit.Message) error {
-	m.context = append(m.context, messages...)
-	m.history = append(m.history, messages...)
+func receiveEvent(t *testing.T, subscription *event.Subscription) event.Event {
+	t.Helper()
 
-	return nil
+	select {
+	case value, ok := <-subscription.Events():
+		if !ok {
+			t.Fatalf("subscription closed: %v", subscription.Err())
+		}
+
+		return value
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for event")
+
+		return event.Event{}
+	}
+}
+
+func agentInput(t *testing.T, text string) json.RawMessage {
+	t.Helper()
+
+	encoded, err := json.Marshal(kit.NewUserMessage(kit.NewTextContent(text)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return encoded
 }

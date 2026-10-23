@@ -11,8 +11,10 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
 	"github.com/vitaliipsl/crappy/harness"
+	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
+	"github.com/vitaliipsl/crappy/harness/session"
 )
 
 const prompt = "> "
@@ -56,15 +58,17 @@ func (c *Client) Run(ctx context.Context) error {
 	defer subscription.Close()
 
 	inputs := c.readInput(ctx)
+	events := subscription.Events()
 
 	var (
-		activeExecutionID string
-		inputOpen         = true
-		prompted          bool
+		current   *session.Execution
+		streamed  string
+		inputOpen = true
+		prompted  bool
 	)
 
-	for inputOpen || activeExecutionID != "" {
-		if activeExecutionID == "" && inputOpen && !prompted {
+	for inputOpen || current != nil {
+		if current == nil && inputOpen && !prompted {
 			if _, err := io.WriteString(c.output, prompt); err != nil {
 				return fmt.Errorf("write prompt: %w", err)
 			}
@@ -73,11 +77,27 @@ func (c *Client) Run(ctx context.Context) error {
 		}
 
 		var availableInput <-chan input
-		if activeExecutionID == "" {
+		if current == nil {
 			availableInput = inputs
 		}
 
+		var completed <-chan struct{}
+		if current != nil {
+			completed = current.Done()
+		}
+
 		select {
+		case <-completed:
+			result, err := current.Wait(ctx)
+			if err != nil {
+				return fmt.Errorf("wait execution: %w", err)
+			}
+
+			if err := c.handleResult(result, streamed); err != nil {
+				return err
+			}
+
+			current = nil
 		case <-ctx.Done():
 			return ctx.Err()
 		case value, ok := <-availableInput:
@@ -98,35 +118,36 @@ func (c *Client) Run(ctx context.Context) error {
 				continue
 			}
 
-			executionID, err := opened.Execute(ctx, execution.Request{
+			submitted, err := opened.Execute(ctx, execution.Request{
 				Input: kit.NewUserMessage(kit.NewTextContent(text)),
 			})
 			if err != nil {
 				return fmt.Errorf("execute: %w", err)
 			}
 
-			activeExecutionID = executionID
-		case value, ok := <-subscription.Events():
+			current = submitted
+			streamed = ""
+		case value, ok := <-events:
 			if !ok {
 				if err := subscription.Err(); err != nil {
 					return fmt.Errorf("subscription: %w", err)
 				}
 
-				return nil
+				events = nil
+
+				continue
 			}
 
-			if value.Type == execution.StartedEntryType {
-				activeExecutionID = value.ExecutionID
+			if current == nil || value.ExecutionID != current.ID() {
+				continue
 			}
 
-			finishedExecutionID, err := c.handleEvent(value)
+			text, err := c.handleEvent(value)
 			if err != nil {
 				return err
 			}
 
-			if finishedExecutionID != "" && finishedExecutionID == activeExecutionID {
-				activeExecutionID = ""
-			}
+			streamed += text
 		}
 	}
 
@@ -134,42 +155,71 @@ func (c *Client) Run(ctx context.Context) error {
 }
 
 func (c *Client) handleEvent(value event.Event) (string, error) {
-	switch value.Type {
-	case execution.AgentEventType:
-		var agentEvent kit.AgentEvent
-		if err := json.Unmarshal(value.Payload, &agentEvent); err != nil {
-			return "", fmt.Errorf("decode agent event: %w", err)
+	if value.Type != agent.EventType {
+		return "", nil
+	}
+
+	var agentEvent kit.AgentEvent
+	if err := json.Unmarshal(value.Payload, &agentEvent); err != nil {
+		return "", fmt.Errorf("decode agent event: %w", err)
+	}
+
+	if agentEvent.Type != kit.EventContentDelta ||
+		agentEvent.Content == nil ||
+		agentEvent.Content.Text == nil {
+		return "", nil
+	}
+
+	text := agentEvent.Content.Text.Text
+	if _, err := io.WriteString(c.output, text); err != nil {
+		return "", fmt.Errorf("write content delta: %w", err)
+	}
+
+	return text, nil
+}
+
+func (c *Client) handleResult(result execution.Result, streamed string) error {
+	if len(result.Output) != 0 {
+		var response kit.AgentResponse
+		if err := json.Unmarshal(result.Output, &response); err != nil {
+			return fmt.Errorf("decode agent result: %w", err)
 		}
 
-		if agentEvent.Type != kit.EventContentDelta ||
-			agentEvent.Content == nil ||
-			agentEvent.Content.Text == nil {
-			return "", nil
-		}
+		var text strings.Builder
+		for _, message := range response.Messages {
+			if message.Role != kit.RoleModel {
+				continue
+			}
 
-		if _, err := io.WriteString(c.output, agentEvent.Content.Text.Text); err != nil {
-			return "", fmt.Errorf("write content delta: %w", err)
-		}
-	case execution.FinishedEntryType:
-		var finished execution.Finished
-		if err := json.Unmarshal(value.Payload, &finished); err != nil {
-			return "", fmt.Errorf("decode execution result: %w", err)
-		}
-
-		if _, err := fmt.Fprintln(c.output); err != nil {
-			return "", fmt.Errorf("finish response: %w", err)
-		}
-
-		if finished.Outcome == execution.Failed {
-			if _, err := fmt.Fprintf(c.output, "error: %s\n", finished.Error); err != nil {
-				return "", fmt.Errorf("write execution error: %w", err)
+			for _, content := range message.Content {
+				if content.Text != nil {
+					text.WriteString(content.Text.Text)
+				}
 			}
 		}
 
-		return value.ExecutionID, nil
+		if text.Len() == 0 && response.Output != nil {
+			text.WriteString(response.Output.Text)
+		}
+
+		if completed := text.String(); strings.HasPrefix(completed, streamed) {
+			if _, err := io.WriteString(c.output, completed[len(streamed):]); err != nil {
+				return fmt.Errorf("write execution output: %w", err)
+			}
+		}
 	}
 
-	return "", nil
+	if _, err := fmt.Fprintln(c.output); err != nil {
+		return fmt.Errorf("finish response: %w", err)
+	}
+
+	if result.Outcome == execution.Failed {
+		if _, err := fmt.Fprintf(c.output, "error: %s\n", result.Error); err != nil {
+			return fmt.Errorf("write execution error: %w", err)
+		}
+	}
+
+	return nil
 }
 
 func (c *Client) readInput(ctx context.Context) <-chan input {

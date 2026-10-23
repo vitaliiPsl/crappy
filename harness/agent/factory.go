@@ -8,14 +8,16 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kit"
 	adktool "github.com/vitaliiPsl/crappy-adk/x/tool"
 
-	"github.com/vitaliipsl/crappy/harness/checkpoint"
+	"github.com/vitaliipsl/crappy/harness/entry"
+	"github.com/vitaliipsl/crappy/harness/event"
 )
 
 type BuildRequest struct {
 	SessionID   string
 	ExecutionID string
 	Memory      kit.Memory
-	Checkpoint  func(context.Context) (*checkpoint.Checkpoint, error)
+	Entries     entry.Store
+	Events      event.Publisher
 }
 
 type ModelResolver interface {

@@ -150,11 +150,11 @@ func TestDeleteClosesLiveSessionBeforeRemovingStorage(t *testing.T) {
 	}
 
 	started := make(chan struct{})
-	executor := execution.Func(func(ctx context.Context, _ execution.ExecuteParams) error {
+	executor := execution.Func(func(ctx context.Context, _ execution.ExecuteParams) (any, error) {
 		close(started)
 		<-ctx.Done()
 
-		return ctx.Err()
+		return nil, ctx.Err()
 	})
 	h := harness.New(storage, harness.WithExecutor("work", executor))
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })

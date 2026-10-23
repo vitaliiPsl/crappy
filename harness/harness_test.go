@@ -33,7 +33,7 @@ func TestBuiltInAgentIsDefaultAndUsesConfiguration(t *testing.T) {
 	tool := kittest.NewTool(t, "search", "Search")
 	h := New(newTestStore(),
 		WithAgentConfig(kit.AgentConfig{Instructions: "Be concise."}, agent.WithTools(tool)),
-		WithExecutor("cleanup", execution.Func(func(context.Context, execution.ExecuteParams) error { return nil })),
+		WithExecutor("cleanup", execution.Func(func(context.Context, execution.ExecuteParams) (any, error) { return nil, nil })),
 		WithModel(testModelResolver{model}),
 	)
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
@@ -43,14 +43,14 @@ func TestBuiltInAgentIsDefaultAndUsesConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	id, err := opened.Execute(context.Background(), execution.Request{
+	current, err := opened.Execute(context.Background(), execution.Request{
 		Input: kit.NewUserMessage(kit.NewTextContent("hello")),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if finished := waitFinished(t, opened, id); finished.Outcome != execution.Completed {
+	if finished := waitFinished(t, opened, current.ID()); finished.Outcome != execution.Completed {
 		t.Fatalf("default execution = %+v", finished)
 	}
 
@@ -69,16 +69,16 @@ func TestBuiltInAgentIsDefaultAndUsesConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if started.Executor != execution.AgentName {
+	if started.Executor != agent.ExecutorName {
 		t.Fatalf("recorded executor = %q", started.Executor)
 	}
 
-	id, err = opened.Execute(context.Background(), execution.Request{Executor: "cleanup"})
+	current, err = opened.Execute(context.Background(), execution.Request{Executor: "cleanup"})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if finished := waitFinished(t, opened, id); finished.Outcome != execution.Completed {
+	if finished := waitFinished(t, opened, current.ID()); finished.Outcome != execution.Completed {
 		t.Fatalf("custom executor alongside default agent = %+v", finished)
 	}
 
@@ -103,8 +103,7 @@ func TestBuiltInAgentUsesCheckpoints(t *testing.T) {
 	}
 
 	h := New(newTestStore(),
-		WithCheckpoints(generator),
-		WithAgentConfig(kit.AgentConfig{}, agent.WithContributors(automatic.New(
+		WithAgentConfig(kit.AgentConfig{}, agent.WithContributors(automatic.New(generator,
 			automatic.WithTrigger(automatic.WhenInputExceedsTokens(1)),
 		))),
 		WithModel(testModelResolver{model}),
@@ -116,14 +115,14 @@ func TestBuiltInAgentUsesCheckpoints(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	id, err := opened.Execute(context.Background(), execution.Request{
+	current, err := opened.Execute(context.Background(), execution.Request{
 		Input: kit.NewUserMessage(kit.NewTextContent("input longer than one token")),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if finished := waitFinished(t, opened, id); finished.Outcome != execution.Completed {
+	if finished := waitFinished(t, opened, current.ID()); finished.Outcome != execution.Completed {
 		t.Fatalf("execution with checkpoints = %+v", finished)
 	}
 
@@ -147,10 +146,10 @@ func TestCustomAgentOverridesBuiltInRegardlessOfOptionOrder(t *testing.T) {
 
 			options := []Option{
 				WithModel(testModelResolver{model}),
-				WithExecutor(execution.AgentName, execution.Func(func(context.Context, execution.ExecuteParams) error {
+				WithExecutor(agent.ExecutorName, execution.Func(func(context.Context, execution.ExecuteParams) (any, error) {
 					calls.Add(1)
 
-					return nil
+					return nil, nil
 				})),
 			}
 			if !modelFirst {
@@ -165,12 +164,12 @@ func TestCustomAgentOverridesBuiltInRegardlessOfOptionOrder(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			id, err := opened.Execute(context.Background(), execution.Request{})
+			current, err := opened.Execute(context.Background(), execution.Request{})
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			if finished := waitFinished(t, opened, id); finished.Outcome != execution.Completed || calls.Load() != 1 {
+			if finished := waitFinished(t, opened, current.ID()); finished.Outcome != execution.Completed || calls.Load() != 1 {
 				t.Fatalf("custom agent = %+v, calls = %d", finished, calls.Load())
 			}
 
@@ -182,8 +181,8 @@ func TestCustomAgentOverridesBuiltInRegardlessOfOptionOrder(t *testing.T) {
 func TestFunctionOnlyHarnessRejectsMissingExecutorsBeforeRecording(t *testing.T) {
 	t.Parallel()
 
-	h := New(newTestStore(), WithExecutor("cleanup", execution.Func(func(ctx context.Context, params execution.ExecuteParams) error {
-		return params.Events.Commit(ctx, params.ExecutionID, "cleanup.output", params.Input)
+	h := New(newTestStore(), WithExecutor("cleanup", execution.Func(func(ctx context.Context, params execution.ExecuteParams) (any, error) {
+		return nil, params.Events.Commit(ctx, params.ExecutionID, "cleanup.output", params.Input)
 	})))
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 
@@ -203,12 +202,12 @@ func TestFunctionOnlyHarnessRejectsMissingExecutorsBeforeRecording(t *testing.T)
 		t.Fatalf("missing executor recorded work: %+v, %v", entries, err)
 	}
 
-	id, err := opened.Execute(context.Background(), execution.Request{Executor: "cleanup", Input: "work"})
+	current, err := opened.Execute(context.Background(), execution.Request{Executor: "cleanup", Input: "work"})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if finished := waitFinished(t, opened, id); finished.Outcome != execution.Completed {
+	if finished := waitFinished(t, opened, current.ID()); finished.Outcome != execution.Completed {
 		t.Fatalf("functional execution = %+v", finished)
 	}
 
@@ -388,7 +387,7 @@ func TestLookupContextDoesNotOwnExecution(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	id, err := opened.Execute(context.Background(), execution.Request{Executor: execution.AgentName, Input: kit.NewUserMessage(kit.NewTextContent("work"))})
+	current, err := opened.Execute(context.Background(), execution.Request{Executor: agent.ExecutorName, Input: kit.NewUserMessage(kit.NewTextContent("work"))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -402,7 +401,7 @@ func TestLookupContextDoesNotOwnExecution(t *testing.T) {
 
 	close(model.release)
 
-	finished := waitFinished(t, opened, id)
+	finished := waitFinished(t, opened, current.ID())
 	if finished.Outcome != execution.Completed {
 		t.Fatalf("execution outcome = %+v", finished)
 	}
@@ -424,7 +423,7 @@ func TestShutdownOwnsSessionsAndRejectsFurtherOpens(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	id, err := opened.Execute(context.Background(), execution.Request{Executor: execution.AgentName, Input: kit.NewUserMessage(kit.NewTextContent("work"))})
+	current, err := opened.Execute(context.Background(), execution.Request{Executor: agent.ExecutorName, Input: kit.NewUserMessage(kit.NewTextContent("work"))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -437,7 +436,7 @@ func TestShutdownOwnsSessionsAndRejectsFurtherOpens(t *testing.T) {
 
 	waitSignal(t, subscription.Done())
 
-	if finished := waitFinished(t, opened, id); finished.Outcome != execution.Cancelled {
+	if finished := waitFinished(t, opened, current.ID()); finished.Outcome != execution.Cancelled {
 		t.Fatalf("execution outcome = %+v", finished)
 	}
 
@@ -449,7 +448,7 @@ func TestShutdownOwnsSessionsAndRejectsFurtherOpens(t *testing.T) {
 		t.Fatalf("Session after shutdown error = %v", err)
 	}
 
-	if _, err := opened.Execute(context.Background(), execution.Request{Executor: execution.AgentName, Input: kit.Message{}}); !errors.Is(err, session.ErrClosed) {
+	if _, err := opened.Execute(context.Background(), execution.Request{Executor: agent.ExecutorName, Input: kit.Message{}}); !errors.Is(err, session.ErrClosed) {
 		t.Fatalf("execution after shutdown error = %v", err)
 	}
 
@@ -473,7 +472,7 @@ func TestShutdownDeadlineDoesNotAbandonCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := opened.Execute(context.Background(), execution.Request{Executor: execution.AgentName, Input: kit.NewUserMessage(kit.NewTextContent("work"))}); err != nil {
+	if _, err := opened.Execute(context.Background(), execution.Request{Executor: agent.ExecutorName, Input: kit.NewUserMessage(kit.NewTextContent("work"))}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -544,7 +543,9 @@ func TestShutdownReleasesRun(t *testing.T) {
 func TestSessionsRemainPersistentAcrossHosts(t *testing.T) {
 	t.Parallel()
 
-	store, err := jsonl.Open(context.Background(), t.TempDir())
+	path := t.TempDir()
+
+	store, err := jsonl.Open(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -560,18 +561,26 @@ func TestSessionsRemainPersistentAcrossHosts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	id, err := opened.Execute(context.Background(), execution.Request{Executor: execution.AgentName, Input: kit.NewUserMessage(kit.NewTextContent("saved input"))})
+	current, err := opened.Execute(context.Background(), execution.Request{Executor: agent.ExecutorName, Input: kit.NewUserMessage(kit.NewTextContent("saved input"))})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	waitFinished(t, opened, id)
+	original, err := current.Wait(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if err := first.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
-	second := newTestHarness(t, store, kittest.NewModel(t))
+	reopenedStore, err := jsonl.Open(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	second := newTestHarness(t, reopenedStore, kittest.NewModel(t))
 
 	reopened, err := second.Session(context.Background(), opened.ID())
 	if err != nil {
@@ -582,8 +591,23 @@ func TestSessionsRemainPersistentAcrossHosts(t *testing.T) {
 		t.Fatal("new host reused a closed session instance")
 	}
 
-	if finished := waitFinished(t, reopened, id); finished.Outcome != execution.Completed {
-		t.Fatalf("restored execution = %+v", finished)
+	attached, err := reopened.Execution(context.Background(), current.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	restored, err := attached.Wait(context.Background())
+	if err != nil || restored.Outcome != execution.Completed || string(restored.Output) != string(original.Output) || !restored.EndedAt.Equal(original.EndedAt) {
+		t.Fatalf("restored execution = %+v, %v", restored, err)
+	}
+
+	var response kit.AgentResponse
+	if err := json.Unmarshal(restored.Output, &response); err != nil {
+		t.Fatal(err)
+	}
+
+	if response.Output == nil || response.Output.Text != "saved response" {
+		t.Fatalf("restored agent output = %+v", response)
 	}
 
 	metadata, err := store.SessionStore().Get(context.Background(), opened.ID())
@@ -592,7 +616,7 @@ func TestSessionsRemainPersistentAcrossHosts(t *testing.T) {
 	}
 }
 
-func waitFinished(t *testing.T, opened *session.Session, id string) execution.Finished {
+func waitFinished(t *testing.T, opened *session.Session, id string) execution.Result {
 	t.Helper()
 
 	ticker := time.NewTicker(time.Millisecond)
@@ -609,7 +633,7 @@ func waitFinished(t *testing.T, opened *session.Session, id string) execution.Fi
 
 		for _, value := range entries {
 			if value.ExecutionID == id && value.Type == execution.FinishedEntryType {
-				var finished execution.Finished
+				var finished execution.Result
 				if err := json.Unmarshal(value.Payload, &finished); err != nil {
 					t.Fatal(err)
 				}
@@ -819,7 +843,7 @@ func TestRunLeavesSessionHistoryUntouched(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := New(store, WithExecutor("work", execution.Func(func(context.Context, execution.ExecuteParams) error { return nil })))
+	h := New(store, WithExecutor("work", execution.Func(func(context.Context, execution.ExecuteParams) (any, error) { return nil, nil })))
 
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 
@@ -836,6 +860,14 @@ func TestRunLeavesSessionHistoryUntouched(t *testing.T) {
 	entries, err := opened.Entries(context.Background(), 0)
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("starting harness changed history: %+v, %v", entries, err)
+	}
+
+	if _, err := opened.Execute(context.Background(), execution.Request{Executor: "work"}); !errors.Is(err, session.ErrExecutionUnfinished) {
+		t.Fatalf("submission before explicit recovery = %v", err)
+	}
+
+	if err := opened.Recover(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 
 	if _, err := opened.Execute(context.Background(), execution.Request{Executor: "work"}); err != nil {
