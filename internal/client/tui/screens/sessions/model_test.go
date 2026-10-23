@@ -5,18 +5,22 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/vitaliipsl/crappy/harness"
+	"github.com/vitaliipsl/crappy/harness/entry"
+	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/session"
 	"github.com/vitaliipsl/crappy/internal/client/tui/navigation"
 	"github.com/vitaliipsl/crappy/internal/client/tui/routes"
-	"github.com/vitaliipsl/crappy/internal/runtime"
+	"github.com/vitaliipsl/crappy/internal/storage/jsonl"
 )
 
 func TestLoadSelectsCurrentSession(t *testing.T) {
-	model := testModel("session-2", []session.State{
+	model := testModel(t, "session-2", []session.State{
 		{ID: "session-1"},
 		{ID: "session-2"},
 	})
@@ -33,7 +37,7 @@ func TestLoadSelectsCurrentSession(t *testing.T) {
 }
 
 func TestLoadIncludesUnstoredCurrentSession(t *testing.T) {
-	model := testModel("current", []session.State{{ID: "stored"}})
+	model := testModel(t, "current", []session.State{{ID: "stored"}})
 
 	model.Update(model.Init()())
 
@@ -43,7 +47,7 @@ func TestLoadIncludesUnstoredCurrentSession(t *testing.T) {
 }
 
 func TestEnterOpensSelectedSession(t *testing.T) {
-	model := testModel("session-1", []session.State{
+	model := testModel(t, "session-1", []session.State{
 		{ID: "session-1"},
 		{ID: "session-2"},
 	})
@@ -60,7 +64,7 @@ func TestEnterOpensSelectedSession(t *testing.T) {
 }
 
 func TestNewOpensUncreatedSession(t *testing.T) {
-	model := testModel("current", nil)
+	model := testModel(t, "current", nil)
 
 	_, command := model.Update(tea.KeyPressMsg(tea.Key{Code: 'n'}))
 	action := command().(navigation.Action)
@@ -71,7 +75,7 @@ func TestNewOpensUncreatedSession(t *testing.T) {
 }
 
 func TestEscapeReturnsToSession(t *testing.T) {
-	model := testModel("current", nil)
+	model := testModel(t, "current", nil)
 
 	_, command := model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEscape}))
 	action := command().(navigation.Action)
@@ -82,7 +86,7 @@ func TestEscapeReturnsToSession(t *testing.T) {
 }
 
 func TestDeleteRequiresConfirmation(t *testing.T) {
-	model := testModel("session-1", []session.State{
+	model := testModel(t, "session-1", []session.State{
 		{ID: "session-1"},
 		{ID: "session-2"},
 	})
@@ -107,7 +111,7 @@ func TestDeleteRequiresConfirmation(t *testing.T) {
 }
 
 func TestDeleteRemovesSession(t *testing.T) {
-	model := testModel("session-1", []session.State{
+	model := testModel(t, "session-1", []session.State{
 		{ID: "session-1"},
 		{ID: "session-2"},
 	})
@@ -124,7 +128,7 @@ func TestDeleteRemovesSession(t *testing.T) {
 }
 
 func TestDeleteRejectsCurrentSession(t *testing.T) {
-	model := testModel("session-1", []session.State{{ID: "session-1"}})
+	model := testModel(t, "session-1", []session.State{{ID: "session-1"}})
 	model.Update(model.Init()())
 
 	_, command := model.Update(tea.KeyPressMsg(tea.Key{Code: 'd'}))
@@ -134,8 +138,76 @@ func TestDeleteRejectsCurrentSession(t *testing.T) {
 	}
 }
 
+func TestDeleteClosesLiveSessionBeforeRemovingStorage(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	storage, err := jsonl.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	started := make(chan struct{})
+	executor := execution.Func(func(ctx context.Context, _ execution.ExecuteParams) error {
+		close(started)
+		<-ctx.Done()
+
+		return ctx.Err()
+	})
+	h := harness.New(storage, harness.WithExecutor("work", executor))
+	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
+
+	opened, err := h.Session(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	subscription, err := opened.Subscribe(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := opened.Execute(ctx, execution.Request{Executor: "work"}); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-started:
+	case <-ctx.Done():
+		t.Fatal("executor did not start")
+	}
+
+	model := New(ctx, h, storage.SessionStore(), "other-session")
+	defer model.Close()
+
+	deleted := model.deleteSession(opened.ID())().(deletedMsg)
+	if deleted.err != nil {
+		t.Fatal(deleted.err)
+	}
+
+	select {
+	case <-subscription.Done():
+	default:
+		t.Fatal("deleted session retained a live subscription")
+	}
+
+	if _, err := h.Session(ctx, opened.ID()); !errors.Is(err, session.ErrNotFound) {
+		t.Fatalf("deleted session lookup error = %v", err)
+	}
+
+	if _, err := opened.Execute(ctx, execution.Request{}); !errors.Is(err, session.ErrClosed) {
+		t.Fatalf("execution on deleted session error = %v", err)
+	}
+
+	if states, err := storage.SessionStore().List(ctx); err != nil || len(states) != 0 {
+		t.Fatalf("sessions after deletion = %+v, %v", states, err)
+	}
+}
+
 func TestCloseCancelsScreenContext(t *testing.T) {
-	model := testModel("current", nil)
+	model := testModel(t, "current", nil)
 
 	model.Close()
 
@@ -152,7 +224,7 @@ func TestViewFitsWindow(t *testing.T) {
 		{width: 80, height: 20},
 		{width: 40, height: 14},
 	} {
-		model := testModel("2f37556e-c14e-4e01-9e84-103549c27c0b", nil)
+		model := testModel(t, "2f37556e-c14e-4e01-9e84-103549c27c0b", nil)
 		model.Update(tea.WindowSizeMsg{Width: size.width, Height: size.height})
 		model.Update(model.Init()())
 
@@ -169,16 +241,14 @@ func TestViewFitsWindow(t *testing.T) {
 	}
 }
 
-func testModel(currentID string, sessions []session.State) *Model {
-	appRuntime := runtime.New(
-		context.Background(),
-		staticSessionStore{sessions: sessions},
-		nil,
-		nil,
-		nil,
-	)
+func testModel(t *testing.T, currentID string, sessions []session.State) *Model {
+	t.Helper()
 
-	return New(context.Background(), appRuntime, currentID)
+	store := staticSessionStore{sessions: sessions}
+	h := harness.New(store)
+	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
+
+	return New(context.Background(), h, store, currentID)
 }
 
 type staticSessionStore struct {
@@ -189,7 +259,13 @@ func (s staticSessionStore) List(context.Context) ([]session.State, error) {
 	return s.sessions, nil
 }
 
-func (staticSessionStore) Get(context.Context, string) (session.State, error) {
+func (s staticSessionStore) Get(_ context.Context, id string) (session.State, error) {
+	for _, state := range s.sessions {
+		if state.ID == id {
+			return state, nil
+		}
+	}
+
 	return session.State{}, session.ErrNotFound
 }
 
@@ -200,3 +276,6 @@ func (staticSessionStore) Save(context.Context, session.State) error {
 func (staticSessionStore) Delete(context.Context, string) error {
 	return nil
 }
+
+func (s staticSessionStore) SessionStore() session.Store { return s }
+func (staticSessionStore) EntryStore() entry.Store       { return entry.NewMemoryStore() }

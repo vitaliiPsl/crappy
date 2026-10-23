@@ -6,8 +6,7 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
 	"github.com/vitaliipsl/crappy/harness/event"
-	harnesssession "github.com/vitaliipsl/crappy/harness/session"
-	"github.com/vitaliipsl/crappy/internal/runtime"
+	"github.com/vitaliipsl/crappy/harness/execution"
 )
 
 const subscriptionStartEntryID uint64 = 0
@@ -30,10 +29,10 @@ type eventMsg struct {
 func (eventMsg) Broadcast() {}
 
 type createdMsg struct {
-	target *Model
-	state  harnesssession.State
-	input  kit.Message
-	err    error
+	target    *Model
+	sessionID string
+	input     kit.Message
+	err       error
 }
 
 func (createdMsg) Broadcast() {}
@@ -54,11 +53,12 @@ func (cancelResultMsg) Broadcast() {}
 
 func (m *Model) subscribe() tea.Cmd {
 	return func() tea.Msg {
-		subscription, err := m.runtime.Subscribe(
-			m.ctx,
-			m.sessionID,
-			subscriptionStartEntryID,
-		)
+		opened, err := m.harness.Session(m.ctx, m.sessionID)
+		if err != nil {
+			return subscribedMsg{target: m, err: err}
+		}
+
+		subscription, err := opened.Subscribe(m.ctx, subscriptionStartEntryID)
 
 		return subscribedMsg{target: m, subscription: subscription, err: err}
 	}
@@ -85,15 +85,23 @@ func (m *Model) waitForEvent() tea.Cmd {
 
 func (m *Model) create(input kit.Message) tea.Cmd {
 	return func() tea.Msg {
-		state, err := m.runtime.Create(m.ctx, runtime.CreateOptions{Title: inputTitle(input)})
+		opened, err := m.harness.Session(m.ctx, "")
+		if err != nil {
+			return createdMsg{target: m, err: err}
+		}
 
-		return createdMsg{target: m, state: state, input: input, err: err}
+		return createdMsg{target: m, sessionID: opened.ID(), input: input}
 	}
 }
 
 func (m *Model) execute(input kit.Message) tea.Cmd {
 	return func() tea.Msg {
-		_, err := m.runtime.Execute(m.ctx, m.sessionID, input)
+		opened, err := m.harness.Session(m.ctx, m.sessionID)
+		if err != nil {
+			return executeResultMsg{target: m, err: err}
+		}
+
+		_, err = opened.Execute(m.ctx, execution.Request{Input: input})
 
 		return executeResultMsg{target: m, err: err}
 	}
@@ -101,7 +109,12 @@ func (m *Model) execute(input kit.Message) tea.Cmd {
 
 func (m *Model) cancelExecution(executionID string) tea.Cmd {
 	return func() tea.Msg {
-		err := m.runtime.Cancel(m.ctx, m.sessionID, executionID)
+		opened, err := m.harness.Session(m.ctx, m.sessionID)
+		if err != nil {
+			return cancelResultMsg{target: m, err: err}
+		}
+
+		err = opened.Cancel(m.ctx, executionID)
 
 		return cancelResultMsg{target: m, err: err}
 	}

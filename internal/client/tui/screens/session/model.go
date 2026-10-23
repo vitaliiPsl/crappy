@@ -5,17 +5,17 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/vitaliipsl/crappy/harness"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/internal/client/tui/components/composer"
 	"github.com/vitaliipsl/crappy/internal/client/tui/components/transcript"
-	"github.com/vitaliipsl/crappy/internal/runtime"
 )
 
 type Model struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	runtime      *runtime.Runtime
+	harness      *harness.Harness
 	subscription *event.Subscription
 
 	sessionID   string
@@ -28,13 +28,13 @@ type Model struct {
 	height     int
 }
 
-func New(ctx context.Context, runtime *runtime.Runtime, sessionID string) *Model {
+func New(ctx context.Context, harness *harness.Harness, sessionID string) *Model {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Model{
 		ctx:        ctx,
 		cancel:     cancel,
-		runtime:    runtime,
+		harness:    harness,
 		sessionID:  sessionID,
 		transcript: transcript.New(),
 		composer:   composer.New(),

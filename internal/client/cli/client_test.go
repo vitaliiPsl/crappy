@@ -9,10 +9,8 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kit"
 	"github.com/vitaliiPsl/crappy-adk/kittest"
 
-	"github.com/vitaliipsl/crappy/harness/agent"
-	"github.com/vitaliipsl/crappy/harness/entry"
-	"github.com/vitaliipsl/crappy/harness/session"
-	"github.com/vitaliipsl/crappy/internal/runtime"
+	"github.com/vitaliipsl/crappy/harness"
+	"github.com/vitaliipsl/crappy/internal/storage/jsonl"
 )
 
 func TestClientRunsSession(t *testing.T) {
@@ -27,19 +25,20 @@ func TestClientRunsSession(t *testing.T) {
 			FinishReason: kit.FinishReasonStop,
 		},
 	})
-	runtime := runtime.New(
-		context.Background(),
-		stubSessionStore{},
-		entry.NewMemoryStore(),
-		agent.New(kit.AgentConfig{}, staticModelResolver{model}),
-		nil,
-	)
+
+	storage, err := jsonl.Open(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	h := harness.New(storage, harness.WithModel(staticModelResolver{model}))
+	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 
 	var output bytes.Buffer
 
-	err := New(
-		runtime,
-		"session-1",
+	err = New(
+		h,
+		"",
 		strings.NewReader("hi\n"),
 		&output,
 	).Run(context.Background())
@@ -50,24 +49,6 @@ func TestClientRunsSession(t *testing.T) {
 	if got := output.String(); !strings.Contains(got, "hello") {
 		t.Fatalf("output = %q, want agent response", got)
 	}
-}
-
-type stubSessionStore struct{}
-
-func (stubSessionStore) List(context.Context) ([]session.State, error) {
-	return nil, nil
-}
-
-func (stubSessionStore) Get(_ context.Context, sessionID string) (session.State, error) {
-	return session.State{ID: sessionID}, nil
-}
-
-func (stubSessionStore) Save(context.Context, session.State) error {
-	return nil
-}
-
-func (stubSessionStore) Delete(context.Context, string) error {
-	return nil
 }
 
 type staticModelResolver struct {

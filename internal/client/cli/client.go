@@ -10,15 +10,15 @@ import (
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
+	"github.com/vitaliipsl/crappy/harness"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
-	"github.com/vitaliipsl/crappy/internal/runtime"
 )
 
 const prompt = "> "
 
 type Client struct {
-	runtime   *runtime.Runtime
+	harness   *harness.Harness
 	sessionID string
 	input     io.Reader
 	output    io.Writer
@@ -30,13 +30,13 @@ type input struct {
 }
 
 func New(
-	runtime *runtime.Runtime,
+	harness *harness.Harness,
 	sessionID string,
 	input io.Reader,
 	output io.Writer,
 ) *Client {
 	return &Client{
-		runtime:   runtime,
+		harness:   harness,
 		sessionID: sessionID,
 		input:     input,
 		output:    output,
@@ -44,7 +44,12 @@ func New(
 }
 
 func (c *Client) Run(ctx context.Context) error {
-	subscription, err := c.runtime.Subscribe(ctx, c.sessionID, 0)
+	opened, err := c.harness.Session(ctx, c.sessionID)
+	if err != nil {
+		return fmt.Errorf("open session: %w", err)
+	}
+
+	subscription, err := opened.Subscribe(ctx, 0)
 	if err != nil {
 		return fmt.Errorf("subscribe: %w", err)
 	}
@@ -93,11 +98,9 @@ func (c *Client) Run(ctx context.Context) error {
 				continue
 			}
 
-			executionID, err := c.runtime.Execute(
-				ctx,
-				c.sessionID,
-				kit.NewUserMessage(kit.NewTextContent(text)),
-			)
+			executionID, err := opened.Execute(ctx, execution.Request{
+				Input: kit.NewUserMessage(kit.NewTextContent(text)),
+			})
 			if err != nil {
 				return fmt.Errorf("execute: %w", err)
 			}

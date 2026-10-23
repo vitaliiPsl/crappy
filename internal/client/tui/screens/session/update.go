@@ -38,7 +38,7 @@ func (m *Model) handleCreated(message createdMsg) tea.Cmd {
 		return nil
 	}
 
-	m.sessionID = message.state.ID
+	m.sessionID = message.sessionID
 
 	return tea.Batch(m.subscribe(), m.execute(message.input))
 }
