@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/vitaliiPsl/crappy-adk/kit"
+
+	"github.com/vitaliipsl/crappy/harness/agent"
+	"github.com/vitaliipsl/crappy/harness/checkpoint"
 	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/session"
@@ -25,18 +28,39 @@ type Store interface {
 	EntryStore() entry.Store
 }
 
-type Option func(*Harness)
+type Option func(*config)
 
-func WithExecutors(executors map[string]execution.Executor) Option {
-	return func(h *Harness) {
-		maps.Copy(h.executors, executors)
+type config struct {
+	models       agent.ModelResolver
+	agentConfig  kit.AgentConfig
+	agentOptions []agent.Option
+	checkpoints  *checkpoint.Generator
+	executors    *execution.Registry
+}
+
+func WithModel(models agent.ModelResolver) Option {
+	return func(c *config) { c.models = models }
+}
+
+func WithAgentConfig(configured kit.AgentConfig, options ...agent.Option) Option {
+	return func(c *config) {
+		c.agentConfig = configured
+		c.agentOptions = append(c.agentOptions, options...)
 	}
+}
+
+func WithCheckpoints(generator *checkpoint.Generator) Option {
+	return func(c *config) { c.checkpoints = generator }
+}
+
+func WithExecutor(name string, executor execution.Executor) Option {
+	return func(c *config) { c.executors.Register(name, executor) }
 }
 
 type Harness struct {
 	sessions  session.Store
 	entries   entry.Store
-	executors map[string]execution.Executor
+	executors execution.Resolver
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -49,23 +73,32 @@ type Harness struct {
 }
 
 func New(store Store, options ...Option) *Harness {
+	c := config{executors: execution.NewRegistry()}
+	for _, option := range options {
+		option(&c)
+	}
+
+	if c.models != nil {
+		if _, err := c.executors.Resolve(execution.AgentName); err != nil {
+			c.executors.Register(execution.AgentName, execution.NewAgent(
+				agent.New(c.agentConfig, c.models, c.agentOptions...),
+				execution.WithCheckpoints(c.checkpoints),
+			))
+		}
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 
-	h := &Harness{
+	return &Harness{
 		sessions:  store.SessionStore(),
 		entries:   store.EntryStore(),
-		executors: make(map[string]execution.Executor),
+		executors: c.executors,
 
 		ctx:    ctx,
 		cancel: cancel,
 		done:   make(chan struct{}),
 		opened: make(map[string]*session.Session),
 	}
-	for _, option := range options {
-		option(h)
-	}
-
-	return h
 }
 
 func (h *Harness) Session(ctx context.Context, sessionID string) (*session.Session, error) {
@@ -78,10 +111,6 @@ func (h *Harness) Session(ctx context.Context, sessionID string) (*session.Sessi
 
 	if h.ctx.Err() != nil {
 		return nil, ErrClosed
-	}
-
-	if opened := h.opened[sessionID]; opened != nil {
-		return opened, nil
 	}
 
 	var state session.State
@@ -101,15 +130,26 @@ func (h *Harness) Session(ctx context.Context, sessionID string) (*session.Sessi
 
 		state, err = h.sessions.Get(ctx, sessionID)
 		if err != nil {
+			if errors.Is(err, session.ErrNotFound) {
+				if opened := h.opened[sessionID]; opened != nil {
+					opened.Close()
+					delete(h.opened, sessionID)
+				}
+			}
+
 			return nil, err
 		}
+	}
+
+	if opened := h.opened[state.ID]; opened != nil {
+		return opened, nil
 	}
 
 	opened := session.New(
 		h.ctx,
 		state.ID,
 		h.entries,
-		session.WithExecutors(h.executors),
+		h.executors,
 	)
 
 	h.opened[state.ID] = opened

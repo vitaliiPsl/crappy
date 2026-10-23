@@ -19,11 +19,7 @@ import (
 func TestSessionID(t *testing.T) {
 	t.Parallel()
 
-	session := newAgentSession(context.Background(),
-		"session-1",
-		entry.NewMemoryStore(),
-		nil,
-		nil)
+	session := New(context.Background(), "session-1", entry.NewMemoryStore(), execution.NewRegistry())
 
 	if got, want := session.ID(), "session-1"; got != want {
 		t.Fatalf("ID() = %q, want %q", got, want)
@@ -57,11 +53,7 @@ func TestSessionEntries(t *testing.T) {
 		t.Fatalf("Append() other session error = %v", err)
 	}
 
-	session := newAgentSession(context.Background(),
-		"session-1",
-		store,
-		nil,
-		nil)
+	session := New(context.Background(), "session-1", store, execution.NewRegistry())
 
 	entries, err := session.Entries(context.Background(), 1)
 	if err != nil {
@@ -90,11 +82,7 @@ func TestSubscribeReplaysEntries(t *testing.T) {
 		t.Fatalf("Append() error = %v", err)
 	}
 
-	session := newAgentSession(context.Background(),
-		"session-1",
-		store,
-		nil,
-		nil)
+	session := New(context.Background(), "session-1", store, execution.NewRegistry())
 
 	subscription, err := session.Subscribe(context.Background(), 0)
 	if err != nil {
@@ -112,11 +100,7 @@ func TestSubscribeReplaysEntries(t *testing.T) {
 func TestEmitReachesEverySubscriber(t *testing.T) {
 	t.Parallel()
 
-	session := newAgentSession(context.Background(),
-		"session-1",
-		entry.NewMemoryStore(),
-		nil,
-		nil)
+	session := New(context.Background(), "session-1", entry.NewMemoryStore(), execution.NewRegistry())
 
 	first, err := session.Subscribe(context.Background(), 0)
 	if err != nil {
@@ -261,5 +245,12 @@ func receiveEvent(t *testing.T, subscription *harnessevent.Subscription) harness
 }
 
 func newAgentSession(ctx context.Context, id string, entries entry.Store, factory *agent.Factory, checkpoints *checkpoint.Generator) *Session {
-	return New(ctx, id, entries, WithExecutors(map[string]execution.Executor{execution.AgentName: execution.NewAgent(factory, execution.WithCheckpoints(checkpoints))}))
+	return newExecutorSession(ctx, id, entries, execution.AgentName, execution.NewAgent(factory, execution.WithCheckpoints(checkpoints)))
+}
+
+func newExecutorSession(ctx context.Context, id string, entries entry.Store, name string, executor execution.Executor) *Session {
+	registry := execution.NewRegistry()
+	registry.Register(name, executor)
+
+	return New(ctx, id, entries, registry)
 }

@@ -2,7 +2,6 @@ package session
 
 import (
 	"context"
-	"maps"
 	"sync"
 
 	"github.com/vitaliipsl/crappy/harness/entry"
@@ -16,7 +15,7 @@ type Session struct {
 
 	entries   entry.Store
 	events    *event.Bus
-	executors map[string]execution.Executor
+	executors execution.Resolver
 
 	activeID string
 	cancel   context.CancelFunc
@@ -27,27 +26,14 @@ type Session struct {
 	closed bool
 }
 
-type Option func(*Session)
-
-func WithExecutors(executors map[string]execution.Executor) Option {
-	return func(s *Session) {
-		maps.Copy(s.executors, executors)
-	}
-}
-
-func New(ctx context.Context, id string, entries entry.Store, options ...Option) *Session {
-	s := &Session{
+func New(ctx context.Context, id string, entries entry.Store, executors execution.Resolver) *Session {
+	return &Session{
 		ctx:       ctx,
 		id:        id,
 		entries:   entries,
 		events:    event.NewBus(id, entries),
-		executors: make(map[string]execution.Executor),
+		executors: executors,
 	}
-	for _, option := range options {
-		option(s)
-	}
-
-	return s
 }
 
 func (s *Session) ID() string {

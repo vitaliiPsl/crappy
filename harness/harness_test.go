@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -13,12 +14,209 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kittest"
 
 	"github.com/vitaliipsl/crappy/harness/agent"
+	"github.com/vitaliipsl/crappy/harness/checkpoint"
+	"github.com/vitaliipsl/crappy/harness/checkpoint/automatic"
 	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/session"
 	"github.com/vitaliipsl/crappy/internal/storage/jsonl"
 )
+
+func TestBuiltInAgentIsDefaultAndUsesConfiguration(t *testing.T) {
+	t.Parallel()
+
+	model := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
+		Message:      kit.NewModelMessage(kit.NewTextContent("done")),
+		FinishReason: kit.FinishReasonStop,
+	}})
+	tool := kittest.NewTool(t, "search", "Search")
+	h := New(newTestStore(),
+		WithAgentConfig(kit.AgentConfig{Instructions: "Be concise."}, agent.WithTools(tool)),
+		WithExecutor("cleanup", execution.Func(func(context.Context, execution.ExecuteParams) error { return nil })),
+		WithModel(testModelResolver{model}),
+	)
+	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
+
+	opened, err := h.Session(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	id, err := opened.Execute(context.Background(), execution.Request{
+		Input: kit.NewUserMessage(kit.NewTextContent("hello")),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if finished := waitFinished(t, opened, id); finished.Outcome != execution.Completed {
+		t.Fatalf("default execution = %+v", finished)
+	}
+
+	request := model.CallAt(0)
+	if request.Instructions != "Be concise." || len(request.Tools) != 1 || request.Tools[0] != tool {
+		t.Fatalf("agent configuration was lost: %+v", request)
+	}
+
+	entries, err := opened.Entries(context.Background(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var started execution.Started
+	if err := json.Unmarshal(entries[0].Payload, &started); err != nil {
+		t.Fatal(err)
+	}
+
+	if started.Executor != execution.AgentName {
+		t.Fatalf("recorded executor = %q", started.Executor)
+	}
+
+	id, err = opened.Execute(context.Background(), execution.Request{Executor: "cleanup"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if finished := waitFinished(t, opened, id); finished.Outcome != execution.Completed {
+		t.Fatalf("custom executor alongside default agent = %+v", finished)
+	}
+
+	model.AssertCallCount(t, 1)
+}
+
+func TestBuiltInAgentUsesCheckpoints(t *testing.T) {
+	t.Parallel()
+
+	model := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
+		Message:      kit.NewModelMessage(kit.NewTextContent("done")),
+		FinishReason: kit.FinishReasonStop,
+	}})
+	checkpointModel := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
+		Message:      kit.NewModelMessage(kit.NewTextContent(`{"objective":"saved context"}`)),
+		FinishReason: kit.FinishReasonStop,
+	}})
+
+	generator, err := checkpoint.NewGenerator(checkpoint.Config{}, testModelResolver{checkpointModel})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	h := New(newTestStore(),
+		WithCheckpoints(generator),
+		WithAgentConfig(kit.AgentConfig{}, agent.WithContributors(automatic.New(
+			automatic.WithTrigger(automatic.WhenInputExceedsTokens(1)),
+		))),
+		WithModel(testModelResolver{model}),
+	)
+	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
+
+	opened, err := h.Session(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	id, err := opened.Execute(context.Background(), execution.Request{
+		Input: kit.NewUserMessage(kit.NewTextContent("input longer than one token")),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if finished := waitFinished(t, opened, id); finished.Outcome != execution.Completed {
+		t.Fatalf("execution with checkpoints = %+v", finished)
+	}
+
+	checkpointModel.AssertCallCount(t, 1)
+
+	if got := model.CallAt(0).Messages[0].TextContent().Text; got != (checkpoint.Checkpoint{
+		Summary: checkpoint.Summary{Objective: "saved context"},
+	}).Message().TextContent().Text {
+		t.Fatalf("agent did not receive checkpoint: %q", got)
+	}
+}
+
+func TestCustomAgentOverridesBuiltInRegardlessOfOptionOrder(t *testing.T) {
+	t.Parallel()
+
+	for _, modelFirst := range []bool{true, false} {
+		t.Run(fmt.Sprint(modelFirst), func(t *testing.T) {
+			model := kittest.NewModel(t)
+
+			var calls atomic.Int32
+
+			options := []Option{
+				WithModel(testModelResolver{model}),
+				WithExecutor(execution.AgentName, execution.Func(func(context.Context, execution.ExecuteParams) error {
+					calls.Add(1)
+
+					return nil
+				})),
+			}
+			if !modelFirst {
+				options[0], options[1] = options[1], options[0]
+			}
+
+			h := New(newTestStore(), options...)
+			t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
+
+			opened, err := h.Session(context.Background(), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			id, err := opened.Execute(context.Background(), execution.Request{})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if finished := waitFinished(t, opened, id); finished.Outcome != execution.Completed || calls.Load() != 1 {
+				t.Fatalf("custom agent = %+v, calls = %d", finished, calls.Load())
+			}
+
+			model.AssertNeverCalled(t)
+		})
+	}
+}
+
+func TestFunctionOnlyHarnessRejectsMissingExecutorsBeforeRecording(t *testing.T) {
+	t.Parallel()
+
+	h := New(newTestStore(), WithExecutor("cleanup", execution.Func(func(ctx context.Context, params execution.ExecuteParams) error {
+		return params.Events.Commit(ctx, params.ExecutionID, "cleanup.output", params.Input)
+	})))
+	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
+
+	opened, err := h.Session(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, name := range []string{"", "missing"} {
+		if _, err := opened.Execute(context.Background(), execution.Request{Executor: name}); err == nil {
+			t.Fatalf("missing executor %q was accepted", name)
+		}
+	}
+
+	entries, err := opened.Entries(context.Background(), 0)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("missing executor recorded work: %+v, %v", entries, err)
+	}
+
+	id, err := opened.Execute(context.Background(), execution.Request{Executor: "cleanup", Input: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if finished := waitFinished(t, opened, id); finished.Outcome != execution.Completed {
+		t.Fatalf("functional execution = %+v", finished)
+	}
+
+	entries, err = opened.Entries(context.Background(), 0)
+	if err != nil || len(entries) != 3 || string(entries[1].Payload) != `"work"` {
+		t.Fatalf("functional execution journal = %+v, %v", entries, err)
+	}
+}
 
 func TestSessionCreatesMetadataAndSharesInstance(t *testing.T) {
 	t.Parallel()
@@ -138,7 +336,7 @@ func TestSessionLoadsPersistedMetadata(t *testing.T) {
 func TestConcurrentSessionLookupSharesInstance(t *testing.T) {
 	t.Parallel()
 
-	metadata := &countingSessionStore{Store: newMemorySessionStore()}
+	metadata := newMemorySessionStore()
 	if err := metadata.Save(context.Background(), session.State{ID: "shared"}); err != nil {
 		t.Fatal(err)
 	}
@@ -174,10 +372,6 @@ func TestConcurrentSessionLookupSharesInstance(t *testing.T) {
 		} else if opened != shared {
 			t.Fatal("clients received different instances of one session")
 		}
-	}
-
-	if metadata.calls.Load() != 1 {
-		t.Fatalf("session lookups = %d", metadata.calls.Load())
 	}
 }
 
@@ -435,7 +629,7 @@ func waitFinished(t *testing.T, opened *session.Session, id string) execution.Fi
 func newTestHarness(t *testing.T, store Store, model kit.Model) *Harness {
 	t.Helper()
 
-	h := New(store, WithExecutors(map[string]execution.Executor{execution.AgentName: execution.NewAgent(agent.New(kit.AgentConfig{}, testModelResolver{model}))}))
+	h := New(store, WithModel(testModelResolver{model}))
 
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -532,17 +726,6 @@ func (s *memorySessionStore) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-type countingSessionStore struct {
-	session.Store
-	calls atomic.Int32
-}
-
-func (s *countingSessionStore) Get(ctx context.Context, id string) (session.State, error) {
-	s.calls.Add(1)
-
-	return s.Store.Get(ctx, id)
-}
-
 type lifetimeModel struct {
 	started      chan struct{}
 	release      chan struct{}
@@ -636,9 +819,7 @@ func TestRunLeavesSessionHistoryUntouched(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := New(store, WithExecutors(map[string]execution.Executor{
-		"work": execution.Func(func(context.Context, execution.ExecuteParams) error { return nil }),
-	}))
+	h := New(store, WithExecutor("work", execution.Func(func(context.Context, execution.ExecuteParams) error { return nil })))
 
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 

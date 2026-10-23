@@ -30,9 +30,13 @@ func (s *Session) Execute(ctx context.Context, request execution.Request) (strin
 		return "", ErrClosed
 	}
 
-	configured := s.executors[request.Executor]
-	if configured == nil {
-		return "", fmt.Errorf("unknown executor %q", request.Executor)
+	if request.Executor == "" {
+		request.Executor = execution.AgentName
+	}
+
+	executor, err := s.executors.Resolve(request.Executor)
+	if err != nil {
+		return "", err
 	}
 
 	input, err := json.Marshal(request.Input)
@@ -65,7 +69,7 @@ func (s *Session) Execute(ctx context.Context, request execution.Request) (strin
 		defer close(done)
 		defer cancel()
 
-		s.runExecution(runCtx, configured, executionID, input)
+		s.runExecution(runCtx, executor, executionID, input)
 	}()
 
 	return executionID, nil

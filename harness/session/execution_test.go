@@ -504,18 +504,15 @@ func TestFunctionExecutionUsesSessionLifetimeAndDetachedInput(t *testing.T) {
 	release := make(chan struct{})
 	store := entry.NewMemoryStore()
 
-	session := New(context.Background(),
-		"session-1",
-		store,
-		WithExecutors(map[string]execution.Executor{
-			"function": execution.Func(func(ctx context.Context, params execution.ExecuteParams) error {
-				started <- params
+	executor := execution.Func(func(ctx context.Context, params execution.ExecuteParams) error {
+		started <- params
 
-				<-release
+		<-release
 
-				return params.Events.Commit(ctx, params.ExecutionID, "function.output", params.Input)
-			}),
-		}))
+		return params.Events.Commit(ctx, params.ExecutionID, "function.output", params.Input)
+	})
+
+	session := newExecutorSession(context.Background(), "session-1", store, "function", executor)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -573,16 +570,13 @@ func TestFunctionExecutionUsesSessionLifetimeAndDetachedInput(t *testing.T) {
 func TestExecuteValidatesBeforeRecording(t *testing.T) {
 	t.Parallel()
 
-	session := New(context.Background(),
-		"session-1",
-		entry.NewMemoryStore(),
-		WithExecutors(map[string]execution.Executor{
-			"work": execution.Func(func(context.Context, execution.ExecuteParams) error {
-				t.Error("invalid request reached executor")
+	executor := execution.Func(func(context.Context, execution.ExecuteParams) error {
+		t.Error("invalid request reached executor")
 
-				return nil
-			}),
-		}))
+		return nil
+	})
+
+	session := newExecutorSession(context.Background(), "session-1", entry.NewMemoryStore(), "work", executor)
 
 	for _, request := range []execution.Request{
 		{Executor: "missing"},
@@ -617,16 +611,13 @@ func TestTerminalPersistenceFailureRetainsOutcome(t *testing.T) {
 
 			var calls atomic.Int32
 
-			session := New(context.Background(),
-				"session-1",
-				store,
-				WithExecutors(map[string]execution.Executor{
-					"work": execution.Func(func(context.Context, execution.ExecuteParams) error {
-						calls.Add(1)
+			executor := execution.Func(func(context.Context, execution.ExecuteParams) error {
+				calls.Add(1)
 
-						return runErr
-					}),
-				}))
+				return runErr
+			})
+
+			session := newExecutorSession(context.Background(), "session-1", store, "work", executor)
 
 			request := execution.Request{Executor: "work"}
 
@@ -706,25 +697,22 @@ func TestSubmissionRecoversUnfinishedExecutionBeforeInvokingExecutor(t *testing.
 
 	var calls atomic.Int32
 
-	session := New(context.Background(),
-		"session-1",
-		store,
-		WithExecutors(map[string]execution.Executor{
-			"work": execution.Func(func(ctx context.Context, params execution.ExecuteParams) error {
-				calls.Add(1)
+	executor := execution.Func(func(ctx context.Context, params execution.ExecuteParams) error {
+		calls.Add(1)
 
-				entries, err := params.Entries.List(ctx, params.SessionID, 0)
-				if err != nil {
-					return err
-				}
+		entries, err := params.Entries.List(ctx, params.SessionID, 0)
+		if err != nil {
+			return err
+		}
 
-				if len(entries) != 3 || entries[1].Type != execution.FinishedEntryType {
-					t.Errorf("new work started before recovery: %+v", entries)
-				}
+		if len(entries) != 3 || entries[1].Type != execution.FinishedEntryType {
+			t.Errorf("new work started before recovery: %+v", entries)
+		}
 
-				return nil
-			}),
-		}))
+		return nil
+	})
+
+	session := newExecutorSession(context.Background(), "session-1", store, "work", executor)
 
 	before, err := session.Entries(context.Background(), 0)
 	if err != nil || len(before) != 1 {
@@ -783,12 +771,8 @@ func TestSubmissionPreservesPreviouslyFinishedExecution(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	session := New(context.Background(),
-		"session-1",
-		store,
-		WithExecutors(map[string]execution.Executor{
-			"work": execution.Func(func(context.Context, execution.ExecuteParams) error { return nil }),
-		}))
+	executor := execution.Func(func(context.Context, execution.ExecuteParams) error { return nil })
+	session := newExecutorSession(context.Background(), "session-1", store, "work", executor)
 
 	if _, err := session.Execute(context.Background(), execution.Request{Executor: "work"}); err != nil {
 		t.Fatal(err)
