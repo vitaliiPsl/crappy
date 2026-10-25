@@ -5,14 +5,14 @@ import (
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
-	"github.com/vitaliipsl/crappy/harness/checkpoint"
+	"github.com/vitaliipsl/crappy/harness/compaction"
 )
 
 type executionStatus int
 
 const (
 	executionRunning executionStatus = iota
-	executionCheckpointing
+	executionCompacting
 	executionFinished
 )
 
@@ -30,7 +30,7 @@ type execution struct {
 type item struct {
 	role       kit.Role
 	content    []contentItem
-	checkpoint *checkpoint.Checkpoint
+	compaction *compaction.Compaction
 }
 
 type contentItem struct {
@@ -65,16 +65,16 @@ func (e *execution) apply(event kit.AgentEvent) {
 	e.stream.apply(event)
 }
 
-func (e *execution) startCheckpoint() {
-	e.status = executionCheckpointing
+func (e *execution) startCompaction() {
+	e.status = executionCompacting
 }
 
-func (e *execution) appendCheckpoint(generated checkpoint.Checkpoint) {
-	if e.status == executionCheckpointing {
+func (e *execution) appendCompaction(generated compaction.Compaction) {
+	if e.status == executionCompacting {
 		e.status = executionRunning
 	}
 
-	e.items = append(e.items, item{checkpoint: &generated})
+	e.items = append(e.items, item{compaction: &generated})
 }
 
 func (e *execution) finish() {
@@ -144,8 +144,8 @@ func (e *execution) render(width int) string {
 		}
 	}
 
-	if e.status == executionCheckpointing {
-		sections = append(sections, renderPendingCheckpoint(width))
+	if e.status == executionCompacting {
+		sections = append(sections, renderPendingCompaction(width))
 	}
 
 	rendered := strings.Join(sections, sectionSeparator)

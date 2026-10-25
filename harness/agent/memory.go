@@ -8,7 +8,7 @@ import (
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
-	"github.com/vitaliipsl/crappy/harness/checkpoint"
+	"github.com/vitaliipsl/crappy/harness/compaction"
 	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/event"
 )
@@ -34,7 +34,7 @@ func NewMemory(sessionID, executionID string, entries entry.Store, events event.
 }
 
 func (m *Memory) Context(ctx context.Context) ([]kit.Message, error) {
-	latest, found, err := m.entries.Latest(ctx, m.sessionID, checkpoint.EntryType)
+	latest, found, err := m.entries.Latest(ctx, m.sessionID, compaction.EntryType)
 	if err != nil {
 		return nil, err
 	}
@@ -93,8 +93,8 @@ func projectMessages(entries []entry.Entry) ([]kit.Message, error) {
 				return nil, err
 			}
 			messages = append(messages, message)
-		case checkpoint.EntryType:
-			var compacted checkpoint.Checkpoint
+		case compaction.EntryType:
+			var compacted compaction.Compaction
 			if err := json.Unmarshal(value.Payload, &compacted); err != nil {
 				return nil, fmt.Errorf("decode compaction entry %d: %w", value.ID, err)
 			}

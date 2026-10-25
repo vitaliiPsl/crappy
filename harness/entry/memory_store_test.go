@@ -63,7 +63,7 @@ func TestMemoryStoreKeepsSessionsSeparate(t *testing.T) {
 
 	store := NewMemoryStore()
 
-	entry := Entry{Type: "checkpoint", Payload: json.RawMessage(`{}`)}
+	entry := Entry{Type: "compaction", Payload: json.RawMessage(`{}`)}
 	if _, err := store.Append(context.Background(), "session-1", entry); err != nil {
 		t.Fatalf("Append(session-1) error = %v", err)
 	}

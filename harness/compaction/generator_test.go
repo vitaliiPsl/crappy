@@ -1,4 +1,4 @@
-package checkpoint
+package compaction
 
 import (
 	"context"
@@ -14,8 +14,8 @@ import (
 func TestGeneratorGenerate(t *testing.T) {
 	t.Parallel()
 
-	model := &checkpointModel{results: []modelResult{{
-		response: checkpointResponse("current state", kit.Usage{
+	model := &compactionModel{results: []modelResult{{
+		response: compactionResponse("current state", kit.Usage{
 			InputTokens:  10,
 			OutputTokens: 2,
 		}),
@@ -29,7 +29,7 @@ func TestGeneratorGenerate(t *testing.T) {
 		t.Fatalf("NewGenerator() error = %v", err)
 	}
 
-	checkpoint, err := generator.Generate(context.Background(), nil, []kit.Message{
+	compaction, err := generator.Generate(context.Background(), nil, []kit.Message{
 		kit.NewUserMessage(
 			kit.NewTextContent("build a harness"),
 		),
@@ -42,11 +42,11 @@ func TestGeneratorGenerate(t *testing.T) {
 		t.Fatalf("Generate() error = %v", err)
 	}
 
-	if got, want := checkpoint.Objective, "current state"; got != want {
+	if got, want := compaction.Objective, "current state"; got != want {
 		t.Fatalf("Objective = %q, want %q", got, want)
 	}
 
-	if got, want := checkpoint.Usage, (kit.Usage{InputTokens: 10, OutputTokens: 2}); !reflect.DeepEqual(got, want) {
+	if got, want := compaction.Usage, (kit.Usage{InputTokens: 10, OutputTokens: 2}); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Usage = %#v, want %#v", got, want)
 	}
 
@@ -59,8 +59,8 @@ func TestGeneratorGenerate(t *testing.T) {
 		t.Fatalf("MaxOutputTokens = %v, want 512", request.Config.MaxOutputTokens)
 	}
 
-	if request.OutputSchema == nil || request.OutputSchema.Name != "checkpoint" {
-		t.Fatalf("OutputSchema = %#v, want checkpoint schema", request.OutputSchema)
+	if request.OutputSchema == nil || request.OutputSchema.Name != "compaction" {
+		t.Fatalf("OutputSchema = %#v, want compaction schema", request.OutputSchema)
 	}
 
 	input := request.Messages[0].TextContent().Text
@@ -77,10 +77,10 @@ func TestGeneratorGenerate(t *testing.T) {
 func TestGeneratorChunksAtModelTurnBoundaries(t *testing.T) {
 	t.Parallel()
 
-	model := &checkpointModel{results: []modelResult{
+	model := &compactionModel{results: []modelResult{
 		{err: kit.ErrContextLength},
-		{response: checkpointResponse("first checkpoint", kit.Usage{InputTokens: 10, OutputTokens: 2})},
-		{response: checkpointResponse("final checkpoint", kit.Usage{InputTokens: 8, OutputTokens: 2})},
+		{response: compactionResponse("first compaction", kit.Usage{InputTokens: 10, OutputTokens: 2})},
+		{response: compactionResponse("final compaction", kit.Usage{InputTokens: 8, OutputTokens: 2})},
 	}}
 	call := kit.NewToolCall("call-1", "search", map[string]any{"query": "session"})
 	result := kit.NewToolResult(call, kit.NewToolOutput(kit.NewTextContent("found")), nil)
@@ -109,16 +109,16 @@ func TestGeneratorChunksAtModelTurnBoundaries(t *testing.T) {
 		t.Fatalf("NewGenerator() error = %v", err)
 	}
 
-	checkpoint, err := generator.Generate(context.Background(), nil, messages)
+	compaction, err := generator.Generate(context.Background(), nil, messages)
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
 
-	if got, want := checkpoint.Objective, "final checkpoint"; got != want {
+	if got, want := compaction.Objective, "final compaction"; got != want {
 		t.Fatalf("Objective = %q, want %q", got, want)
 	}
 
-	if got, want := checkpoint.Usage, (kit.Usage{InputTokens: 18, OutputTokens: 4}); !reflect.DeepEqual(got, want) {
+	if got, want := compaction.Usage, (kit.Usage{InputTokens: 18, OutputTokens: 4}); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Usage = %#v, want %#v", got, want)
 	}
 
@@ -140,7 +140,7 @@ func TestGeneratorChunksAtModelTurnBoundaries(t *testing.T) {
 	}
 
 	secondChunk := model.requests[2].Messages[0].TextContent().Text
-	if !strings.Contains(secondChunk, `"objective": "first checkpoint"`) ||
+	if !strings.Contains(secondChunk, `"objective": "first compaction"`) ||
 		!strings.Contains(secondChunk, "response four") {
 		t.Fatalf("second chunk input:\n%s", secondChunk)
 	}
@@ -149,7 +149,7 @@ func TestGeneratorChunksAtModelTurnBoundaries(t *testing.T) {
 func TestGeneratorReturnsContextOverflowForSingleTurn(t *testing.T) {
 	t.Parallel()
 
-	model := &checkpointModel{results: []modelResult{{err: kit.ErrContextLength}}}
+	model := &compactionModel{results: []modelResult{{err: kit.ErrContextLength}}}
 
 	generator, err := NewGenerator(Config{RetainedTokens: &retainNothing}, staticModelResolver{model})
 	if err != nil {
@@ -168,13 +168,13 @@ func TestGeneratorReturnsContextOverflowForSingleTurn(t *testing.T) {
 func TestGeneratorShrinksRejectedChunks(t *testing.T) {
 	t.Parallel()
 
-	model := &checkpointModel{results: []modelResult{
+	model := &compactionModel{results: []modelResult{
 		{err: kit.ErrContextLength},
 		{err: kit.ErrContextLength},
-		{response: checkpointResponse("one", kit.Usage{InputTokens: 1})},
-		{response: checkpointResponse("two", kit.Usage{InputTokens: 1})},
-		{response: checkpointResponse("three", kit.Usage{InputTokens: 1})},
-		{response: checkpointResponse("four", kit.Usage{InputTokens: 1})},
+		{response: compactionResponse("one", kit.Usage{InputTokens: 1})},
+		{response: compactionResponse("two", kit.Usage{InputTokens: 1})},
+		{response: compactionResponse("three", kit.Usage{InputTokens: 1})},
+		{response: compactionResponse("four", kit.Usage{InputTokens: 1})},
 	}}
 
 	generator, err := NewGenerator(Config{RetainedTokens: &retainNothing}, staticModelResolver{model})
@@ -191,7 +191,7 @@ func TestGeneratorShrinksRejectedChunks(t *testing.T) {
 		)
 	}
 
-	checkpoint, err := generator.Generate(context.Background(), nil, messages)
+	compaction, err := generator.Generate(context.Background(), nil, messages)
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -200,11 +200,11 @@ func TestGeneratorShrinksRejectedChunks(t *testing.T) {
 		t.Fatalf("model calls = %d, want %d", got, want)
 	}
 
-	if got, want := checkpoint.Objective, "four"; got != want {
+	if got, want := compaction.Objective, "four"; got != want {
 		t.Fatalf("Objective = %q, want %q", got, want)
 	}
 
-	if got, want := checkpoint.Usage.InputTokens, int64(4); got != want {
+	if got, want := compaction.Usage.InputTokens, int64(4); got != want {
 		t.Fatalf("Usage.InputTokens = %d, want %d", got, want)
 	}
 
@@ -216,11 +216,11 @@ func TestGeneratorShrinksRejectedChunks(t *testing.T) {
 	}
 }
 
-func TestGeneratorUpdatesPreviousCheckpoint(t *testing.T) {
+func TestGeneratorUpdatesPreviousCompaction(t *testing.T) {
 	t.Parallel()
 
-	model := &checkpointModel{results: []modelResult{{
-		response: checkpointResponse("updated", kit.Usage{}),
+	model := &compactionModel{results: []modelResult{{
+		response: compactionResponse("updated", kit.Usage{}),
 	}}}
 
 	generator, err := NewGenerator(Config{RetainedTokens: &retainNothing}, staticModelResolver{model})
@@ -230,7 +230,7 @@ func TestGeneratorUpdatesPreviousCheckpoint(t *testing.T) {
 
 	if _, err := generator.Generate(
 		context.Background(),
-		&Checkpoint{Summary: Summary{Objective: "previous"}},
+		&Compaction{Summary: Summary{Objective: "previous"}},
 		[]kit.Message{kit.NewUserMessage(kit.NewTextContent("new work"))},
 	); err != nil {
 		t.Fatalf("Generate() error = %v", err)
@@ -276,7 +276,7 @@ func TestGeneratorKeepFrom(t *testing.T) {
 
 			generator, err := NewGenerator(
 				Config{RetainedTokens: &test.retained},
-				staticModelResolver{&checkpointModel{}},
+				staticModelResolver{&compactionModel{}},
 			)
 			if err != nil {
 				t.Fatalf("NewGenerator() error = %v", err)
@@ -292,12 +292,12 @@ func TestGeneratorKeepFrom(t *testing.T) {
 func TestGeneratorDecodesSummary(t *testing.T) {
 	t.Parallel()
 
-	model := &checkpointModel{results: []modelResult{{
+	model := &compactionModel{results: []modelResult{{
 		response: textResponse(`{
 			"objective": "ship compaction",
 			"progress": ["done: retained tail"],
-			"context": ["harness/checkpoint/generator.go"],
-			"next": ["evaluate checkpoints"]
+			"context": ["harness/compaction/generator.go"],
+			"next": ["evaluate compactions"]
 		}`, kit.Usage{}),
 	}}}
 
@@ -306,7 +306,7 @@ func TestGeneratorDecodesSummary(t *testing.T) {
 		t.Fatalf("NewGenerator() error = %v", err)
 	}
 
-	checkpoint, err := generator.Generate(context.Background(), nil, []kit.Message{
+	compaction, err := generator.Generate(context.Background(), nil, []kit.Message{
 		kit.NewUserMessage(kit.NewTextContent("work")),
 	})
 	if err != nil {
@@ -316,11 +316,11 @@ func TestGeneratorDecodesSummary(t *testing.T) {
 	want := Summary{
 		Objective: "ship compaction",
 		Progress:  []string{"done: retained tail"},
-		Context:   []string{"harness/checkpoint/generator.go"},
-		Next:      []string{"evaluate checkpoints"},
+		Context:   []string{"harness/compaction/generator.go"},
+		Next:      []string{"evaluate compactions"},
 	}
-	if !reflect.DeepEqual(checkpoint.Summary, want) {
-		t.Fatalf("Summary = %#v, want %#v", checkpoint.Summary, want)
+	if !reflect.DeepEqual(compaction.Summary, want) {
+		t.Fatalf("Summary = %#v, want %#v", compaction.Summary, want)
 	}
 }
 
@@ -336,7 +336,7 @@ func TestGeneratorRejectsInvalidSummary(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			model := &checkpointModel{results: []modelResult{{response: textResponse(text, kit.Usage{})}}}
+			model := &compactionModel{results: []modelResult{{response: textResponse(text, kit.Usage{})}}}
 
 			generator, err := NewGenerator(Config{}, staticModelResolver{model})
 			if err != nil {
@@ -355,8 +355,8 @@ func TestGeneratorRejectsInvalidSummary(t *testing.T) {
 func TestGeneratorRetainsRecentMessages(t *testing.T) {
 	t.Parallel()
 
-	model := &checkpointModel{results: []modelResult{{
-		response: checkpointResponse("summary", kit.Usage{}),
+	model := &compactionModel{results: []modelResult{{
+		response: compactionResponse("summary", kit.Usage{}),
 	}}}
 	retained := 1 << 20
 
@@ -365,7 +365,7 @@ func TestGeneratorRetainsRecentMessages(t *testing.T) {
 		t.Fatalf("NewGenerator() error = %v", err)
 	}
 
-	checkpoint, err := generator.Generate(context.Background(), nil, []kit.Message{
+	compaction, err := generator.Generate(context.Background(), nil, []kit.Message{
 		kit.NewUserMessage(kit.NewTextContent("summarized")),
 		kit.NewModelMessage(kit.NewTextContent("retained")),
 	})
@@ -374,12 +374,12 @@ func TestGeneratorRetainsRecentMessages(t *testing.T) {
 	}
 
 	want := []kit.Message{kit.NewModelMessage(kit.NewTextContent("retained"))}
-	if !reflect.DeepEqual(checkpoint.Retained, want) {
-		t.Fatalf("Retained = %#v, want %#v", checkpoint.Retained, want)
+	if !reflect.DeepEqual(compaction.Retained, want) {
+		t.Fatalf("Retained = %#v, want %#v", compaction.Retained, want)
 	}
 
-	if checkpoint.TokensBefore <= 0 || checkpoint.TokensAfter <= 0 {
-		t.Fatalf("tokens = %d → %d, want positive estimates", checkpoint.TokensBefore, checkpoint.TokensAfter)
+	if compaction.TokensBefore <= 0 || compaction.TokensAfter <= 0 {
+		t.Fatalf("tokens = %d → %d, want positive estimates", compaction.TokensBefore, compaction.TokensAfter)
 	}
 
 	input := model.requests[0].Messages[0].TextContent().Text
@@ -391,7 +391,7 @@ func TestGeneratorRetainsRecentMessages(t *testing.T) {
 func TestGeneratorRejectsEmptyMessages(t *testing.T) {
 	t.Parallel()
 
-	generator, err := NewGenerator(Config{}, staticModelResolver{&checkpointModel{}})
+	generator, err := NewGenerator(Config{}, staticModelResolver{&compactionModel{}})
 	if err != nil {
 		t.Fatalf("NewGenerator() error = %v", err)
 	}
@@ -408,16 +408,16 @@ type modelResult struct {
 	err      error
 }
 
-type checkpointModel struct {
+type compactionModel struct {
 	results  []modelResult
 	requests []kit.ModelRequest
 }
 
-func (m *checkpointModel) Config() kit.ModelConfig {
-	return kit.ModelConfig{ID: "checkpoint"}
+func (m *compactionModel) Config() kit.ModelConfig {
+	return kit.ModelConfig{ID: "compaction"}
 }
 
-func (m *checkpointModel) Generate(
+func (m *compactionModel) Generate(
 	_ context.Context,
 	request kit.ModelRequest,
 ) (kit.ModelResponse, error) {
@@ -432,7 +432,7 @@ func (m *checkpointModel) Generate(
 	return result.response, result.err
 }
 
-func (m *checkpointModel) Stream(
+func (m *compactionModel) Stream(
 	ctx context.Context,
 	request kit.ModelRequest,
 ) *kit.Stream[kit.ModelEvent, kit.ModelResponse] {
@@ -455,7 +455,7 @@ func (fn modelResolverFunc) Resolve(ctx context.Context) (kit.Model, error) {
 	return fn(ctx)
 }
 
-func checkpointResponse(objective string, usage kit.Usage) kit.ModelResponse {
+func compactionResponse(objective string, usage kit.Usage) kit.ModelResponse {
 	summary, _ := json.Marshal(Summary{Objective: objective})
 
 	return textResponse(string(summary), usage)
@@ -472,7 +472,7 @@ func textResponse(text string, usage kit.Usage) kit.ModelResponse {
 func TestGeneratorPreservesUsageOnInvalidOutput(t *testing.T) {
 	t.Parallel()
 	usage := kit.Usage{InputTokens: 10, OutputTokens: 3}
-	model := &checkpointModel{results: []modelResult{{response: textResponse("invalid json", usage)}}}
+	model := &compactionModel{results: []modelResult{{response: textResponse("invalid json", usage)}}}
 	generator, err := NewGenerator(Config{}, staticModelResolver{model})
 	if err != nil {
 		t.Fatal(err)
@@ -488,9 +488,9 @@ func TestGeneratorPreservesUsageOnInvalidOutput(t *testing.T) {
 
 func TestGeneratorPreservesUsageWhenLaterChunkFails(t *testing.T) {
 	t.Parallel()
-	model := &checkpointModel{results: []modelResult{
+	model := &compactionModel{results: []modelResult{
 		{err: kit.ErrContextLength},
-		{response: checkpointResponse("partial", kit.Usage{InputTokens: 10, OutputTokens: 2})},
+		{response: compactionResponse("partial", kit.Usage{InputTokens: 10, OutputTokens: 2})},
 		{response: textResponse("invalid", kit.Usage{InputTokens: 5, OutputTokens: 1})},
 	}}
 	generator, err := NewGenerator(Config{RetainedTokens: &retainNothing}, staticModelResolver{model})

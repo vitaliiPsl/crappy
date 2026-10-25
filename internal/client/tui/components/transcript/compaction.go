@@ -6,29 +6,29 @@ import (
 
 	"charm.land/lipgloss/v2"
 
-	"github.com/vitaliipsl/crappy/harness/checkpoint"
+	"github.com/vitaliipsl/crappy/harness/compaction"
 )
 
 const (
-	checkpointPendingLabel = "Compacting context…"
-	checkpointLabel        = "Context compacted"
-	checkpointRule         = "─"
+	compactionPendingLabel = "Compacting context…"
+	compactionLabel        = "Context compacted"
+	compactionRule         = "─"
 )
 
-func renderPendingCheckpoint(width int) string {
-	return renderDivider(checkpointPendingLabel, checkpointPendingStyle, width)
+func renderPendingCompaction(width int) string {
+	return renderDivider(compactionPendingLabel, compactionPendingStyle, width)
 }
 
-func renderCheckpoint(generated checkpoint.Checkpoint, width int) string {
+func renderCompaction(generated compaction.Compaction, width int) string {
 	label := fmt.Sprintf(
 		"%s · %s → %s tokens · %s",
-		checkpointLabel,
+		compactionLabel,
 		tokensLabel(generated.TokensBefore),
 		tokensLabel(generated.TokensAfter),
 		retainedLabel(len(generated.Retained)),
 	)
 
-	return renderDivider(label, checkpointStyle, width)
+	return renderDivider(label, compactionStyle, width)
 }
 
 func renderDivider(label string, style lipgloss.Style, width int) string {
@@ -38,7 +38,7 @@ func renderDivider(label string, style lipgloss.Style, width int) string {
 	fill := max(width-lipgloss.Width(label), 0)
 	left := fill / 2
 
-	divider := strings.Repeat(checkpointRule, left) + label + strings.Repeat(checkpointRule, fill-left)
+	divider := strings.Repeat(compactionRule, left) + label + strings.Repeat(compactionRule, fill-left)
 
 	return assistantStyle.Render(style.Render(divider))
 }

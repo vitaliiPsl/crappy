@@ -9,7 +9,7 @@ import (
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
-	"github.com/vitaliipsl/crappy/harness/checkpoint"
+	"github.com/vitaliipsl/crappy/harness/compaction"
 	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/internal/storage/jsonl"
@@ -45,8 +45,8 @@ func TestProjectHistory(t *testing.T) {
 	t.Parallel()
 	first := kit.NewUserMessage(kit.NewTextContent("first"))
 	retained := kit.NewModelMessage(kit.NewTextContent("retained"))
-	summary := checkpoint.Checkpoint{Summary: checkpoint.Summary{Objective: "summary"}}.Message()
-	newSummary := checkpoint.Checkpoint{Summary: checkpoint.Summary{Objective: "new summary"}}.Message()
+	summary := compaction.Compaction{Summary: compaction.Summary{Objective: "summary"}}.Message()
+	newSummary := compaction.Compaction{Summary: compaction.Summary{Objective: "new summary"}}.Message()
 	later := kit.NewUserMessage(kit.NewTextContent("later"))
 	tests := []struct {
 		name    string
@@ -119,7 +119,7 @@ func TestContextMatchesReplayAndPreservesTranscript(t *testing.T) {
 func TestProjectionRejectsMalformedRecords(t *testing.T) {
 	t.Parallel()
 	for _, payload := range []string{`{}`, `{"objective":" "}`, `{"objective":"summary","retained":{}}`, `bad json`} {
-		_, err := projectMessages([]entry.Entry{{ID: 42, Type: checkpoint.EntryType, Payload: json.RawMessage(payload)}})
+		_, err := projectMessages([]entry.Entry{{ID: 42, Type: compaction.EntryType, Payload: json.RawMessage(payload)}})
 		if err == nil || !strings.Contains(err.Error(), "42") {
 			t.Fatalf("payload %s: error = %v", payload, err)
 		}
@@ -150,7 +150,7 @@ func TestMemoryReconstructsCompactedContextAfterReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []kit.Message{checkpoint.Checkpoint{Summary: checkpoint.Summary{Objective: "summary"}}.Message(), retained, later}
+	want := []kit.Message{compaction.Compaction{Summary: compaction.Summary{Objective: "summary"}}.Message(), retained, later}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("reopened context = %#v, want %#v", got, want)
 	}
@@ -170,8 +170,8 @@ func messageEntry(t *testing.T, message kit.Message) entry.Entry {
 
 func compactionEntry(t *testing.T, objective string, retained ...kit.Message) entry.Entry {
 	t.Helper()
-	return encodedEntry(t, checkpoint.EntryType, checkpoint.Checkpoint{
-		Summary: checkpoint.Summary{Objective: objective}, Retained: retained,
+	return encodedEntry(t, compaction.EntryType, compaction.Compaction{
+		Summary: compaction.Summary{Objective: objective}, Retained: retained,
 	})
 }
 

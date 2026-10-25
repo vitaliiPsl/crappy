@@ -1,4 +1,4 @@
-package checkpoint
+package compaction
 
 import (
 	"cmp"
@@ -13,7 +13,7 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/x/output"
 )
 
-var ErrContextOverflow = errors.New("the smallest checkpoint chunk exceeds the model context")
+var ErrContextOverflow = errors.New("the smallest compaction chunk exceeds the model context")
 
 //go:embed prompt.md
 var DefaultPrompt string
@@ -63,7 +63,7 @@ type Generator struct {
 }
 
 func NewGenerator(config Config, models ModelResolver, options ...GeneratorOption) (*Generator, error) {
-	schema, err := output.For[Summary]("checkpoint", "Checkpoint of the work so far.")
+	schema, err := output.For[Summary]("compaction", "Summary of the work so far.")
 	if err != nil {
 		return nil, err
 	}
@@ -84,31 +84,31 @@ func NewGenerator(config Config, models ModelResolver, options ...GeneratorOptio
 
 func (g *Generator) Generate(
 	ctx context.Context,
-	previous *Checkpoint,
+	previous *Compaction,
 	messages []kit.Message,
-) (*Checkpoint, error) {
+) (*Compaction, error) {
 	if previous == nil && len(messages) == 0 {
-		return nil, errors.New("no messages to checkpoint")
+		return nil, errors.New("no messages to compact")
 	}
 
 	keepFrom := g.keepFrom(messages)
 
-	checkpoint, err := g.summarize(ctx, previous, messages[:keepFrom])
+	compaction, err := g.summarize(ctx, previous, messages[:keepFrom])
 	if err != nil {
-		return checkpoint, err
+		return compaction, err
 	}
 
-	checkpoint.Retained = messages[keepFrom:]
-	checkpoint.TokensBefore = g.estimateContext(previous, messages)
-	checkpoint.TokensAfter = g.estimateContext(checkpoint, messages[keepFrom:])
+	compaction.Retained = messages[keepFrom:]
+	compaction.TokensBefore = g.estimateContext(previous, messages)
+	compaction.TokensAfter = g.estimateContext(compaction, messages[keepFrom:])
 
-	return checkpoint, nil
+	return compaction, nil
 }
 
-func (g *Generator) estimateContext(checkpoint *Checkpoint, messages []kit.Message) int {
+func (g *Generator) estimateContext(compaction *Compaction, messages []kit.Message) int {
 	tokens := 0
-	if checkpoint != nil {
-		tokens += g.estimator.EstimateMessage(checkpoint.Message())
+	if compaction != nil {
+		tokens += g.estimator.EstimateMessage(compaction.Message())
 	}
 
 	for _, message := range messages {
@@ -138,25 +138,25 @@ func (g *Generator) keepFrom(messages []kit.Message) int {
 
 func (g *Generator) summarize(
 	ctx context.Context,
-	previous *Checkpoint,
+	previous *Compaction,
 	messages []kit.Message,
-) (*Checkpoint, error) {
+) (*Compaction, error) {
 	resolved, err := g.models.Resolve(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("resolve model: %w", err)
 	}
 
-	checkpoint, err := g.generate(ctx, resolved, previous, messages)
+	compaction, err := g.generate(ctx, resolved, previous, messages)
 	if !errors.Is(err, kit.ErrContextLength) {
-		return checkpoint, err
+		return compaction, err
 	}
 
 	chunks, chunkErr := g.generateChunks(ctx, resolved, previous, messages)
-	if checkpoint != nil {
+	if compaction != nil {
 		if chunks == nil {
-			chunks = &Checkpoint{}
+			chunks = &Compaction{}
 		}
-		chunks.Usage.Add(checkpoint.Usage)
+		chunks.Usage.Add(compaction.Usage)
 	}
 	return chunks, chunkErr
 }
@@ -164,9 +164,9 @@ func (g *Generator) summarize(
 func (g *Generator) generate(
 	ctx context.Context,
 	model kit.Model,
-	previous *Checkpoint,
+	previous *Compaction,
 	messages []kit.Message,
-) (*Checkpoint, error) {
+) (*Compaction, error) {
 	input, err := g.generatorInput(previous, messages)
 	if err != nil {
 		return nil, err
@@ -183,7 +183,7 @@ func (g *Generator) generate(
 		OutputSchema: &g.schema,
 	})
 	if err != nil {
-		return &Checkpoint{Usage: response.Usage}, fmt.Errorf("generate checkpoint: %w", err)
+		return &Compaction{Usage: response.Usage}, fmt.Errorf("generate compaction: %w", err)
 	}
 
 	return g.generatorOutput(response)
@@ -192,9 +192,9 @@ func (g *Generator) generate(
 func (g *Generator) generateChunks(
 	ctx context.Context,
 	model kit.Model,
-	checkpoint *Checkpoint,
+	compaction *Compaction,
 	messages []kit.Message,
-) (*Checkpoint, error) {
+) (*Compaction, error) {
 	chunkTurns := countTurns(messages) / 2
 	if chunkTurns == 0 {
 		return nil, ErrContextOverflow
@@ -205,43 +205,43 @@ func (g *Generator) generateChunks(
 	for len(messages) > 0 {
 		chunk, remaining := firstTurns(messages, chunkTurns)
 
-		generated, err := g.generate(ctx, model, checkpoint, chunk)
+		generated, err := g.generate(ctx, model, compaction, chunk)
 		if generated != nil {
 			usage.Add(generated.Usage)
 		}
 		if err == nil {
 			generated.Usage = usage
-			checkpoint = generated
+			compaction = generated
 			messages = remaining
 
 			continue
 		}
 
 		if !errors.Is(err, kit.ErrContextLength) {
-			return &Checkpoint{Usage: usage}, err
+			return &Compaction{Usage: usage}, err
 		}
 
 		chunkTurns = countTurns(chunk) / 2
 		if chunkTurns == 0 {
-			return &Checkpoint{Usage: usage}, ErrContextOverflow
+			return &Compaction{Usage: usage}, ErrContextOverflow
 		}
 	}
 
-	return checkpoint, nil
+	return compaction, nil
 }
 
-func (g *Generator) generatorInput(previous *Checkpoint, messages []kit.Message) (string, error) {
+func (g *Generator) generatorInput(previous *Compaction, messages []kit.Message) (string, error) {
 	var input strings.Builder
 
 	if previous != nil {
 		summary, err := json.MarshalIndent(previous.Summary, "", "  ")
 		if err != nil {
-			return "", fmt.Errorf("encode previous checkpoint: %w", err)
+			return "", fmt.Errorf("encode previous compaction: %w", err)
 		}
 
-		input.WriteString("<previous_checkpoint>\n")
+		input.WriteString("<previous_compaction>\n")
 		input.Write(summary)
-		input.WriteString("\n</previous_checkpoint>\n\n")
+		input.WriteString("\n</previous_compaction>\n\n")
 	}
 
 	input.WriteString("<context>\n")
@@ -251,29 +251,29 @@ func (g *Generator) generatorInput(previous *Checkpoint, messages []kit.Message)
 	return input.String(), nil
 }
 
-func (g *Generator) generatorOutput(response kit.ModelResponse) (*Checkpoint, error) {
-	result := &Checkpoint{Usage: response.Usage}
+func (g *Generator) generatorOutput(response kit.ModelResponse) (*Compaction, error) {
+	result := &Compaction{Usage: response.Usage}
 	switch response.FinishReason {
 	case kit.FinishReasonToolCall:
-		return result, errors.New("checkpoint model returned an unexpected tool call")
+		return result, errors.New("compaction model returned an unexpected tool call")
 	case kit.FinishReasonSafety:
-		return result, errors.New("checkpoint model response was blocked by a safety filter")
+		return result, errors.New("compaction model response was blocked by a safety filter")
 	case kit.FinishReasonMaxTokens:
-		return result, errors.New("checkpoint model returned a truncated response")
+		return result, errors.New("compaction model returned a truncated response")
 	}
 
 	text := response.Message.TextContent()
 	if text == nil || strings.TrimSpace(text.Text) == "" {
-		return result, errors.New("checkpoint model returned an empty response")
+		return result, errors.New("compaction model returned an empty response")
 	}
 
 	var summary Summary
 	if err := json.Unmarshal([]byte(text.Text), &summary); err != nil {
-		return result, fmt.Errorf("decode checkpoint: %w", err)
+		return result, fmt.Errorf("decode compaction: %w", err)
 	}
 
 	if strings.TrimSpace(summary.Objective) == "" {
-		return result, errors.New("checkpoint model returned no objective")
+		return result, errors.New("compaction model returned no objective")
 	}
 
 	result.Summary = summary

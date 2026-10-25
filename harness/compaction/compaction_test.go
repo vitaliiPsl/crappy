@@ -1,4 +1,4 @@
-package checkpoint
+package compaction
 
 import (
 	"encoding/json"
@@ -8,18 +8,18 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kit"
 )
 
-func TestCheckpointMessageRendersSections(t *testing.T) {
+func TestCompactionMessageRendersSections(t *testing.T) {
 	t.Parallel()
 
-	message := Checkpoint{Summary: Summary{
+	message := Compaction{Summary: Summary{
 		Objective: "ship compaction",
 		Progress:  []string{"done: retained tail"},
-		Next:      []string{"evaluate checkpoints"},
+		Next:      []string{"evaluate compactions"},
 	}}.Message()
 
 	want := messagePreamble + `
 
-<checkpoint>
+<compaction>
 ## Objective
 ship compaction
 
@@ -27,21 +27,21 @@ ship compaction
 - done: retained tail
 
 ## Next
-- evaluate checkpoints
-</checkpoint>`
+- evaluate compactions
+</compaction>`
 
 	if got := message.TextContent().Text; got != want {
 		t.Fatalf("Message() = %q, want %q", got, want)
 	}
 }
 
-func TestCheckpointPersistsSummaryAndRetainedMessages(t *testing.T) {
+func TestCompactionPersistsSummaryAndRetainedMessages(t *testing.T) {
 	t.Parallel()
-	checkpoint := Checkpoint{
+	compaction := Compaction{
 		Summary:  Summary{Objective: "ship compaction", Progress: []string{"done: research"}},
 		Retained: []kit.Message{kit.NewUserMessage(kit.NewTextContent("continue"))},
 	}
-	payload, err := json.Marshal(checkpoint)
+	payload, err := json.Marshal(compaction)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,13 +50,13 @@ func TestCheckpointPersistsSummaryAndRetainedMessages(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, found := fields["messages"]; found {
-		t.Fatal("checkpoint persisted a second copy of the model context")
+		t.Fatal("compaction persisted a second copy of the model context")
 	}
-	var restored Checkpoint
+	var restored Compaction
 	if err := json.Unmarshal(payload, &restored); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(restored, checkpoint) {
-		t.Fatalf("checkpoint changed after persistence: %+v", restored)
+	if !reflect.DeepEqual(restored, compaction) {
+		t.Fatalf("compaction changed after persistence: %+v", restored)
 	}
 }

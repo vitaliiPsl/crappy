@@ -11,8 +11,8 @@ import (
 
 	"github.com/vitaliipsl/crappy/harness"
 	"github.com/vitaliipsl/crappy/harness/agent"
-	"github.com/vitaliipsl/crappy/harness/checkpoint"
-	"github.com/vitaliipsl/crappy/harness/checkpoint/automatic"
+	"github.com/vitaliipsl/crappy/harness/compaction"
+	"github.com/vitaliipsl/crappy/harness/compaction/automatic"
 	"github.com/vitaliipsl/crappy/harness/session"
 	"github.com/vitaliipsl/crappy/internal/client/tui"
 	"github.com/vitaliipsl/crappy/internal/config"
@@ -81,9 +81,9 @@ func newHarness(ctx context.Context) (*harness.Harness, session.Store, error) {
 		model.Retry(settings.Retry),
 	)
 
-	generator, err := checkpoint.NewGenerator(config.CheckpointConfig(), modelResolver)
+	generator, err := compaction.NewGenerator(config.CompactionConfig(), modelResolver)
 	if err != nil {
-		return nil, nil, fmt.Errorf("create checkpoint generator: %w", err)
+		return nil, nil, fmt.Errorf("create compaction generator: %w", err)
 	}
 
 	storage, err := jsonl.Open(ctx, settings.SessionsPath)
@@ -100,7 +100,7 @@ func newHarness(ctx context.Context) (*harness.Harness, session.Store, error) {
 			agent.WithToolMiddleware(tools.Timeout(settings.Tools)),
 			agent.WithContributors(automatic.New(generator,
 				automatic.WithTrigger(
-					automatic.WhenInputExceedsTokens(config.Checkpoint.ThresholdTokens),
+					automatic.WhenInputExceedsTokens(config.Compaction.ThresholdTokens),
 				),
 			)),
 		),

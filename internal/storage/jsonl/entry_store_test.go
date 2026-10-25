@@ -90,7 +90,7 @@ func TestEntryStorePersistsEntries(t *testing.T) {
 	}
 
 	appended, err = store.Append(context.Background(), "session-1", entry.Entry{
-		Type:    "checkpoint",
+		Type:    "compaction",
 		Payload: json.RawMessage(`{}`),
 	})
 	if err != nil {
@@ -304,7 +304,7 @@ func TestEntryStoreLatestAndListAfterAcrossReopen(t *testing.T) {
 
 	if _, err := store.Append(context.Background(), "session-1",
 		entry.Entry{Type: "message", Payload: json.RawMessage(`1`)},
-		entry.Entry{Type: "checkpoint", Payload: json.RawMessage(`2`)},
+		entry.Entry{Type: "compaction", Payload: json.RawMessage(`2`)},
 		entry.Entry{Type: "message", Payload: json.RawMessage(`3`)},
 	); err != nil {
 		t.Fatalf("Append() error = %v", err)
@@ -320,7 +320,7 @@ func TestEntryStoreLatestAndListAfterAcrossReopen(t *testing.T) {
 		"same store": store,
 		"reopened":   openStorage(t, root).EntryStore(),
 	} {
-		latest, found, err := current.Latest(context.Background(), "session-1", "checkpoint")
+		latest, found, err := current.Latest(context.Background(), "session-1", "compaction")
 		if err != nil || !found || latest.ID != 2 {
 			t.Fatalf("%s: Latest() = %#v, %v, %v, want entry 2", name, latest, found, err)
 		}

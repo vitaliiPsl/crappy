@@ -10,7 +10,7 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
 	"github.com/vitaliipsl/crappy/harness/agent"
-	"github.com/vitaliipsl/crappy/harness/checkpoint"
+	"github.com/vitaliipsl/crappy/harness/compaction"
 	"github.com/vitaliipsl/crappy/harness/entry"
 )
 
@@ -22,25 +22,25 @@ func WithTrigger(trigger Trigger) ContributorOption {
 	}
 }
 
-func WithEstimator(estimator checkpoint.Estimator) ContributorOption {
+func WithEstimator(estimator compaction.Estimator) ContributorOption {
 	return func(contributor *Contributor) {
 		contributor.estimator = estimator
 	}
 }
 
 type Contributor struct {
-	generator *checkpoint.Generator
+	generator *compaction.Generator
 	trigger   Trigger
-	estimator checkpoint.Estimator
+	estimator compaction.Estimator
 }
 
 var _ agent.Contributor = (*Contributor)(nil)
 
-func New(generator *checkpoint.Generator, options ...ContributorOption) *Contributor {
+func New(generator *compaction.Generator, options ...ContributorOption) *Contributor {
 	contributor := &Contributor{
 		generator: generator,
 		trigger:   WhenInputExceedsRatio(DefaultThresholdRatio),
-		estimator: &checkpoint.CharacterEstimator{},
+		estimator: &compaction.CharacterEstimator{},
 	}
 
 	for _, option := range options {
@@ -108,12 +108,12 @@ func (c *Contributor) compact(
 	run *kit.RunContext,
 	build agent.BuildRequest,
 ) error {
-	previous, messages, err := loadCheckpointContext(run.Context, build.SessionID, build.Entries)
+	previous, messages, err := loadCompactionContext(run.Context, build.SessionID, build.Entries)
 	if err != nil {
-		return fmt.Errorf("read checkpoint context: %w", err)
+		return fmt.Errorf("read compaction context: %w", err)
 	}
 
-	if err := build.Events.Emit(run.Context, build.ExecutionID, checkpoint.StartedEventType, nil); err != nil {
+	if err := build.Events.Emit(run.Context, build.ExecutionID, compaction.StartedEventType, nil); err != nil {
 		return err
 	}
 
@@ -125,8 +125,8 @@ func (c *Contributor) compact(
 		return err
 	}
 
-	if err := build.Events.Commit(run.Context, build.ExecutionID, checkpoint.EntryType, created); err != nil {
-		return fmt.Errorf("commit checkpoint: %w", err)
+	if err := build.Events.Commit(run.Context, build.ExecutionID, compaction.EntryType, created); err != nil {
+		return fmt.Errorf("commit compaction: %w", err)
 	}
 
 	return nil
@@ -158,17 +158,17 @@ func messagesAfterLastModelResponse(messages []kit.Message) []kit.Message {
 	return nil
 }
 
-func loadCheckpointContext(ctx context.Context, sessionID string, entries entry.Store) (*checkpoint.Checkpoint, []kit.Message, error) {
-	latest, found, err := entries.Latest(ctx, sessionID, checkpoint.EntryType)
+func loadCompactionContext(ctx context.Context, sessionID string, entries entry.Store) (*compaction.Compaction, []kit.Message, error) {
+	latest, found, err := entries.Latest(ctx, sessionID, compaction.EntryType)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	var previous *checkpoint.Checkpoint
+	var previous *compaction.Compaction
 	var messages []kit.Message
 	var afterID uint64
 	if found {
-		previous = &checkpoint.Checkpoint{}
+		previous = &compaction.Compaction{}
 		if err := json.Unmarshal(latest.Payload, previous); err != nil {
 			return nil, nil, fmt.Errorf("decode compaction entry %d: %w", latest.ID, err)
 		}

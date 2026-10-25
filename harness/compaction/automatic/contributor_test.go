@@ -15,13 +15,13 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kittest"
 
 	harnessagent "github.com/vitaliipsl/crappy/harness/agent"
-	"github.com/vitaliipsl/crappy/harness/checkpoint"
+	"github.com/vitaliipsl/crappy/harness/compaction"
 	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
 )
 
-func TestContributorCheckpointsBeforeModelRequest(t *testing.T) {
+func TestContributorCompactsBeforeModelRequest(t *testing.T) {
 	t.Parallel()
 
 	model := kittest.NewModelWithConfig(
@@ -33,12 +33,12 @@ func TestContributorCheckpointsBeforeModelRequest(t *testing.T) {
 			Usage:        kit.Usage{InputTokens: 10, OutputTokens: 2},
 		}},
 	)
-	checkpointModel := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
-		Message:      kit.NewModelMessage(kit.NewTextContent(`{"objective":"checkpoint"}`)),
+	compactionModel := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
+		Message:      kit.NewModelMessage(kit.NewTextContent(`{"objective":"compaction"}`)),
 		FinishReason: kit.FinishReasonStop,
 		Usage:        kit.Usage{InputTokens: 50, OutputTokens: 5},
 	}})
-	built := buildAgent(t, model, checkpointModel, WithEstimator(fixedEstimator{request: 80}))
+	built := buildAgent(t, model, compactionModel, WithEstimator(fixedEstimator{request: 80}))
 
 	response, err := built.Run(context.Background(), kit.NewUserMessage(kit.NewTextContent("original")))
 	if err != nil {
@@ -53,19 +53,19 @@ func TestContributorCheckpointsBeforeModelRequest(t *testing.T) {
 		t.Fatalf("response last usage = %#v, want %#v", got, want)
 	}
 
-	checkpointModel.AssertCallCount(t, 1)
+	compactionModel.AssertCallCount(t, 1)
 
 	messages := model.CallAt(0).Messages
 	if got, want := len(messages), 1; got != want {
 		t.Fatalf("request messages = %d, want %d", got, want)
 	}
 
-	if got, want := messages[0].TextContent().Text, checkpointMessage("checkpoint"); got != want {
+	if got, want := messages[0].TextContent().Text, compactionMessage("compaction"); got != want {
 		t.Fatalf("request message = %q, want %q", got, want)
 	}
 }
 
-func TestContributorCheckpointsAndRetriesOnContextOverflow(t *testing.T) {
+func TestContributorCompactsAndRetriesOnContextOverflow(t *testing.T) {
 	t.Parallel()
 
 	model := kittest.NewModelWithConfig(
@@ -77,20 +77,20 @@ func TestContributorCheckpointsAndRetriesOnContextOverflow(t *testing.T) {
 			FinishReason: kit.FinishReasonStop,
 		}},
 	)
-	checkpointModel := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
-		Message:      kit.NewModelMessage(kit.NewTextContent(`{"objective":"checkpoint"}`)),
+	compactionModel := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
+		Message:      kit.NewModelMessage(kit.NewTextContent(`{"objective":"compaction"}`)),
 		FinishReason: kit.FinishReasonStop,
 	}})
-	built := buildAgent(t, model, checkpointModel, WithEstimator(fixedEstimator{}))
+	built := buildAgent(t, model, compactionModel, WithEstimator(fixedEstimator{}))
 
 	if _, err := built.Run(context.Background(), kit.NewUserMessage(kit.NewTextContent("original"))); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	checkpointModel.AssertCallCount(t, 1)
+	compactionModel.AssertCallCount(t, 1)
 	model.AssertCallCount(t, 2)
 
-	if got, want := model.CallAt(1).Messages[0].TextContent().Text, checkpointMessage("checkpoint"); got != want {
+	if got, want := model.CallAt(1).Messages[0].TextContent().Text, compactionMessage("compaction"); got != want {
 		t.Fatalf("retried request message = %q, want %q", got, want)
 	}
 }
@@ -103,8 +103,8 @@ func TestContributorIgnoresOtherModelErrors(t *testing.T) {
 		kit.ModelConfig{InputLimit: 100},
 		kittest.ModelResult{Error: kit.ErrRateLimit},
 	)
-	checkpointModel := kittest.NewModel(t)
-	built := buildAgent(t, model, checkpointModel, WithEstimator(fixedEstimator{}))
+	compactionModel := kittest.NewModel(t)
+	built := buildAgent(t, model, compactionModel, WithEstimator(fixedEstimator{}))
 
 	_, err := built.Run(context.Background(), kit.NewUserMessage(kit.NewTextContent("original")))
 	if !errors.Is(err, kit.ErrRateLimit) {
@@ -112,10 +112,10 @@ func TestContributorIgnoresOtherModelErrors(t *testing.T) {
 	}
 
 	model.AssertCallCount(t, 1)
-	checkpointModel.AssertCallCount(t, 0)
+	compactionModel.AssertCallCount(t, 0)
 }
 
-func TestContributorUsesPreviousCheckpoint(t *testing.T) {
+func TestContributorUsesPreviousCompaction(t *testing.T) {
 	t.Parallel()
 	for _, overflow := range []bool{false, true} {
 		t.Run(fmt.Sprintf("overflow=%v", overflow), func(t *testing.T) {
@@ -123,8 +123,8 @@ func TestContributorUsesPreviousCheckpoint(t *testing.T) {
 			store := entry.NewMemoryStore()
 			events := event.NewBus("session", store)
 			retained := kit.NewModelMessage(kit.NewTextContent("retained evidence"))
-			previous := checkpoint.Checkpoint{
-				Summary: checkpoint.Summary{
+			previous := compaction.Compaction{
+				Summary: compaction.Summary{
 					Objective: "previous objective", Progress: []string{"done: research"},
 					Context: []string{"file: /repo/main.go"}, Next: []string{"implement"},
 				},
@@ -135,8 +135,8 @@ func TestContributorUsesPreviousCheckpoint(t *testing.T) {
 			); err != nil {
 				t.Fatal(err)
 			}
-			if err := events.Commit(ctx, "previous", checkpoint.EntryType,
-				checkpoint.Checkpoint{Summary: checkpoint.Summary{Objective: "superseded checkpoint"}}, previous,
+			if err := events.Commit(ctx, "previous", compaction.EntryType,
+				compaction.Compaction{Summary: compaction.Summary{Objective: "superseded compaction"}}, previous,
 			); err != nil {
 				t.Fatal(err)
 			}
@@ -159,7 +159,7 @@ func TestContributorUsesPreviousCheckpoint(t *testing.T) {
 				Usage: kit.Usage{InputTokens: 10, OutputTokens: 2},
 			}})
 			retainNothing := 0
-			generator, err := checkpoint.NewGenerator(checkpoint.Config{RetainedTokens: &retainNothing}, staticModelResolver{summaryModel})
+			generator, err := compaction.NewGenerator(compaction.Config{RetainedTokens: &retainNothing}, staticModelResolver{summaryModel})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -182,26 +182,26 @@ func TestContributorUsesPreviousCheckpoint(t *testing.T) {
 			model.AssertCallCount(t, len(results))
 
 			prompt := summaryModel.CallAt(0).Messages[0].TextContent().Text
-			_, previousJSON, found := strings.Cut(prompt, "<previous_checkpoint>\n")
+			_, previousJSON, found := strings.Cut(prompt, "<previous_compaction>\n")
 			if !found {
-				t.Fatalf("previous checkpoint missing: %q", prompt)
+				t.Fatalf("previous compaction missing: %q", prompt)
 			}
-			previousJSON, _, found = strings.Cut(previousJSON, "\n</previous_checkpoint>")
-			var supplied checkpoint.Summary
+			previousJSON, _, found = strings.Cut(previousJSON, "\n</previous_compaction>")
+			var supplied compaction.Summary
 			if err := json.Unmarshal([]byte(previousJSON), &supplied); err != nil || !found || !reflect.DeepEqual(supplied, previous.Summary) {
 				t.Fatalf("supplied summary = %+v, err = %v", supplied, err)
 			}
 			if strings.Count(prompt, "retained evidence") != 1 || strings.Count(prompt, "new work") != 1 ||
-				strings.Contains(prompt, "already summarized history") || strings.Contains(prompt, "superseded checkpoint") ||
+				strings.Contains(prompt, "already summarized history") || strings.Contains(prompt, "superseded compaction") ||
 				strings.Contains(prompt, previous.Message().TextContent().Text) {
 				t.Fatalf("incorrect compaction input: %q", prompt)
 			}
 			if response.Usage != (kit.Usage{InputTokens: 11, OutputTokens: 3}) {
-				t.Fatalf("usage includes previous checkpoint generation: %+v", response.Usage)
+				t.Fatalf("usage includes previous compaction generation: %+v", response.Usage)
 			}
 			request := model.CallAt(len(results) - 1)
-			if len(request.Messages) != 1 || request.Messages[0].TextContent().Text != checkpointMessage("updated objective") {
-				t.Fatalf("request did not use the new checkpoint: %+v", request.Messages)
+			if len(request.Messages) != 1 || request.Messages[0].TextContent().Text != compactionMessage("updated objective") {
+				t.Fatalf("request did not use the new compaction: %+v", request.Messages)
 			}
 			history, err := memory.History(ctx)
 			if err != nil || len(history) != 4 {
@@ -211,7 +211,7 @@ func TestContributorUsesPreviousCheckpoint(t *testing.T) {
 	}
 }
 
-func TestContributorCompactsPreviousCheckpointAgainOnOverflow(t *testing.T) {
+func TestContributorCompactsPreviousCompactionAgainOnOverflow(t *testing.T) {
 	t.Parallel()
 	model := kittest.NewModel(t,
 		kittest.ModelResult{Error: kit.ErrContextLength},
@@ -232,7 +232,7 @@ func TestContributorCompactsPreviousCheckpointAgainOnOverflow(t *testing.T) {
 	store := entry.NewMemoryStore()
 	events := event.NewBus("session", store)
 	retainNothing := 0
-	generator, err := checkpoint.NewGenerator(checkpoint.Config{RetainedTokens: &retainNothing}, staticModelResolver{summaryModel})
+	generator, err := compaction.NewGenerator(compaction.Config{RetainedTokens: &retainNothing}, staticModelResolver{summaryModel})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,36 +254,36 @@ func TestContributorCompactsPreviousCheckpointAgainOnOverflow(t *testing.T) {
 	model.AssertCallCount(t, 2)
 	prompt := summaryModel.CallAt(1).Messages[0].TextContent().Text
 	if !strings.Contains(prompt, `"objective": "first summary"`) || strings.Contains(prompt, "original work") ||
-		strings.Contains(prompt, checkpointMessage("first summary")) {
+		strings.Contains(prompt, compactionMessage("first summary")) {
 		t.Fatalf("second compaction input = %q", prompt)
 	}
 	if response.Usage != (kit.Usage{InputTokens: 10, OutputTokens: 2}) {
 		t.Fatalf("usage = %+v", response.Usage)
 	}
-	if got := model.CallAt(1).Messages[0].TextContent().Text; got != checkpointMessage("second summary") {
+	if got := model.CallAt(1).Messages[0].TextContent().Text; got != compactionMessage("second summary") {
 		t.Fatalf("retried request message = %q", got)
 	}
 }
 
-func TestLoadCheckpointContextRejectsMalformedRecords(t *testing.T) {
+func TestLoadCompactionContextRejectsMalformedRecords(t *testing.T) {
 	t.Parallel()
-	for _, kind := range []string{checkpoint.EntryType, harnessagent.MessageEntryType} {
+	for _, kind := range []string{compaction.EntryType, harnessagent.MessageEntryType} {
 		t.Run(kind, func(t *testing.T) {
 			store := entry.NewMemoryStore()
 			if _, err := store.Append(context.Background(), "session", entry.Entry{Type: kind, Payload: json.RawMessage(`"invalid"`)}); err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err := loadCheckpointContext(context.Background(), "session", store); err == nil || !strings.Contains(err.Error(), "entry 1") {
-				t.Fatalf("loadCheckpointContext() error = %v", err)
+			if _, _, err := loadCompactionContext(context.Background(), "session", store); err == nil || !strings.Contains(err.Error(), "entry 1") {
+				t.Fatalf("loadCompactionContext() error = %v", err)
 			}
 		})
 	}
 }
 
-func buildAgent(t *testing.T, model, checkpointModel kit.Model, options ...ContributorOption) kit.Agent {
+func buildAgent(t *testing.T, model, compactionModel kit.Model, options ...ContributorOption) kit.Agent {
 	t.Helper()
 
-	generator, err := checkpoint.NewGenerator(checkpoint.Config{}, staticModelResolver{checkpointModel})
+	generator, err := compaction.NewGenerator(compaction.Config{}, staticModelResolver{compactionModel})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -348,7 +348,7 @@ func (e fixedEstimator) EstimateMessage(kit.Message) int {
 	return e.message
 }
 
-func TestAutomaticCheckpointDuringExecution(t *testing.T) {
+func TestAutomaticCompactionDuringExecution(t *testing.T) {
 	t.Parallel()
 
 	agentModel := kittest.NewModelWithConfig(
@@ -359,14 +359,14 @@ func TestAutomaticCheckpointDuringExecution(t *testing.T) {
 			FinishReason: kit.FinishReasonStop,
 		}},
 	)
-	checkpointModel := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
-		Message:      kit.NewModelMessage(kit.NewTextContent(`{"objective": "checkpointed context", "progress": [], "context": [], "next": []}`)),
+	compactionModel := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
+		Message:      kit.NewModelMessage(kit.NewTextContent(`{"objective": "compacted context", "progress": [], "context": [], "next": []}`)),
 		FinishReason: kit.FinishReasonStop,
 	}})
 
-	generator, err := checkpoint.NewGenerator(
-		checkpoint.Config{},
-		staticModelResolver{checkpointModel},
+	generator, err := compaction.NewGenerator(
+		compaction.Config{},
+		staticModelResolver{compactionModel},
 	)
 	if err != nil {
 		t.Fatalf("NewGenerator() error = %v", err)
@@ -397,17 +397,17 @@ func TestAutomaticCheckpointDuringExecution(t *testing.T) {
 	started := false
 	for {
 		received := receiveEvent(t, subscription)
-		if received.Type == checkpoint.StartedEventType {
+		if received.Type == compaction.StartedEventType {
 			started = received.ExecutionID == executionID
 		}
 
-		if received.Type == checkpoint.EntryType {
+		if received.Type == compaction.EntryType {
 			break
 		}
 	}
 
 	if !started {
-		t.Fatal("checkpoint started event was not emitted before the checkpoint entry")
+		t.Fatal("compaction started event was not emitted before the compaction entry")
 	}
 
 	if err := <-done; err != nil {
@@ -419,7 +419,7 @@ func TestAutomaticCheckpointDuringExecution(t *testing.T) {
 		t.Fatalf("request messages = %d, want %d", got, want)
 	}
 
-	if got, want := messages[0].TextContent().Text, checkpointMessage("checkpointed context"); got != want {
+	if got, want := messages[0].TextContent().Text, compactionMessage("compacted context"); got != want {
 		t.Fatalf("request message = %q, want %q", got, want)
 	}
 
@@ -432,16 +432,16 @@ func TestAutomaticCheckpointDuringExecution(t *testing.T) {
 		t.Fatalf("entries = %d, want at least 3", len(entries))
 	}
 
-	if got, want := entries[1].Type, checkpoint.EntryType; got != want {
+	if got, want := entries[1].Type, compaction.EntryType; got != want {
 		t.Fatalf("entry 3 type = %q, want %q", got, want)
 	}
 
 	if got := entries[1].ExecutionID; got != executionID {
-		t.Fatalf("checkpoint ExecutionID = %q, want %q", got, executionID)
+		t.Fatalf("compaction ExecutionID = %q, want %q", got, executionID)
 	}
 }
 
-func TestAutomaticCheckpointRetainsCurrentInput(t *testing.T) {
+func TestAutomaticCompactionRetainsCurrentInput(t *testing.T) {
 	t.Parallel()
 
 	agentModel := kittest.NewModelWithConfig(
@@ -452,12 +452,12 @@ func TestAutomaticCheckpointRetainsCurrentInput(t *testing.T) {
 			FinishReason: kit.FinishReasonStop,
 		}},
 	)
-	checkpointModel := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
-		Message:      kit.NewModelMessage(kit.NewTextContent(`{"objective": "checkpointed context", "progress": [], "context": [], "next": []}`)),
+	compactionModel := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
+		Message:      kit.NewModelMessage(kit.NewTextContent(`{"objective": "compacted context", "progress": [], "context": [], "next": []}`)),
 		FinishReason: kit.FinishReasonStop,
 	}})
 
-	generator, err := checkpoint.NewGenerator(checkpoint.Config{}, staticModelResolver{checkpointModel})
+	generator, err := compaction.NewGenerator(compaction.Config{}, staticModelResolver{compactionModel})
 	if err != nil {
 		t.Fatalf("NewGenerator() error = %v", err)
 	}
@@ -481,7 +481,7 @@ func TestAutomaticCheckpointRetainsCurrentInput(t *testing.T) {
 	}
 
 	messages := agentModel.CallAt(0).Messages
-	want := []string{checkpointMessage("checkpointed context"), "earlier response", "current"}
+	want := []string{compactionMessage("compacted context"), "earlier response", "current"}
 
 	if got := len(messages); got != len(want) {
 		t.Fatalf("request messages = %d, want %d", got, len(want))
@@ -494,8 +494,8 @@ func TestAutomaticCheckpointRetainsCurrentInput(t *testing.T) {
 	}
 }
 
-func checkpointMessage(objective string) string {
-	return checkpoint.Checkpoint{Summary: checkpoint.Summary{Objective: objective}}.Message().TextContent().Text
+func compactionMessage(objective string) string {
+	return compaction.Compaction{Summary: compaction.Summary{Objective: objective}}.Message().TextContent().Text
 }
 
 func receiveEvent(t *testing.T, subscription *event.Subscription) event.Event {
@@ -536,7 +536,7 @@ func TestCompactionCommitFailurePreservesContextAndUsage(t *testing.T) {
 		Message:      kit.NewModelMessage(kit.NewTextContent(`{"objective":"summary"}`)),
 		FinishReason: kit.FinishReasonStop, Usage: kit.Usage{InputTokens: 10, OutputTokens: 2},
 	}})
-	generator, err := checkpoint.NewGenerator(checkpoint.Config{}, staticModelResolver{summaryModel})
+	generator, err := compaction.NewGenerator(compaction.Config{}, staticModelResolver{summaryModel})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -566,7 +566,7 @@ type compactionFailingStore struct {
 
 func (s *compactionFailingStore) Append(ctx context.Context, sessionID string, values ...entry.Entry) ([]entry.Entry, error) {
 	for _, value := range values {
-		if value.Type == checkpoint.EntryType {
+		if value.Type == compaction.EntryType {
 			return nil, s.failure
 		}
 	}
@@ -597,7 +597,7 @@ func TestCompactionRebuildsRequestContributions(t *testing.T) {
 				}
 				model := kittest.NewModelWithConfig(t, kit.ModelConfig{InputLimit: inputLimit}, results...)
 				summaryModel := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{Message: kit.NewModelMessage(kit.NewTextContent(`{"objective":"summary"}`)), FinishReason: kit.FinishReasonStop}})
-				generator, err := checkpoint.NewGenerator(checkpoint.Config{}, staticModelResolver{summaryModel})
+				generator, err := compaction.NewGenerator(compaction.Config{}, staticModelResolver{summaryModel})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -639,7 +639,7 @@ func TestCompactionRebuildsRequestContributions(t *testing.T) {
 					call = 1
 				}
 				request := model.CallAt(call)
-				summary := checkpointMessage("summary")
+				summary := compactionMessage("summary")
 				if scenario.rewrite {
 					summary = "wrapped: " + summary
 				}

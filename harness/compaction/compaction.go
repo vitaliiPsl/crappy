@@ -1,4 +1,4 @@
-package checkpoint
+package compaction
 
 import (
 	"fmt"
@@ -9,10 +9,10 @@ import (
 
 const (
 	EntryType        = "compaction"
-	StartedEventType = "checkpoint.started"
+	StartedEventType = "compaction.started"
 )
 
-const messagePreamble = "The conversation before this point was compacted into the following checkpoint. " +
+const messagePreamble = "The conversation before this point was compacted into the following summary. " +
 	"The messages after it are kept verbatim."
 
 type Summary struct {
@@ -22,7 +22,7 @@ type Summary struct {
 	Next      []string `json:"next" jsonschema:"Ordered next actions, starting with the immediate one."`
 }
 
-type Checkpoint struct {
+type Compaction struct {
 	Summary
 
 	Retained     []kit.Message `json:"retained"`
@@ -31,16 +31,16 @@ type Checkpoint struct {
 	Usage        kit.Usage     `json:"usage"`
 }
 
-func (c Checkpoint) Message() kit.Message {
+func (c Compaction) Message() kit.Message {
 	var text strings.Builder
 
 	text.WriteString(messagePreamble)
-	text.WriteString("\n\n<checkpoint>\n")
+	text.WriteString("\n\n<compaction>\n")
 	fmt.Fprintf(&text, "## Objective\n%s\n", c.Objective)
 	writeSection(&text, "Progress", c.Progress)
 	writeSection(&text, "Context", c.Context)
 	writeSection(&text, "Next", c.Next)
-	text.WriteString("</checkpoint>")
+	text.WriteString("</compaction>")
 
 	return kit.NewUserMessage(kit.NewTextContent(text.String()))
 }

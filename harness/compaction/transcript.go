@@ -1,4 +1,4 @@
-package checkpoint
+package compaction
 
 import (
 	"encoding/json"

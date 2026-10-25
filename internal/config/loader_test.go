@@ -27,8 +27,8 @@ func TestLoadFileSeedsDefaults(t *testing.T) {
 		t.Fatalf("ModelID = %q, want %q", got, want)
 	}
 
-	if got, want := loaded.Checkpoint.ThresholdTokens, defaultCheckpointThresholdTokens; got != want {
-		t.Fatalf("checkpoint threshold = %d, want %d", got, want)
+	if got, want := loaded.Compaction.ThresholdTokens, defaultCompactionThresholdTokens; got != want {
+		t.Fatalf("compaction threshold = %d, want %d", got, want)
 	}
 
 	data, err := os.ReadFile(path)
@@ -41,7 +41,7 @@ func TestLoadFileSeedsDefaults(t *testing.T) {
 	}
 
 	if !strings.Contains(string(data), "threshold_tokens:") {
-		t.Fatalf("seeded config = %q, want checkpoint threshold", data)
+		t.Fatalf("seeded config = %q, want compaction threshold", data)
 	}
 
 	info, err := os.Stat(path)
@@ -66,7 +66,7 @@ generation:
   thinking: high
   temperature: 0.4
   max_output_tokens: 2048
-checkpoint:
+compaction:
   threshold_tokens: 120000
 `)
 
@@ -99,8 +99,8 @@ checkpoint:
 		t.Fatalf("max output tokens = %d, want %d", got, want)
 	}
 
-	if got, want := loaded.Checkpoint.ThresholdTokens, int64(120_000); got != want {
-		t.Fatalf("checkpoint threshold = %d, want %d", got, want)
+	if got, want := loaded.Compaction.ThresholdTokens, int64(120_000); got != want {
+		t.Fatalf("compaction threshold = %d, want %d", got, want)
 	}
 
 	agentConfig := loaded.AgentConfig()
@@ -125,14 +125,14 @@ generation:
 	}
 }
 
-func TestLoadFileRejectsNegativeCheckpointThreshold(t *testing.T) {
+func TestLoadFileRejectsNegativeCompactionThreshold(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	writeConfig(t, path, `
 provider_id: provider
 model_id: model
-checkpoint:
+compaction:
   threshold_tokens: -1
 `)
 
@@ -141,7 +141,7 @@ checkpoint:
 	}
 }
 
-func TestLoadFileDefaultsCheckpointThreshold(t *testing.T) {
+func TestLoadFileDefaultsCompactionThreshold(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "config.yaml")
@@ -155,23 +155,23 @@ model_id: model
 		t.Fatalf("LoadFile() error = %v", err)
 	}
 
-	if got, want := loaded.Checkpoint.ThresholdTokens, defaultCheckpointThresholdTokens; got != want {
-		t.Fatalf("checkpoint threshold = %d, want %d", got, want)
+	if got, want := loaded.Compaction.ThresholdTokens, defaultCompactionThresholdTokens; got != want {
+		t.Fatalf("compaction threshold = %d, want %d", got, want)
 	}
 
-	if got, want := loaded.Checkpoint.RetainedTokens, defaultCheckpointRetainedTokens; got != want {
-		t.Fatalf("checkpoint retained tokens = %d, want %d", got, want)
+	if got, want := loaded.Compaction.RetainedTokens, defaultCompactionRetainedTokens; got != want {
+		t.Fatalf("compaction retained tokens = %d, want %d", got, want)
 	}
 }
 
-func TestLoadFileDisablesCheckpointing(t *testing.T) {
+func TestLoadFileDisablesCompaction(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	writeConfig(t, path, `
 provider_id: provider
 model_id: model
-checkpoint:
+compaction:
   threshold_tokens: 0
 `)
 
@@ -180,8 +180,8 @@ checkpoint:
 		t.Fatalf("LoadFile() error = %v", err)
 	}
 
-	if got, want := loaded.Checkpoint.ThresholdTokens, int64(0); got != want {
-		t.Fatalf("checkpoint threshold = %d, want %d", got, want)
+	if got, want := loaded.Compaction.ThresholdTokens, int64(0); got != want {
+		t.Fatalf("compaction threshold = %d, want %d", got, want)
 	}
 }
 

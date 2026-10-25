@@ -18,8 +18,8 @@ const (
 )
 
 func renderMessage(value item, width int) string {
-	if value.checkpoint != nil {
-		return renderCheckpoint(*value.checkpoint, width)
+	if value.compaction != nil {
+		return renderCompaction(*value.compaction, width)
 	}
 
 	switch value.role {

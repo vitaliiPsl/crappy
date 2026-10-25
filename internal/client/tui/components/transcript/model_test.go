@@ -6,7 +6,7 @@ import (
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
-	"github.com/vitaliipsl/crappy/harness/checkpoint"
+	"github.com/vitaliipsl/crappy/harness/compaction"
 )
 
 func TestDurableMessageReplacesStream(t *testing.T) {
@@ -120,17 +120,17 @@ func TestExecutionsAreSeparate(t *testing.T) {
 	}
 }
 
-func TestCheckpointRendersPendingThenCompacted(t *testing.T) {
+func TestCompactionRendersPendingThenCompacted(t *testing.T) {
 	model := New()
 	model.SetSize(80, 20)
-	model.StartCheckpoint("execution-1")
+	model.StartCompaction("execution-1")
 
-	if view := model.View(); !strings.Contains(view, checkpointPendingLabel) {
-		t.Fatalf("view = %q, want pending checkpoint", view)
+	if view := model.View(); !strings.Contains(view, compactionPendingLabel) {
+		t.Fatalf("view = %q, want pending compaction", view)
 	}
 
-	model.AppendCheckpoint("execution-1", checkpoint.Checkpoint{
-		Summary: checkpoint.Summary{Objective: "ship compaction"},
+	model.AppendCompaction("execution-1", compaction.Compaction{
+		Summary: compaction.Summary{Objective: "ship compaction"},
 		Retained: []kit.Message{
 			kit.NewUserMessage(kit.NewTextContent("one")),
 			kit.NewUserMessage(kit.NewTextContent("two")),
@@ -141,21 +141,21 @@ func TestCheckpointRendersPendingThenCompacted(t *testing.T) {
 	})
 
 	view := model.View()
-	if strings.Contains(view, checkpointPendingLabel) ||
-		!strings.Contains(view, checkpointLabel) ||
+	if strings.Contains(view, compactionPendingLabel) ||
+		!strings.Contains(view, compactionLabel) ||
 		!strings.Contains(view, "120.4k → 850 tokens") ||
 		!strings.Contains(view, "kept 3 messages") {
-		t.Fatalf("view = %q, want compacted checkpoint", view)
+		t.Fatalf("view = %q, want completed compaction", view)
 	}
 }
 
-func TestFinishClearsPendingCheckpoint(t *testing.T) {
+func TestFinishClearsPendingCompaction(t *testing.T) {
 	model := New()
 	model.SetSize(80, 20)
-	model.StartCheckpoint("execution-1")
+	model.StartCompaction("execution-1")
 	model.Finish("execution-1")
 
-	if view := model.View(); strings.Contains(view, checkpointPendingLabel) {
-		t.Fatalf("view = %q, want no pending checkpoint after finish", view)
+	if view := model.View(); strings.Contains(view, compactionPendingLabel) {
+		t.Fatalf("view = %q, want no pending compaction after finish", view)
 	}
 }

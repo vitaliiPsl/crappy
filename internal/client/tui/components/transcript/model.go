@@ -8,7 +8,7 @@ import (
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
-	"github.com/vitaliipsl/crappy/harness/checkpoint"
+	"github.com/vitaliipsl/crappy/harness/compaction"
 )
 
 type Model struct {
@@ -84,12 +84,12 @@ func (m *Model) Apply(executionID string, event kit.AgentEvent) {
 	m.execution(executionID).apply(event)
 }
 
-func (m *Model) StartCheckpoint(executionID string) {
-	m.execution(executionID).startCheckpoint()
+func (m *Model) StartCompaction(executionID string) {
+	m.execution(executionID).startCompaction()
 }
 
-func (m *Model) AppendCheckpoint(executionID string, generated checkpoint.Checkpoint) {
-	m.execution(executionID).appendCheckpoint(generated)
+func (m *Model) AppendCompaction(executionID string, generated compaction.Compaction) {
+	m.execution(executionID).appendCompaction(generated)
 }
 
 func (m *Model) Finish(executionID string) {

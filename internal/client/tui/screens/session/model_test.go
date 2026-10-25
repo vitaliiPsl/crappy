@@ -13,7 +13,7 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
 	"github.com/vitaliipsl/crappy/harness/agent"
-	"github.com/vitaliipsl/crappy/harness/checkpoint"
+	"github.com/vitaliipsl/crappy/harness/compaction"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
 )
@@ -217,26 +217,26 @@ func TestMouseWheelScrollsTranscript(t *testing.T) {
 	}
 }
 
-func TestCheckpointEventsUpdateTranscript(t *testing.T) {
+func TestCompactionEventsUpdateTranscript(t *testing.T) {
 	model := New(context.Background(), nil, "session-1")
 	model.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
-	model.applyEvent(event.Event{Type: checkpoint.StartedEventType, ExecutionID: "execution-1"})
+	model.applyEvent(event.Event{Type: compaction.StartedEventType, ExecutionID: "execution-1"})
 
 	if view := model.View().Content; !strings.Contains(view, "Compacting context") {
-		t.Fatalf("view = %q, want pending checkpoint", view)
+		t.Fatalf("view = %q, want pending compaction", view)
 	}
 
-	payload, err := json.Marshal(checkpoint.Checkpoint{
-		Summary:  checkpoint.Summary{Objective: "ship compaction"},
+	payload, err := json.Marshal(compaction.Compaction{
+		Summary:  compaction.Summary{Objective: "ship compaction"},
 		Retained: []kit.Message{kit.NewUserMessage(kit.NewTextContent("kept"))},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	model.applyEvent(event.Event{Type: checkpoint.EntryType, ExecutionID: "execution-1", Payload: payload})
+	model.applyEvent(event.Event{Type: compaction.EntryType, ExecutionID: "execution-1", Payload: payload})
 
 	if view := model.View().Content; !strings.Contains(view, "Context compacted") {
-		t.Fatalf("view = %q, want compacted checkpoint", view)
+		t.Fatalf("view = %q, want completed compaction", view)
 	}
 }

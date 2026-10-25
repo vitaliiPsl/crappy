@@ -14,8 +14,8 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kittest"
 
 	"github.com/vitaliipsl/crappy/harness/agent"
-	"github.com/vitaliipsl/crappy/harness/checkpoint"
-	"github.com/vitaliipsl/crappy/harness/checkpoint/automatic"
+	"github.com/vitaliipsl/crappy/harness/compaction"
+	"github.com/vitaliipsl/crappy/harness/compaction/automatic"
 	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
@@ -85,19 +85,19 @@ func TestBuiltInAgentIsDefaultAndUsesConfiguration(t *testing.T) {
 	model.AssertCallCount(t, 1)
 }
 
-func TestBuiltInAgentUsesCheckpoints(t *testing.T) {
+func TestBuiltInAgentUsesCompaction(t *testing.T) {
 	t.Parallel()
 
 	model := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
 		Message:      kit.NewModelMessage(kit.NewTextContent("done")),
 		FinishReason: kit.FinishReasonStop,
 	}})
-	checkpointModel := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
+	compactionModel := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
 		Message:      kit.NewModelMessage(kit.NewTextContent(`{"objective":"saved context"}`)),
 		FinishReason: kit.FinishReasonStop,
 	}})
 
-	generator, err := checkpoint.NewGenerator(checkpoint.Config{}, testModelResolver{checkpointModel})
+	generator, err := compaction.NewGenerator(compaction.Config{}, testModelResolver{compactionModel})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,15 +123,15 @@ func TestBuiltInAgentUsesCheckpoints(t *testing.T) {
 	}
 
 	if finished := waitFinished(t, opened, current.ID()); finished.Outcome != execution.Completed {
-		t.Fatalf("execution with checkpoints = %+v", finished)
+		t.Fatalf("execution with compactions = %+v", finished)
 	}
 
-	checkpointModel.AssertCallCount(t, 1)
+	compactionModel.AssertCallCount(t, 1)
 
-	if got := model.CallAt(0).Messages[0].TextContent().Text; got != (checkpoint.Checkpoint{
-		Summary: checkpoint.Summary{Objective: "saved context"},
+	if got := model.CallAt(0).Messages[0].TextContent().Text; got != (compaction.Compaction{
+		Summary: compaction.Summary{Objective: "saved context"},
 	}).Message().TextContent().Text {
-		t.Fatalf("agent did not receive checkpoint: %q", got)
+		t.Fatalf("agent did not receive compaction: %q", got)
 	}
 }
 
