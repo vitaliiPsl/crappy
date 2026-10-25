@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -16,6 +17,7 @@ import (
 	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/compaction"
 	"github.com/vitaliipsl/crappy/harness/compaction/automatic"
+	compactionexec "github.com/vitaliipsl/crappy/harness/compaction/executor"
 	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
@@ -85,25 +87,36 @@ func TestBuiltInAgentIsDefaultAndUsesConfiguration(t *testing.T) {
 	model.AssertCallCount(t, 1)
 }
 
-func TestBuiltInAgentUsesCompaction(t *testing.T) {
+func TestManualAndAutomaticCompactionShareExecutor(t *testing.T) {
 	t.Parallel()
 
 	model := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
 		Message:      kit.NewModelMessage(kit.NewTextContent("done")),
 		FinishReason: kit.FinishReasonStop,
+		Usage:        kit.Usage{InputTokens: 4, OutputTokens: 1},
 	}})
-	compactionModel := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
-		Message:      kit.NewModelMessage(kit.NewTextContent(`{"objective":"saved context"}`)),
-		FinishReason: kit.FinishReasonStop,
-	}})
+	compactionModel := kittest.NewModel(t,
+		kittest.ModelResult{Response: kit.ModelResponse{
+			Message:      kit.NewModelMessage(kit.NewTextContent(`{"objective":"saved context"}`)),
+			FinishReason: kit.FinishReasonStop,
+			Usage:        kit.Usage{InputTokens: 10, OutputTokens: 2},
+		}},
+		kittest.ModelResult{Response: kit.ModelResponse{
+			Message:      kit.NewModelMessage(kit.NewTextContent(`{"objective":"manual compaction"}`)),
+			FinishReason: kit.FinishReasonStop,
+			Usage:        kit.Usage{InputTokens: 5, OutputTokens: 1},
+		}},
+	)
 
-	generator, err := compaction.NewGenerator(compaction.Config{}, testModelResolver{compactionModel})
+	compactor, err := compaction.NewCompactor(compaction.Config{}, testModelResolver{compactionModel})
 	if err != nil {
 		t.Fatal(err)
 	}
 
+	compactionExecutor := compactionexec.New(compactor)
 	h := New(newTestStore(),
-		WithAgentConfig(kit.AgentConfig{}, agent.WithContributors(automatic.New(generator,
+		WithExecutor(compactionexec.ExecutorName, compactionExecutor),
+		WithAgentConfig(kit.AgentConfig{}, agent.WithContributors(automatic.New(compactionExecutor,
 			automatic.WithTrigger(automatic.WhenInputExceedsTokens(1)),
 		))),
 		WithModel(testModelResolver{model}),
@@ -132,6 +145,62 @@ func TestBuiltInAgentUsesCompaction(t *testing.T) {
 		Summary: compaction.Summary{Objective: "saved context"},
 	}).Message().TextContent().Text {
 		t.Fatalf("agent did not receive compaction: %q", got)
+	}
+
+	agentExecutionID := current.ID()
+
+	current, err = opened.Execute(context.Background(), execution.Request{Executor: compactionexec.ExecutorName})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	finished := waitFinished(t, opened, current.ID())
+	if finished.Outcome != execution.Completed {
+		t.Fatalf("manual compaction = %+v", finished)
+	}
+
+	var receipt compactionexec.Result
+	if err := json.Unmarshal(finished.Output, &receipt); err != nil {
+		t.Fatal(err)
+	}
+
+	if !receipt.Compacted || receipt.Usage != (kit.Usage{InputTokens: 5, OutputTokens: 1}) {
+		t.Fatalf("manual receipt = %+v", receipt)
+	}
+
+	model.AssertCallCount(t, 1)
+	compactionModel.AssertCallCount(t, 2)
+
+	stored, err := opened.Entries(context.Background(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var startedIDs, finishedIDs, compactionIDs []string
+
+	for _, value := range stored {
+		switch value.Type {
+		case execution.StartedEntryType:
+			startedIDs = append(startedIDs, value.ExecutionID)
+		case execution.FinishedEntryType:
+			finishedIDs = append(finishedIDs, value.ExecutionID)
+		case compaction.EntryType:
+			compactionIDs = append(compactionIDs, value.ExecutionID)
+		case agent.FinishedEntryType:
+			var result agent.Finished
+			if err := json.Unmarshal(value.Payload, &result); err != nil {
+				t.Fatal(err)
+			}
+
+			if result.Usage != (kit.Usage{InputTokens: 14, OutputTokens: 3}) {
+				t.Fatalf("agent usage = %+v", result.Usage)
+			}
+		}
+	}
+
+	want := []string{agentExecutionID, current.ID()}
+	if !reflect.DeepEqual(startedIDs, want) || !reflect.DeepEqual(finishedIDs, want) || !reflect.DeepEqual(compactionIDs, want) {
+		t.Fatalf("execution attribution: starts=%v, finishes=%v, compactions=%v", startedIDs, finishedIDs, compactionIDs)
 	}
 }
 

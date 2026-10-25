@@ -13,6 +13,7 @@ import (
 	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/compaction"
 	"github.com/vitaliipsl/crappy/harness/compaction/automatic"
+	compactionexec "github.com/vitaliipsl/crappy/harness/compaction/executor"
 	"github.com/vitaliipsl/crappy/harness/session"
 	"github.com/vitaliipsl/crappy/internal/client/tui"
 	"github.com/vitaliipsl/crappy/internal/config"
@@ -81,10 +82,12 @@ func newHarness(ctx context.Context) (*harness.Harness, session.Store, error) {
 		model.Retry(settings.Retry),
 	)
 
-	generator, err := compaction.NewGenerator(config.CompactionConfig(), modelResolver)
+	compactor, err := compaction.NewCompactor(config.CompactionConfig(), modelResolver)
 	if err != nil {
-		return nil, nil, fmt.Errorf("create compaction generator: %w", err)
+		return nil, nil, fmt.Errorf("create compactor: %w", err)
 	}
+
+	compactionExecutor := compactionexec.New(compactor)
 
 	storage, err := jsonl.Open(ctx, settings.SessionsPath)
 	if err != nil {
@@ -94,11 +97,12 @@ func newHarness(ctx context.Context) (*harness.Harness, session.Store, error) {
 	return harness.New(
 		storage,
 		harness.WithModel(modelResolver),
+		harness.WithExecutor(compactionexec.ExecutorName, compactionExecutor),
 		harness.WithAgentConfig(config.AgentConfig(),
 			agent.WithTools(bash.New()),
 			agent.WithTools(filesystem.New()...),
 			agent.WithToolMiddleware(tools.Timeout(settings.Tools)),
-			agent.WithContributors(automatic.New(generator,
+			agent.WithContributors(automatic.New(compactionExecutor,
 				automatic.WithTrigger(
 					automatic.WhenInputExceedsTokens(config.Compaction.ThresholdTokens),
 				),

@@ -39,8 +39,11 @@ func (m *Memory) Context(ctx context.Context) ([]kit.Message, error) {
 		return nil, err
 	}
 
-	var afterID uint64
-	var base []entry.Entry
+	var (
+		afterID uint64
+		base    []entry.Entry
+	)
+
 	if found {
 		afterID = latest.ID
 		base = append(base, latest)
@@ -65,12 +68,15 @@ func (m *Memory) History(ctx context.Context) ([]kit.Message, error) {
 		if value.Type != MessageEntryType {
 			continue
 		}
+
 		message, err := decodeMessage(value)
 		if err != nil {
 			return nil, err
 		}
+
 		messages = append(messages, message)
 	}
+
 	return messages, nil
 }
 
@@ -92,18 +98,22 @@ func projectMessages(entries []entry.Entry) ([]kit.Message, error) {
 			if err != nil {
 				return nil, err
 			}
+
 			messages = append(messages, message)
 		case compaction.EntryType:
 			var compacted compaction.Compaction
 			if err := json.Unmarshal(value.Payload, &compacted); err != nil {
 				return nil, fmt.Errorf("decode compaction entry %d: %w", value.ID, err)
 			}
+
 			if strings.TrimSpace(compacted.Objective) == "" {
 				return nil, fmt.Errorf("compaction entry %d has no objective", value.ID)
 			}
+
 			messages = append([]kit.Message{compacted.Message()}, compacted.Retained...)
 		}
 	}
+
 	return messages, nil
 }
 
@@ -112,5 +122,6 @@ func decodeMessage(value entry.Entry) (kit.Message, error) {
 	if err := json.Unmarshal(value.Payload, &message); err != nil {
 		return kit.Message{}, fmt.Errorf("decode message entry %d: %w", value.ID, err)
 	}
+
 	return message, nil
 }

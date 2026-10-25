@@ -47,28 +47,28 @@ func (c Config) withDefaults() Config {
 	return c
 }
 
-type GeneratorOption func(*Generator)
+type CompactorOption func(*Compactor)
 
-func WithEstimator(estimator Estimator) GeneratorOption {
-	return func(generator *Generator) {
-		generator.estimator = estimator
+func WithEstimator(estimator Estimator) CompactorOption {
+	return func(compactor *Compactor) {
+		compactor.estimator = estimator
 	}
 }
 
-type Generator struct {
+type Compactor struct {
 	config    Config
 	models    ModelResolver
 	estimator Estimator
 	schema    kit.OutputSchema
 }
 
-func NewGenerator(config Config, models ModelResolver, options ...GeneratorOption) (*Generator, error) {
+func NewCompactor(config Config, models ModelResolver, options ...CompactorOption) (*Compactor, error) {
 	schema, err := output.For[Summary]("compaction", "Summary of the work so far.")
 	if err != nil {
 		return nil, err
 	}
 
-	generator := &Generator{
+	compactor := &Compactor{
 		config:    config.withDefaults(),
 		models:    models,
 		estimator: &CharacterEstimator{},
@@ -76,55 +76,55 @@ func NewGenerator(config Config, models ModelResolver, options ...GeneratorOptio
 	}
 
 	for _, option := range options {
-		option(generator)
+		option(compactor)
 	}
 
-	return generator, nil
+	return compactor, nil
 }
 
-func (g *Generator) Generate(
+func (c *Compactor) Compact(
 	ctx context.Context,
 	previous *Compaction,
 	messages []kit.Message,
-) (*Compaction, error) {
+) (Compaction, error) {
 	if previous == nil && len(messages) == 0 {
-		return nil, errors.New("no messages to compact")
+		return Compaction{}, errors.New("no messages to compact")
 	}
 
-	keepFrom := g.keepFrom(messages)
+	keepFrom := c.keepFrom(messages)
 
-	compaction, err := g.summarize(ctx, previous, messages[:keepFrom])
+	compaction, err := c.summarize(ctx, previous, messages[:keepFrom])
 	if err != nil {
 		return compaction, err
 	}
 
 	compaction.Retained = messages[keepFrom:]
-	compaction.TokensBefore = g.estimateContext(previous, messages)
-	compaction.TokensAfter = g.estimateContext(compaction, messages[keepFrom:])
+	compaction.TokensBefore = c.estimateContext(previous, messages)
+	compaction.TokensAfter = c.estimateContext(&compaction, messages[keepFrom:])
 
 	return compaction, nil
 }
 
-func (g *Generator) estimateContext(compaction *Compaction, messages []kit.Message) int {
+func (c *Compactor) estimateContext(compaction *Compaction, messages []kit.Message) int {
 	tokens := 0
 	if compaction != nil {
-		tokens += g.estimator.EstimateMessage(compaction.Message())
+		tokens += c.estimator.EstimateMessage(compaction.Message())
 	}
 
 	for _, message := range messages {
-		tokens += g.estimator.EstimateMessage(message)
+		tokens += c.estimator.EstimateMessage(message)
 	}
 
 	return tokens
 }
 
-func (g *Generator) keepFrom(messages []kit.Message) int {
+func (c *Compactor) keepFrom(messages []kit.Message) int {
 	keepFrom := len(messages)
 	tokens := 0
 
 	for i := len(messages) - 1; i > 0; i-- {
-		tokens += g.estimator.EstimateMessage(messages[i])
-		if tokens > *g.config.RetainedTokens {
+		tokens += c.estimator.EstimateMessage(messages[i])
+		if tokens > *c.config.RetainedTokens {
 			break
 		}
 
@@ -136,101 +136,101 @@ func (g *Generator) keepFrom(messages []kit.Message) int {
 	return keepFrom
 }
 
-func (g *Generator) summarize(
+func (c *Compactor) summarize(
 	ctx context.Context,
 	previous *Compaction,
 	messages []kit.Message,
-) (*Compaction, error) {
-	resolved, err := g.models.Resolve(ctx)
+) (Compaction, error) {
+	resolved, err := c.models.Resolve(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("resolve model: %w", err)
+		return Compaction{}, fmt.Errorf("resolve model: %w", err)
 	}
 
-	compaction, err := g.generate(ctx, resolved, previous, messages)
+	compaction, err := c.generate(ctx, resolved, previous, messages)
 	if !errors.Is(err, kit.ErrContextLength) {
 		return compaction, err
 	}
 
-	chunks, chunkErr := g.generateChunks(ctx, resolved, previous, messages)
-	if compaction != nil {
-		if chunks == nil {
-			chunks = &Compaction{}
-		}
-		chunks.Usage.Add(compaction.Usage)
-	}
+	chunks, chunkErr := c.generateChunks(ctx, resolved, previous, messages)
+	chunks.Usage.Add(compaction.Usage)
+
 	return chunks, chunkErr
 }
 
-func (g *Generator) generate(
+func (c *Compactor) generate(
 	ctx context.Context,
 	model kit.Model,
 	previous *Compaction,
 	messages []kit.Message,
-) (*Compaction, error) {
-	input, err := g.generatorInput(previous, messages)
+) (Compaction, error) {
+	input, err := c.compactionInput(previous, messages)
 	if err != nil {
-		return nil, err
+		return Compaction{}, err
 	}
 
 	response, err := model.Generate(ctx, kit.ModelRequest{
-		Instructions: g.config.Prompt,
+		Instructions: c.config.Prompt,
 		Messages: []kit.Message{
 			kit.NewUserMessage(kit.NewTextContent(input)),
 		},
 		Config: kit.GenerationConfig{
-			MaxOutputTokens: &g.config.MaxOutputTokens,
+			MaxOutputTokens: &c.config.MaxOutputTokens,
 		},
-		OutputSchema: &g.schema,
+		OutputSchema: &c.schema,
 	})
 	if err != nil {
-		return &Compaction{Usage: response.Usage}, fmt.Errorf("generate compaction: %w", err)
+		return Compaction{Usage: response.Usage}, fmt.Errorf("generate compaction: %w", err)
 	}
 
-	return g.generatorOutput(response)
+	return c.compactionOutput(response)
 }
 
-func (g *Generator) generateChunks(
+func (c *Compactor) generateChunks(
 	ctx context.Context,
 	model kit.Model,
-	compaction *Compaction,
+	previous *Compaction,
 	messages []kit.Message,
-) (*Compaction, error) {
+) (Compaction, error) {
 	chunkTurns := countTurns(messages) / 2
 	if chunkTurns == 0 {
-		return nil, ErrContextOverflow
+		return Compaction{}, ErrContextOverflow
 	}
 
-	var usage kit.Usage
+	var (
+		result Compaction
+		usage  kit.Usage
+	)
 
 	for len(messages) > 0 {
 		chunk, remaining := firstTurns(messages, chunkTurns)
 
-		generated, err := g.generate(ctx, model, compaction, chunk)
-		if generated != nil {
-			usage.Add(generated.Usage)
-		}
+		generated, err := c.generate(ctx, model, previous, chunk)
+		usage.Add(generated.Usage)
+
 		if err == nil {
-			generated.Usage = usage
-			compaction = generated
+			result = generated
+			previous = &result
 			messages = remaining
 
 			continue
 		}
 
 		if !errors.Is(err, kit.ErrContextLength) {
-			return &Compaction{Usage: usage}, err
+			return Compaction{Usage: usage}, err
 		}
 
 		chunkTurns = countTurns(chunk) / 2
 		if chunkTurns == 0 {
-			return &Compaction{Usage: usage}, ErrContextOverflow
+			return Compaction{Usage: usage}, ErrContextOverflow
 		}
 	}
 
-	return compaction, nil
+	result.Usage = usage
+
+	return result, nil
 }
 
-func (g *Generator) generatorInput(previous *Compaction, messages []kit.Message) (string, error) {
+func (c *Compactor) compactionInput(previous *Compaction, messages []kit.Message) (string, error) {
 	var input strings.Builder
 
 	if previous != nil {
@@ -251,8 +251,8 @@ func (g *Generator) generatorInput(previous *Compaction, messages []kit.Message)
 	return input.String(), nil
 }
 
-func (g *Generator) generatorOutput(response kit.ModelResponse) (*Compaction, error) {
-	result := &Compaction{Usage: response.Usage}
+func (c *Compactor) compactionOutput(response kit.ModelResponse) (Compaction, error) {
+	result := Compaction{Usage: response.Usage}
 	switch response.FinishReason {
 	case kit.FinishReasonToolCall:
 		return result, errors.New("compaction model returned an unexpected tool call")
@@ -277,6 +277,7 @@ func (g *Generator) generatorOutput(response kit.ModelResponse) (*Compaction, er
 	}
 
 	result.Summary = summary
+
 	return result, nil
 }
 

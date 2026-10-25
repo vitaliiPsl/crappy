@@ -8,7 +8,7 @@ require (
 	charm.land/lipgloss/v2 v2.0.2
 	github.com/go-playground/validator/v10 v10.25.0
 	github.com/google/uuid v1.6.0
-	github.com/vitaliiPsl/crappy-adk v0.11.1-0.20260924012954-59b4711910e7
+	github.com/vitaliiPsl/crappy-adk v0.11.1-0.20261025093118-09a43e85846d
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -57,5 +57,3 @@ require (
 	google.golang.org/grpc v1.66.2 // indirect
 	google.golang.org/protobuf v1.34.2 // indirect
 )
-
-replace github.com/vitaliiPsl/crappy-adk => ../crappy-adk

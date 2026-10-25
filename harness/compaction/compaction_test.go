@@ -37,25 +37,31 @@ ship compaction
 
 func TestCompactionPersistsSummaryAndRetainedMessages(t *testing.T) {
 	t.Parallel()
+
 	compaction := Compaction{
 		Summary:  Summary{Objective: "ship compaction", Progress: []string{"done: research"}},
 		Retained: []kit.Message{kit.NewUserMessage(kit.NewTextContent("continue"))},
 	}
+
 	payload, err := json.Marshal(compaction)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(payload, &fields); err != nil {
 		t.Fatal(err)
 	}
+
 	if _, found := fields["messages"]; found {
 		t.Fatal("compaction persisted a second copy of the model context")
 	}
+
 	var restored Compaction
 	if err := json.Unmarshal(payload, &restored); err != nil {
 		t.Fatal(err)
 	}
+
 	if !reflect.DeepEqual(restored, compaction) {
 		t.Fatalf("compaction changed after persistence: %+v", restored)
 	}

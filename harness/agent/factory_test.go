@@ -6,11 +6,12 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/vitaliipsl/crappy/harness/entry"
+	"github.com/vitaliipsl/crappy/harness/event"
+
 	adkagent "github.com/vitaliiPsl/crappy-adk/agent"
 	"github.com/vitaliiPsl/crappy-adk/kit"
 	"github.com/vitaliiPsl/crappy-adk/kittest"
-	"github.com/vitaliipsl/crappy/harness/entry"
-	"github.com/vitaliipsl/crappy/harness/event"
 )
 
 func TestFactoryBuild(t *testing.T) {
@@ -138,6 +139,7 @@ func TestFactoryBuildAppliesContributions(t *testing.T) {
 					if run.Memory != build.Request.Memory {
 						t.Fatal("agent did not use the supplied memory")
 					}
+
 					return nil
 				}),
 			},
@@ -240,6 +242,7 @@ func (r staticModelResolver) Resolve(context.Context) (kit.Model, error) {
 func testBuildRequest() BuildRequest {
 	store := entry.NewMemoryStore()
 	events := event.NewBus("session-1", store)
+
 	return BuildRequest{
 		SessionID:   "session-1",
 		ExecutionID: "execution-1",

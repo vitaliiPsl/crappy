@@ -11,7 +11,7 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kit"
 )
 
-func TestGeneratorGenerate(t *testing.T) {
+func TestCompactorCompact(t *testing.T) {
 	t.Parallel()
 
 	model := &compactionModel{results: []modelResult{{
@@ -21,15 +21,15 @@ func TestGeneratorGenerate(t *testing.T) {
 		}),
 	}}}
 
-	generator, err := NewGenerator(
+	compactor, err := NewCompactor(
 		Config{Prompt: "summarize", MaxOutputTokens: 512, RetainedTokens: &retainNothing},
 		staticModelResolver{model},
 	)
 	if err != nil {
-		t.Fatalf("NewGenerator() error = %v", err)
+		t.Fatalf("NewCompactor() error = %v", err)
 	}
 
-	compaction, err := generator.Generate(context.Background(), nil, []kit.Message{
+	compaction, err := compactor.Compact(context.Background(), nil, []kit.Message{
 		kit.NewUserMessage(
 			kit.NewTextContent("build a harness"),
 		),
@@ -39,7 +39,7 @@ func TestGeneratorGenerate(t *testing.T) {
 		),
 	})
 	if err != nil {
-		t.Fatalf("Generate() error = %v", err)
+		t.Fatalf("Compact() error = %v", err)
 	}
 
 	if got, want := compaction.Objective, "current state"; got != want {
@@ -74,7 +74,7 @@ func TestGeneratorGenerate(t *testing.T) {
 	}
 }
 
-func TestGeneratorChunksAtModelTurnBoundaries(t *testing.T) {
+func TestCompactorChunksAtModelTurnBoundaries(t *testing.T) {
 	t.Parallel()
 
 	model := &compactionModel{results: []modelResult{
@@ -98,7 +98,7 @@ func TestGeneratorChunksAtModelTurnBoundaries(t *testing.T) {
 
 	resolveCalls := 0
 
-	generator, err := NewGenerator(Config{RetainedTokens: &retainNothing}, modelResolverFunc(func(
+	compactor, err := NewCompactor(Config{RetainedTokens: &retainNothing}, modelResolverFunc(func(
 		_ context.Context,
 	) (kit.Model, error) {
 		resolveCalls++
@@ -106,12 +106,12 @@ func TestGeneratorChunksAtModelTurnBoundaries(t *testing.T) {
 		return model, nil
 	}))
 	if err != nil {
-		t.Fatalf("NewGenerator() error = %v", err)
+		t.Fatalf("NewCompactor() error = %v", err)
 	}
 
-	compaction, err := generator.Generate(context.Background(), nil, messages)
+	compaction, err := compactor.Compact(context.Background(), nil, messages)
 	if err != nil {
-		t.Fatalf("Generate() error = %v", err)
+		t.Fatalf("Compact() error = %v", err)
 	}
 
 	if got, want := compaction.Objective, "final compaction"; got != want {
@@ -146,26 +146,31 @@ func TestGeneratorChunksAtModelTurnBoundaries(t *testing.T) {
 	}
 }
 
-func TestGeneratorReturnsContextOverflowForSingleTurn(t *testing.T) {
+func TestCompactorReturnsContextOverflowForSingleTurn(t *testing.T) {
 	t.Parallel()
 
-	model := &compactionModel{results: []modelResult{{err: kit.ErrContextLength}}}
+	usage := kit.Usage{InputTokens: 5}
+	model := &compactionModel{results: []modelResult{{response: kit.ModelResponse{Usage: usage}, err: kit.ErrContextLength}}}
 
-	generator, err := NewGenerator(Config{RetainedTokens: &retainNothing}, staticModelResolver{model})
+	compactor, err := NewCompactor(Config{RetainedTokens: &retainNothing}, staticModelResolver{model})
 	if err != nil {
-		t.Fatalf("NewGenerator() error = %v", err)
+		t.Fatalf("NewCompactor() error = %v", err)
 	}
 
-	_, err = generator.Generate(context.Background(), nil, []kit.Message{
+	generated, err := compactor.Compact(context.Background(), nil, []kit.Message{
 		kit.NewUserMessage(kit.NewTextContent("one")),
 		kit.NewModelMessage(kit.NewTextContent("response one")),
 	})
 	if !errors.Is(err, ErrContextOverflow) {
-		t.Fatalf("Generate() error = %v, want ErrContextOverflow", err)
+		t.Fatalf("Compact() error = %v, want ErrContextOverflow", err)
+	}
+
+	if generated.Usage != usage {
+		t.Fatalf("overflow usage lost: %+v", generated)
 	}
 }
 
-func TestGeneratorShrinksRejectedChunks(t *testing.T) {
+func TestCompactorShrinksRejectedChunks(t *testing.T) {
 	t.Parallel()
 
 	model := &compactionModel{results: []modelResult{
@@ -177,9 +182,9 @@ func TestGeneratorShrinksRejectedChunks(t *testing.T) {
 		{response: compactionResponse("four", kit.Usage{InputTokens: 1})},
 	}}
 
-	generator, err := NewGenerator(Config{RetainedTokens: &retainNothing}, staticModelResolver{model})
+	compactor, err := NewCompactor(Config{RetainedTokens: &retainNothing}, staticModelResolver{model})
 	if err != nil {
-		t.Fatalf("NewGenerator() error = %v", err)
+		t.Fatalf("NewCompactor() error = %v", err)
 	}
 
 	var messages []kit.Message
@@ -191,9 +196,9 @@ func TestGeneratorShrinksRejectedChunks(t *testing.T) {
 		)
 	}
 
-	compaction, err := generator.Generate(context.Background(), nil, messages)
+	compaction, err := compactor.Compact(context.Background(), nil, messages)
 	if err != nil {
-		t.Fatalf("Generate() error = %v", err)
+		t.Fatalf("Compact() error = %v", err)
 	}
 
 	if got, want := len(model.requests), 6; got != want {
@@ -216,24 +221,24 @@ func TestGeneratorShrinksRejectedChunks(t *testing.T) {
 	}
 }
 
-func TestGeneratorUpdatesPreviousCompaction(t *testing.T) {
+func TestCompactorUpdatesPreviousCompaction(t *testing.T) {
 	t.Parallel()
 
 	model := &compactionModel{results: []modelResult{{
 		response: compactionResponse("updated", kit.Usage{}),
 	}}}
 
-	generator, err := NewGenerator(Config{RetainedTokens: &retainNothing}, staticModelResolver{model})
+	compactor, err := NewCompactor(Config{RetainedTokens: &retainNothing}, staticModelResolver{model})
 	if err != nil {
-		t.Fatalf("NewGenerator() error = %v", err)
+		t.Fatalf("NewCompactor() error = %v", err)
 	}
 
-	if _, err := generator.Generate(
+	if _, err := compactor.Compact(
 		context.Background(),
 		&Compaction{Summary: Summary{Objective: "previous"}},
 		[]kit.Message{kit.NewUserMessage(kit.NewTextContent("new work"))},
 	); err != nil {
-		t.Fatalf("Generate() error = %v", err)
+		t.Fatalf("Compact() error = %v", err)
 	}
 
 	input := model.requests[0].Messages[0].TextContent().Text
@@ -243,7 +248,7 @@ func TestGeneratorUpdatesPreviousCompaction(t *testing.T) {
 	}
 }
 
-func TestGeneratorKeepFrom(t *testing.T) {
+func TestCompactorKeepFrom(t *testing.T) {
 	t.Parallel()
 
 	call := kit.NewToolCall("call-1", "search", map[string]any{})
@@ -274,49 +279,49 @@ func TestGeneratorKeepFrom(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			generator, err := NewGenerator(
+			compactor, err := NewCompactor(
 				Config{RetainedTokens: &test.retained},
 				staticModelResolver{&compactionModel{}},
 			)
 			if err != nil {
-				t.Fatalf("NewGenerator() error = %v", err)
+				t.Fatalf("NewCompactor() error = %v", err)
 			}
 
-			if got := generator.keepFrom(messages); got != test.want {
+			if got := compactor.keepFrom(messages); got != test.want {
 				t.Fatalf("keepFrom() = %d, want %d", got, test.want)
 			}
 		})
 	}
 }
 
-func TestGeneratorDecodesSummary(t *testing.T) {
+func TestCompactorDecodesSummary(t *testing.T) {
 	t.Parallel()
 
 	model := &compactionModel{results: []modelResult{{
 		response: textResponse(`{
 			"objective": "ship compaction",
 			"progress": ["done: retained tail"],
-			"context": ["harness/compaction/generator.go"],
+			"context": ["harness/compaction/compactor.go"],
 			"next": ["evaluate compactions"]
 		}`, kit.Usage{}),
 	}}}
 
-	generator, err := NewGenerator(Config{}, staticModelResolver{model})
+	compactor, err := NewCompactor(Config{}, staticModelResolver{model})
 	if err != nil {
-		t.Fatalf("NewGenerator() error = %v", err)
+		t.Fatalf("NewCompactor() error = %v", err)
 	}
 
-	compaction, err := generator.Generate(context.Background(), nil, []kit.Message{
+	compaction, err := compactor.Compact(context.Background(), nil, []kit.Message{
 		kit.NewUserMessage(kit.NewTextContent("work")),
 	})
 	if err != nil {
-		t.Fatalf("Generate() error = %v", err)
+		t.Fatalf("Compact() error = %v", err)
 	}
 
 	want := Summary{
 		Objective: "ship compaction",
 		Progress:  []string{"done: retained tail"},
-		Context:   []string{"harness/compaction/generator.go"},
+		Context:   []string{"harness/compaction/compactor.go"},
 		Next:      []string{"evaluate compactions"},
 	}
 	if !reflect.DeepEqual(compaction.Summary, want) {
@@ -324,7 +329,7 @@ func TestGeneratorDecodesSummary(t *testing.T) {
 	}
 }
 
-func TestGeneratorRejectsInvalidSummary(t *testing.T) {
+func TestCompactorRejectsInvalidSummary(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]string{
@@ -338,21 +343,21 @@ func TestGeneratorRejectsInvalidSummary(t *testing.T) {
 
 			model := &compactionModel{results: []modelResult{{response: textResponse(text, kit.Usage{})}}}
 
-			generator, err := NewGenerator(Config{}, staticModelResolver{model})
+			compactor, err := NewCompactor(Config{}, staticModelResolver{model})
 			if err != nil {
-				t.Fatalf("NewGenerator() error = %v", err)
+				t.Fatalf("NewCompactor() error = %v", err)
 			}
 
-			if _, err := generator.Generate(context.Background(), nil, []kit.Message{
+			if _, err := compactor.Compact(context.Background(), nil, []kit.Message{
 				kit.NewUserMessage(kit.NewTextContent("work")),
 			}); err == nil {
-				t.Fatal("Generate() error = nil, want error")
+				t.Fatal("Compact() error = nil, want error")
 			}
 		})
 	}
 }
 
-func TestGeneratorRetainsRecentMessages(t *testing.T) {
+func TestCompactorRetainsRecentMessages(t *testing.T) {
 	t.Parallel()
 
 	model := &compactionModel{results: []modelResult{{
@@ -360,17 +365,17 @@ func TestGeneratorRetainsRecentMessages(t *testing.T) {
 	}}}
 	retained := 1 << 20
 
-	generator, err := NewGenerator(Config{RetainedTokens: &retained}, staticModelResolver{model})
+	compactor, err := NewCompactor(Config{RetainedTokens: &retained}, staticModelResolver{model})
 	if err != nil {
-		t.Fatalf("NewGenerator() error = %v", err)
+		t.Fatalf("NewCompactor() error = %v", err)
 	}
 
-	compaction, err := generator.Generate(context.Background(), nil, []kit.Message{
+	compaction, err := compactor.Compact(context.Background(), nil, []kit.Message{
 		kit.NewUserMessage(kit.NewTextContent("summarized")),
 		kit.NewModelMessage(kit.NewTextContent("retained")),
 	})
 	if err != nil {
-		t.Fatalf("Generate() error = %v", err)
+		t.Fatalf("Compact() error = %v", err)
 	}
 
 	want := []kit.Message{kit.NewModelMessage(kit.NewTextContent("retained"))}
@@ -388,16 +393,16 @@ func TestGeneratorRetainsRecentMessages(t *testing.T) {
 	}
 }
 
-func TestGeneratorRejectsEmptyMessages(t *testing.T) {
+func TestCompactorRejectsEmptyMessages(t *testing.T) {
 	t.Parallel()
 
-	generator, err := NewGenerator(Config{}, staticModelResolver{&compactionModel{}})
+	compactor, err := NewCompactor(Config{}, staticModelResolver{&compactionModel{}})
 	if err != nil {
-		t.Fatalf("NewGenerator() error = %v", err)
+		t.Fatalf("NewCompactor() error = %v", err)
 	}
 
-	if _, err := generator.Generate(context.Background(), nil, nil); err == nil {
-		t.Fatal("Generate() error = nil, want error")
+	if _, err := compactor.Compact(context.Background(), nil, nil); err == nil {
+		t.Fatal("Compact() error = nil, want error")
 	}
 }
 
@@ -469,43 +474,53 @@ func textResponse(text string, usage kit.Usage) kit.ModelResponse {
 	}
 }
 
-func TestGeneratorPreservesUsageOnInvalidOutput(t *testing.T) {
+func TestCompactorPreservesUsageOnInvalidOutput(t *testing.T) {
 	t.Parallel()
+
 	usage := kit.Usage{InputTokens: 10, OutputTokens: 3}
 	model := &compactionModel{results: []modelResult{{response: textResponse("invalid json", usage)}}}
-	generator, err := NewGenerator(Config{}, staticModelResolver{model})
+
+	compactor, err := NewCompactor(Config{}, staticModelResolver{model})
 	if err != nil {
 		t.Fatal(err)
 	}
-	generated, err := generator.Generate(context.Background(), nil, []kit.Message{kit.NewUserMessage(kit.NewTextContent("work"))})
+
+	generated, err := compactor.Compact(context.Background(), nil, []kit.Message{kit.NewUserMessage(kit.NewTextContent("work"))})
 	if err == nil {
 		t.Fatal("expected invalid output error")
 	}
-	if generated == nil || generated.Usage != usage {
+
+	if generated.Usage != usage {
 		t.Fatalf("observed usage lost: %+v", generated)
 	}
 }
 
-func TestGeneratorPreservesUsageWhenLaterChunkFails(t *testing.T) {
+func TestCompactorPreservesUsageWhenLaterChunkFails(t *testing.T) {
 	t.Parallel()
+
 	model := &compactionModel{results: []modelResult{
-		{err: kit.ErrContextLength},
+		{response: kit.ModelResponse{Usage: kit.Usage{InputTokens: 4}}, err: kit.ErrContextLength},
 		{response: compactionResponse("partial", kit.Usage{InputTokens: 10, OutputTokens: 2})},
 		{response: textResponse("invalid", kit.Usage{InputTokens: 5, OutputTokens: 1})},
 	}}
-	generator, err := NewGenerator(Config{RetainedTokens: &retainNothing}, staticModelResolver{model})
+
+	compactor, err := NewCompactor(Config{RetainedTokens: &retainNothing}, staticModelResolver{model})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	var messages []kit.Message
+
 	for range 4 {
 		messages = append(messages, kit.NewUserMessage(kit.NewTextContent("work")), kit.NewModelMessage(kit.NewTextContent("response")))
 	}
-	generated, err := generator.Generate(context.Background(), nil, messages)
+
+	generated, err := compactor.Compact(context.Background(), nil, messages)
 	if err == nil {
 		t.Fatal("expected later chunk error")
 	}
-	if generated == nil || generated.Usage != (kit.Usage{InputTokens: 15, OutputTokens: 3}) {
+
+	if generated.Usage != (kit.Usage{InputTokens: 19, OutputTokens: 3}) {
 		t.Fatalf("chunk usage lost: %+v", generated)
 	}
 }

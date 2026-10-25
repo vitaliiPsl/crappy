@@ -63,6 +63,7 @@ func TestAgentCompletesMissingToolResults(t *testing.T) {
 	}
 
 	params := execution.ExecuteParams{SessionID: "session-1", ExecutionID: "execution-1", Entries: store, Events: event.NewBus("session-1", store)}
+
 	memory := NewMemory(params.SessionID, params.ExecutionID, params.Entries, params.Events)
 	if err := (NewExecutor(nil)).completeToolResults(context.Background(), memory, params); err != nil {
 		t.Fatalf("completeToolResults() error = %v", err)
@@ -220,6 +221,7 @@ func TestAgentRepairsToolHistoryBeforeBuilding(t *testing.T) {
 	if entries[1].ExecutionID != "previous" || len(repaired.ToolResults()) != 1 || repaired.ToolResults()[0].Call.ID != call.ID {
 		t.Fatalf("repaired history entry = %+v", entries[1])
 	}
+
 	for _, value := range entries[2:] {
 		if value.ExecutionID != "next" {
 			t.Fatalf("repair changed attribution of subsequent entries: %+v", value)

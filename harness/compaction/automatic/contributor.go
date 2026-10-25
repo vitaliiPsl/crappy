@@ -2,16 +2,15 @@ package automatic
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 
 	adkagent "github.com/vitaliiPsl/crappy-adk/agent"
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
 	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/compaction"
-	"github.com/vitaliipsl/crappy/harness/entry"
+	compactionexec "github.com/vitaliipsl/crappy/harness/compaction/executor"
+	"github.com/vitaliipsl/crappy/harness/execution"
 )
 
 type ContributorOption func(*Contributor)
@@ -29,16 +28,16 @@ func WithEstimator(estimator compaction.Estimator) ContributorOption {
 }
 
 type Contributor struct {
-	generator *compaction.Generator
+	executor  *compactionexec.Executor
 	trigger   Trigger
 	estimator compaction.Estimator
 }
 
 var _ agent.Contributor = (*Contributor)(nil)
 
-func New(generator *compaction.Generator, options ...ContributorOption) *Contributor {
+func New(executor *compactionexec.Executor, options ...ContributorOption) *Contributor {
 	contributor := &Contributor{
-		generator: generator,
+		executor:  executor,
 		trigger:   WhenInputExceedsRatio(DefaultThresholdRatio),
 		estimator: &compaction.CharacterEstimator{},
 	}
@@ -83,8 +82,7 @@ func (c *Contributor) beforeModelRequest(
 			return false, nil
 		}
 
-		err := c.compact(run, build)
-		return err == nil, err
+		return c.compact(run, build)
 	}
 }
 
@@ -100,36 +98,30 @@ func (c *Contributor) onModelError(
 			return err
 		}
 
-		return c.compact(run, build)
+		compacted, compactErr := c.compact(run, build)
+		if compactErr != nil {
+			return compactErr
+		}
+
+		if !compacted {
+			return err
+		}
+
+		return nil
 	}
 }
 
-func (c *Contributor) compact(
-	run *kit.RunContext,
-	build agent.BuildRequest,
-) error {
-	previous, messages, err := loadCompactionContext(run.Context, build.SessionID, build.Entries)
-	if err != nil {
-		return fmt.Errorf("read compaction context: %w", err)
-	}
+func (c *Contributor) compact(run *kit.RunContext, build agent.BuildRequest) (bool, error) {
+	output, err := c.executor.Execute(run.Context, execution.ExecuteParams{
+		SessionID:   build.SessionID,
+		ExecutionID: build.ExecutionID,
+		Entries:     build.Entries,
+		Events:      build.Events,
+	})
+	result := output.(compactionexec.Result)
+	run.Usage.Add(result.Usage)
 
-	if err := build.Events.Emit(run.Context, build.ExecutionID, compaction.StartedEventType, nil); err != nil {
-		return err
-	}
-
-	created, err := c.generator.Generate(run.Context, previous, messages)
-	if created != nil {
-		run.Usage.Add(created.Usage)
-	}
-	if err != nil {
-		return err
-	}
-
-	if err := build.Events.Commit(run.Context, build.ExecutionID, compaction.EntryType, created); err != nil {
-		return fmt.Errorf("commit compaction: %w", err)
-	}
-
-	return nil
+	return result.Compacted, err
 }
 
 func (c *Contributor) inputTokens(
@@ -156,40 +148,4 @@ func messagesAfterLastModelResponse(messages []kit.Message) []kit.Message {
 	}
 
 	return nil
-}
-
-func loadCompactionContext(ctx context.Context, sessionID string, entries entry.Store) (*compaction.Compaction, []kit.Message, error) {
-	latest, found, err := entries.Latest(ctx, sessionID, compaction.EntryType)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	var previous *compaction.Compaction
-	var messages []kit.Message
-	var afterID uint64
-	if found {
-		previous = &compaction.Compaction{}
-		if err := json.Unmarshal(latest.Payload, previous); err != nil {
-			return nil, nil, fmt.Errorf("decode compaction entry %d: %w", latest.ID, err)
-		}
-		messages = append(messages, previous.Retained...)
-		afterID = latest.ID
-	}
-
-	stored, err := entries.List(ctx, sessionID, afterID)
-	if err != nil {
-		return nil, nil, err
-	}
-	for _, value := range stored {
-		if value.Type != agent.MessageEntryType {
-			continue
-		}
-		var message kit.Message
-		if err := json.Unmarshal(value.Payload, &message); err != nil {
-			return nil, nil, fmt.Errorf("decode message entry %d: %w", value.ID, err)
-		}
-		messages = append(messages, message)
-	}
-
-	return previous, messages, nil
 }
