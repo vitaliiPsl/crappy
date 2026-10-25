@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	EntryType        = "checkpoint"
+	EntryType        = "compaction"
 	StartedEventType = "checkpoint.started"
 )
 

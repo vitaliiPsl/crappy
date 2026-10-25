@@ -468,3 +468,44 @@ func textResponse(text string, usage kit.Usage) kit.ModelResponse {
 		Usage:        usage,
 	}
 }
+
+func TestGeneratorPreservesUsageOnInvalidOutput(t *testing.T) {
+	t.Parallel()
+	usage := kit.Usage{InputTokens: 10, OutputTokens: 3}
+	model := &checkpointModel{results: []modelResult{{response: textResponse("invalid json", usage)}}}
+	generator, err := NewGenerator(Config{}, staticModelResolver{model})
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated, err := generator.Generate(context.Background(), nil, []kit.Message{kit.NewUserMessage(kit.NewTextContent("work"))})
+	if err == nil {
+		t.Fatal("expected invalid output error")
+	}
+	if generated == nil || generated.Usage != usage {
+		t.Fatalf("observed usage lost: %+v", generated)
+	}
+}
+
+func TestGeneratorPreservesUsageWhenLaterChunkFails(t *testing.T) {
+	t.Parallel()
+	model := &checkpointModel{results: []modelResult{
+		{err: kit.ErrContextLength},
+		{response: checkpointResponse("partial", kit.Usage{InputTokens: 10, OutputTokens: 2})},
+		{response: textResponse("invalid", kit.Usage{InputTokens: 5, OutputTokens: 1})},
+	}}
+	generator, err := NewGenerator(Config{RetainedTokens: &retainNothing}, staticModelResolver{model})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var messages []kit.Message
+	for range 4 {
+		messages = append(messages, kit.NewUserMessage(kit.NewTextContent("work")), kit.NewModelMessage(kit.NewTextContent("response")))
+	}
+	generated, err := generator.Generate(context.Background(), nil, messages)
+	if err == nil {
+		t.Fatal("expected later chunk error")
+	}
+	if generated == nil || generated.Usage != (kit.Usage{InputTokens: 15, OutputTokens: 3}) {
+		t.Fatalf("chunk usage lost: %+v", generated)
+	}
+}

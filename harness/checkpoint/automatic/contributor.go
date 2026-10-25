@@ -2,6 +2,7 @@ package automatic
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -10,7 +11,7 @@ import (
 
 	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/checkpoint"
-	"github.com/vitaliipsl/crappy/harness/memory"
+	"github.com/vitaliipsl/crappy/harness/entry"
 )
 
 type ContributorOption func(*Contributor)
@@ -57,7 +58,7 @@ func (c *Contributor) Contribute(
 
 	return agent.Contribution{
 		Options: []adkagent.Option{
-			adkagent.WithOnModelRequest(
+			adkagent.WithOnModelRequestReady(
 				c.beforeModelRequest(build.Request, inputLimit),
 			),
 			adkagent.WithOnModelError(
@@ -70,19 +71,20 @@ func (c *Contributor) Contribute(
 func (c *Contributor) beforeModelRequest(
 	build agent.BuildRequest,
 	inputLimit int,
-) kit.OnModelRequest {
+) kit.OnModelRequestReady {
 	return func(
 		run *kit.RunContext,
 		request kit.ModelRequest,
-	) (kit.ModelRequest, error) {
+	) (bool, error) {
 		if !c.trigger.ShouldTrigger(TriggerRequest{
 			InputTokens: c.inputTokens(run, request),
 			InputLimit:  inputLimit,
 		}) {
-			return request, nil
+			return false, nil
 		}
 
-		return c.compact(run, build, request)
+		err := c.compact(run, build)
+		return err == nil, err
 	}
 }
 
@@ -91,52 +93,43 @@ func (c *Contributor) onModelError(
 ) kit.OnModelError {
 	return func(
 		run *kit.RunContext,
-		request kit.ModelRequest,
+		_ kit.ModelRequest,
 		err error,
-	) (kit.ModelRequest, error) {
+	) error {
 		if !errors.Is(err, kit.ErrContextLength) {
-			return kit.ModelRequest{}, err
+			return err
 		}
 
-		return c.compact(run, build, request)
+		return c.compact(run, build)
 	}
 }
 
 func (c *Contributor) compact(
 	run *kit.RunContext,
 	build agent.BuildRequest,
-	request kit.ModelRequest,
-) (kit.ModelRequest, error) {
-	agentMemory := memory.New(build.SessionID, build.ExecutionID, build.Entries, build.Events)
-
-	previous, messages, err := agentMemory.Current(run.Context)
+) error {
+	previous, messages, err := loadCheckpointContext(run.Context, build.SessionID, build.Entries)
 	if err != nil {
-		return kit.ModelRequest{}, fmt.Errorf("read checkpoint context: %w", err)
+		return fmt.Errorf("read checkpoint context: %w", err)
 	}
 
 	if err := build.Events.Emit(run.Context, build.ExecutionID, checkpoint.StartedEventType, nil); err != nil {
-		return kit.ModelRequest{}, err
+		return err
 	}
 
 	created, err := c.generator.Generate(run.Context, previous, messages)
+	if created != nil {
+		run.Usage.Add(created.Usage)
+	}
 	if err != nil {
-		return kit.ModelRequest{}, err
+		return err
 	}
 
 	if err := build.Events.Commit(run.Context, build.ExecutionID, checkpoint.EntryType, created); err != nil {
-		return kit.ModelRequest{}, fmt.Errorf("commit checkpoint: %w", err)
+		return fmt.Errorf("commit checkpoint: %w", err)
 	}
 
-	run.Usage.Add(created.Usage)
-
-	messages, err = run.Memory.Context(run.Context)
-	if err != nil {
-		return kit.ModelRequest{}, err
-	}
-
-	request.Messages = messages
-
-	return request, nil
+	return nil
 }
 
 func (c *Contributor) inputTokens(
@@ -163,4 +156,40 @@ func messagesAfterLastModelResponse(messages []kit.Message) []kit.Message {
 	}
 
 	return nil
+}
+
+func loadCheckpointContext(ctx context.Context, sessionID string, entries entry.Store) (*checkpoint.Checkpoint, []kit.Message, error) {
+	latest, found, err := entries.Latest(ctx, sessionID, checkpoint.EntryType)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var previous *checkpoint.Checkpoint
+	var messages []kit.Message
+	var afterID uint64
+	if found {
+		previous = &checkpoint.Checkpoint{}
+		if err := json.Unmarshal(latest.Payload, previous); err != nil {
+			return nil, nil, fmt.Errorf("decode compaction entry %d: %w", latest.ID, err)
+		}
+		messages = append(messages, previous.Retained...)
+		afterID = latest.ID
+	}
+
+	stored, err := entries.List(ctx, sessionID, afterID)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, value := range stored {
+		if value.Type != agent.MessageEntryType {
+			continue
+		}
+		var message kit.Message
+		if err := json.Unmarshal(value.Payload, &message); err != nil {
+			return nil, nil, fmt.Errorf("decode message entry %d: %w", value.ID, err)
+		}
+		messages = append(messages, message)
+	}
+
+	return previous, messages, nil
 }

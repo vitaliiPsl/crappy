@@ -16,7 +16,6 @@ import (
 	"github.com/vitaliipsl/crappy/harness/checkpoint"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
-	"github.com/vitaliipsl/crappy/harness/memory"
 )
 
 func TestEventsUpdateTranscript(t *testing.T) {
@@ -28,7 +27,7 @@ func TestEventsUpdateTranscript(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	model.applyEvent(event.Event{Type: memory.EntryType, Payload: input})
+	model.applyEvent(event.Event{Type: agent.MessageEntryType, Payload: input})
 
 	agentEvent, err := json.Marshal(
 		kit.NewAgentContentDeltaEvent(kit.NewTextContent("world")),
@@ -206,7 +205,7 @@ func TestMouseWheelScrollsTranscript(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		model.applyEvent(event.Event{Type: memory.EntryType, Payload: input})
+		model.applyEvent(event.Event{Type: agent.MessageEntryType, Payload: input})
 	}
 
 	bottom := model.View().Content

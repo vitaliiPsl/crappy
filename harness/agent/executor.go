@@ -9,8 +9,9 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
 	"github.com/vitaliipsl/crappy/harness/execution"
-	"github.com/vitaliipsl/crappy/harness/memory"
 )
+
+var errUnrecordedToolResult = errors.New("tool result was not recorded before execution ended; the tool may have changed external state, so verify it before retrying")
 
 const (
 	ExecutorName      = "agent"
@@ -37,16 +38,15 @@ func (e *Executor) Execute(ctx context.Context, params execution.ExecuteParams) 
 		return nil, fmt.Errorf("decode agent input: %w", err)
 	}
 
-	if err := e.completeToolResults(ctx, params); err != nil {
+	memory := NewMemory(params.SessionID, params.ExecutionID, params.Entries, params.Events)
+	if err := e.completeToolResults(ctx, memory, params); err != nil {
 		return nil, err
 	}
-
-	agentMemory := memory.New(params.SessionID, params.ExecutionID, params.Entries, params.Events)
 
 	built, err := e.factory.Build(ctx, BuildRequest{
 		SessionID:   params.SessionID,
 		ExecutionID: params.ExecutionID,
-		Memory:      agentMemory,
+		Memory:      memory,
 		Entries:     params.Entries,
 		Events:      params.Events,
 	})
@@ -71,7 +71,7 @@ func (e *Executor) Execute(ctx context.Context, params execution.ExecuteParams) 
 	}
 
 	if runErr != nil {
-		runErr = errors.Join(runErr, e.completeToolResults(context.WithoutCancel(ctx), params))
+		runErr = errors.Join(runErr, e.completeToolResults(context.WithoutCancel(ctx), memory, params))
 	}
 
 	if err := params.Events.Commit(context.WithoutCancel(ctx), params.ExecutionID, FinishedEntryType,
@@ -86,12 +86,8 @@ func (e *Executor) Execute(ctx context.Context, params execution.ExecuteParams) 
 	return response, runErr
 }
 
-var errUnrecordedToolResult = errors.New("tool result was not recorded before execution ended; the tool may have changed external state, so verify it before retrying")
-
-func (*Executor) completeToolResults(ctx context.Context, params execution.ExecuteParams) error {
-	agentMemory := memory.New(params.SessionID, params.ExecutionID, params.Entries, params.Events)
-
-	_, messages, err := agentMemory.Current(ctx)
+func (*Executor) completeToolResults(ctx context.Context, memory kit.Memory, params execution.ExecuteParams) error {
+	messages, err := memory.Context(ctx)
 	if err != nil {
 		return fmt.Errorf("read context: %w", err)
 	}
@@ -101,17 +97,16 @@ func (*Executor) completeToolResults(ctx context.Context, params execution.Execu
 		return nil
 	}
 
-	latest, _, err := params.Entries.Latest(ctx, params.SessionID, memory.EntryType)
+	latest, _, err := params.Entries.Latest(ctx, params.SessionID, MessageEntryType)
 	if err != nil {
 		return fmt.Errorf("find tool execution: %w", err)
 	}
 
-	agentMemory = memory.New(params.SessionID, latest.ExecutionID, params.Entries, params.Events)
 	for _, call := range calls {
 		result := kit.NewToolResult(call, kit.ToolOutput{}, errUnrecordedToolResult)
 		message := kit.NewToolMessage(kit.NewToolResultContent(result))
 
-		if err := agentMemory.Record(ctx, message); err != nil {
+		if err := params.Events.Commit(ctx, latest.ExecutionID, MessageEntryType, message); err != nil {
 			return fmt.Errorf("record result for tool call %s: %w", call.ID, err)
 		}
 	}

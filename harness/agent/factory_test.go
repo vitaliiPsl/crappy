@@ -9,7 +9,8 @@ import (
 	adkagent "github.com/vitaliiPsl/crappy-adk/agent"
 	"github.com/vitaliiPsl/crappy-adk/kit"
 	"github.com/vitaliiPsl/crappy-adk/kittest"
-	"github.com/vitaliiPsl/crappy-adk/x/memory"
+	"github.com/vitaliipsl/crappy/harness/entry"
+	"github.com/vitaliipsl/crappy/harness/event"
 )
 
 func TestFactoryBuild(t *testing.T) {
@@ -36,9 +37,7 @@ func TestFactoryBuild(t *testing.T) {
 		WithTools(baseTool),
 	)
 
-	built, err := factory.Build(context.Background(), BuildRequest{
-		Memory: memory.NewHistory(),
-	})
+	built, err := factory.Build(context.Background(), testBuildRequest())
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
@@ -76,16 +75,12 @@ func TestFactoryBuildsFreshAgents(t *testing.T) {
 	model := kittest.NewModel(t)
 	factory := New(kit.AgentConfig{}, staticModelResolver{model})
 
-	first, err := factory.Build(context.Background(), BuildRequest{
-		Memory: memory.NewHistory(),
-	})
+	first, err := factory.Build(context.Background(), testBuildRequest())
 	if err != nil {
 		t.Fatalf("first Build() error = %v", err)
 	}
 
-	second, err := factory.Build(context.Background(), BuildRequest{
-		Memory: memory.NewHistory(),
-	})
+	second, err := factory.Build(context.Background(), testBuildRequest())
 	if err != nil {
 		t.Fatalf("second Build() error = %v", err)
 	}
@@ -104,7 +99,7 @@ func TestFactoryBuildAppliesContributions(t *testing.T) {
 			FinishReason: kit.FinishReasonStop,
 		},
 	})
-	history := memory.NewHistory()
+	buildRequest := testBuildRequest()
 	contributedTool := kittest.NewTool(t, "search", "Search for information")
 
 	type contextKey struct{}
@@ -118,8 +113,8 @@ func TestFactoryBuildAppliesContributions(t *testing.T) {
 			t.Fatalf("context value = %v, want %v", got, want)
 		}
 
-		if build.Request.Memory != history {
-			t.Fatal("BuildContext.Request.Memory does not contain the build memory")
+		if build.Request.Memory != buildRequest.Memory || build.Request.Entries != buildRequest.Entries || build.Request.Events != buildRequest.Events {
+			t.Fatal("BuildContext does not contain the supplied history capabilities")
 		}
 
 		if got, want := build.Request.SessionID, "session-1"; got != want {
@@ -137,7 +132,15 @@ func TestFactoryBuildAppliesContributions(t *testing.T) {
 		return Contribution{
 			Instructions: []string{"Use tools when useful."},
 			Tools:        []kit.Tool{contributedTool},
-			Options:      []adkagent.Option{adkagent.WithTemperature(0.5)},
+			Options: []adkagent.Option{
+				adkagent.WithTemperature(0.5),
+				adkagent.WithOnTurnStart(func(run *kit.RunContext) error {
+					if run.Memory != build.Request.Memory {
+						t.Fatal("agent did not use the supplied memory")
+					}
+					return nil
+				}),
+			},
 		}, nil
 	})
 	factory := New(
@@ -147,11 +150,7 @@ func TestFactoryBuildAppliesContributions(t *testing.T) {
 		WithContributors(contributor),
 	)
 
-	built, err := factory.Build(ctx, BuildRequest{
-		SessionID:   "session-1",
-		ExecutionID: "execution-1",
-		Memory:      history,
-	})
+	built, err := factory.Build(ctx, buildRequest)
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
@@ -189,9 +188,7 @@ func TestFactoryBuildReturnsContributorError(t *testing.T) {
 		),
 	)
 
-	_, err := factory.Build(context.Background(), BuildRequest{
-		Memory: memory.NewHistory(),
-	})
+	_, err := factory.Build(context.Background(), testBuildRequest())
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("Build() error = %v, want %v", err, wantErr)
 	}
@@ -222,9 +219,7 @@ func TestFactoryAppliesToolMiddleware(t *testing.T) {
 		}),
 	)
 
-	if _, err := factory.Build(context.Background(), BuildRequest{
-		Memory: memory.NewHistory(),
-	}); err != nil {
+	if _, err := factory.Build(context.Background(), testBuildRequest()); err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
 
@@ -240,4 +235,16 @@ type staticModelResolver struct {
 
 func (r staticModelResolver) Resolve(context.Context) (kit.Model, error) {
 	return r.model, nil
+}
+
+func testBuildRequest() BuildRequest {
+	store := entry.NewMemoryStore()
+	events := event.NewBus("session-1", store)
+	return BuildRequest{
+		SessionID:   "session-1",
+		ExecutionID: "execution-1",
+		Memory:      NewMemory("session-1", "execution-1", store, events),
+		Entries:     store,
+		Events:      events,
+	}
 }

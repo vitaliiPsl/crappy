@@ -9,12 +9,11 @@ import (
 	"github.com/vitaliipsl/crappy/harness/checkpoint"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
-	"github.com/vitaliipsl/crappy/harness/memory"
 )
 
 func (m *Model) applyEvent(value event.Event) {
 	switch value.Type {
-	case memory.EntryType:
+	case agent.MessageEntryType:
 		var message kit.Message
 		if err := json.Unmarshal(value.Payload, &message); err != nil {
 			m.notice = errorNotice(err)

@@ -87,7 +87,7 @@ func (g *Generator) Generate(
 	previous *Checkpoint,
 	messages []kit.Message,
 ) (*Checkpoint, error) {
-	if len(messages) == 0 {
+	if previous == nil && len(messages) == 0 {
 		return nil, errors.New("no messages to checkpoint")
 	}
 
@@ -95,7 +95,7 @@ func (g *Generator) Generate(
 
 	checkpoint, err := g.summarize(ctx, previous, messages[:keepFrom])
 	if err != nil {
-		return nil, err
+		return checkpoint, err
 	}
 
 	checkpoint.Retained = messages[keepFrom:]
@@ -151,7 +151,14 @@ func (g *Generator) summarize(
 		return checkpoint, err
 	}
 
-	return g.generateChunks(ctx, resolved, previous, messages)
+	chunks, chunkErr := g.generateChunks(ctx, resolved, previous, messages)
+	if checkpoint != nil {
+		if chunks == nil {
+			chunks = &Checkpoint{}
+		}
+		chunks.Usage.Add(checkpoint.Usage)
+	}
+	return chunks, chunkErr
 }
 
 func (g *Generator) generate(
@@ -176,7 +183,7 @@ func (g *Generator) generate(
 		OutputSchema: &g.schema,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("generate checkpoint: %w", err)
+		return &Checkpoint{Usage: response.Usage}, fmt.Errorf("generate checkpoint: %w", err)
 	}
 
 	return g.generatorOutput(response)
@@ -199,8 +206,10 @@ func (g *Generator) generateChunks(
 		chunk, remaining := firstTurns(messages, chunkTurns)
 
 		generated, err := g.generate(ctx, model, checkpoint, chunk)
-		if err == nil {
+		if generated != nil {
 			usage.Add(generated.Usage)
+		}
+		if err == nil {
 			generated.Usage = usage
 			checkpoint = generated
 			messages = remaining
@@ -209,12 +218,12 @@ func (g *Generator) generateChunks(
 		}
 
 		if !errors.Is(err, kit.ErrContextLength) {
-			return nil, err
+			return &Checkpoint{Usage: usage}, err
 		}
 
 		chunkTurns = countTurns(chunk) / 2
 		if chunkTurns == 0 {
-			return nil, ErrContextOverflow
+			return &Checkpoint{Usage: usage}, ErrContextOverflow
 		}
 	}
 
@@ -243,30 +252,32 @@ func (g *Generator) generatorInput(previous *Checkpoint, messages []kit.Message)
 }
 
 func (g *Generator) generatorOutput(response kit.ModelResponse) (*Checkpoint, error) {
+	result := &Checkpoint{Usage: response.Usage}
 	switch response.FinishReason {
 	case kit.FinishReasonToolCall:
-		return nil, errors.New("checkpoint model returned an unexpected tool call")
+		return result, errors.New("checkpoint model returned an unexpected tool call")
 	case kit.FinishReasonSafety:
-		return nil, errors.New("checkpoint model response was blocked by a safety filter")
+		return result, errors.New("checkpoint model response was blocked by a safety filter")
 	case kit.FinishReasonMaxTokens:
-		return nil, errors.New("checkpoint model returned a truncated response")
+		return result, errors.New("checkpoint model returned a truncated response")
 	}
 
 	text := response.Message.TextContent()
 	if text == nil || strings.TrimSpace(text.Text) == "" {
-		return nil, errors.New("checkpoint model returned an empty response")
+		return result, errors.New("checkpoint model returned an empty response")
 	}
 
 	var summary Summary
 	if err := json.Unmarshal([]byte(text.Text), &summary); err != nil {
-		return nil, fmt.Errorf("decode checkpoint: %w", err)
+		return result, fmt.Errorf("decode checkpoint: %w", err)
 	}
 
 	if strings.TrimSpace(summary.Objective) == "" {
-		return nil, errors.New("checkpoint model returned no objective")
+		return result, errors.New("checkpoint model returned no objective")
 	}
 
-	return &Checkpoint{Summary: summary, Usage: response.Usage}, nil
+	result.Summary = summary
+	return result, nil
 }
 
 func countTurns(messages []kit.Message) int {

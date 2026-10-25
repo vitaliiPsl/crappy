@@ -80,7 +80,7 @@ func (f *Factory) Build(ctx context.Context, request BuildRequest) (kit.Agent, e
 
 	return adkagent.New(
 		build.Model,
-		build.Request.Memory,
+		request.Memory,
 		adktool.NewSet(tools...),
 		options...,
 	)

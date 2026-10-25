@@ -12,7 +12,6 @@ import (
 	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
-	"github.com/vitaliipsl/crappy/harness/memory"
 )
 
 func TestAgentCompletesMissingToolResults(t *testing.T) {
@@ -63,7 +62,9 @@ func TestAgentCompletesMissingToolResults(t *testing.T) {
 		t.Fatalf("Append() error = %v", err)
 	}
 
-	if err := (NewExecutor(nil)).completeToolResults(context.Background(), execution.ExecuteParams{SessionID: "session-1", ExecutionID: "execution-1", Entries: store, Events: event.NewBus("session-1", store)}); err != nil {
+	params := execution.ExecuteParams{SessionID: "session-1", ExecutionID: "execution-1", Entries: store, Events: event.NewBus("session-1", store)}
+	memory := NewMemory(params.SessionID, params.ExecutionID, params.Entries, params.Events)
+	if err := (NewExecutor(nil)).completeToolResults(context.Background(), memory, params); err != nil {
 		t.Fatalf("completeToolResults() error = %v", err)
 	}
 
@@ -169,7 +170,7 @@ func TestAgentRepairsToolHistoryBeforeBuilding(t *testing.T) {
 	}
 
 	if _, err := store.Store.Append(context.Background(), "session-1", entry.Entry{
-		ExecutionID: "previous", Type: memory.EntryType, Payload: payload,
+		ExecutionID: "previous", Type: MessageEntryType, Payload: payload,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -219,6 +220,11 @@ func TestAgentRepairsToolHistoryBeforeBuilding(t *testing.T) {
 	if entries[1].ExecutionID != "previous" || len(repaired.ToolResults()) != 1 || repaired.ToolResults()[0].Call.ID != call.ID {
 		t.Fatalf("repaired history entry = %+v", entries[1])
 	}
+	for _, value := range entries[2:] {
+		if value.ExecutionID != "next" {
+			t.Fatalf("repair changed attribution of subsequent entries: %+v", value)
+		}
+	}
 }
 
 type messageFailingStore struct {
@@ -229,7 +235,7 @@ type messageFailingStore struct {
 
 func (s *messageFailingStore) Append(ctx context.Context, sessionID string, values ...entry.Entry) ([]entry.Entry, error) {
 	for _, value := range values {
-		if s.failing && value.Type == memory.EntryType {
+		if s.failing && value.Type == MessageEntryType {
 			return nil, s.failure
 		}
 	}
