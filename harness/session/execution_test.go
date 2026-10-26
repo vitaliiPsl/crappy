@@ -37,7 +37,7 @@ func TestExecuteMaintainsContext(t *testing.T) {
 	)
 	store := entry.NewMemoryStore()
 
-	session := newAgentSession(context.Background(),
+	session := newAgentSession(context.Background(), t,
 		"session-1",
 		store,
 		agent.New(kit.AgentConfig{}, staticModelResolver{model}))
@@ -174,7 +174,7 @@ func TestExecuteRejectsConcurrentExecution(t *testing.T) {
 		release: make(chan struct{}),
 	}
 
-	session := newAgentSession(context.Background(),
+	session := newAgentSession(context.Background(), t,
 		"session-1",
 		entry.NewMemoryStore(),
 		agent.New(kit.AgentConfig{}, staticModelResolver{model}))
@@ -202,10 +202,6 @@ func TestExecuteRejectsConcurrentExecution(t *testing.T) {
 		t.Fatalf("concurrent Execute() error = %v, want ErrBusy", err)
 	}
 
-	if err := session.Recover(context.Background()); !errors.Is(err, ErrBusy) {
-		t.Fatalf("recovery during execution = %v, want ErrBusy", err)
-	}
-
 	close(model.release)
 	waitSessionIdle(t, session)
 }
@@ -216,7 +212,7 @@ func TestExecuteRecordsFailure(t *testing.T) {
 	wantErr := errors.New("model failed")
 	model := kittest.NewModel(t, kittest.ModelResult{Error: wantErr})
 
-	session := newAgentSession(context.Background(),
+	session := newAgentSession(context.Background(), t,
 		"session-1",
 		entry.NewMemoryStore(),
 		agent.New(kit.AgentConfig{}, staticModelResolver{model}))
@@ -260,7 +256,7 @@ func TestCancelActiveExecution(t *testing.T) {
 		release: make(chan struct{}),
 	}
 
-	session := newAgentSession(context.Background(),
+	session := newAgentSession(context.Background(), t,
 		"session-1",
 		entry.NewMemoryStore(),
 		agent.New(kit.AgentConfig{}, staticModelResolver{model}))
@@ -310,7 +306,7 @@ func TestSessionLifetimeCancelsActiveExecution(t *testing.T) {
 		release: make(chan struct{}),
 	}
 
-	session := newAgentSession(ctx,
+	session := newAgentSession(ctx, t,
 		"session-1",
 		entry.NewMemoryStore(),
 		agent.New(kit.AgentConfig{}, staticModelResolver{model}))
@@ -341,7 +337,7 @@ func TestSessionLifetimeCancelsActiveExecution(t *testing.T) {
 func TestCloseRejectsExecution(t *testing.T) {
 	t.Parallel()
 
-	session := newAgentSession(context.Background(),
+	session := newAgentSession(context.Background(), t,
 		"session-1",
 		entry.NewMemoryStore(),
 		agent.New(kit.AgentConfig{}, staticModelResolver{kittest.NewModel(t)}))
@@ -363,7 +359,7 @@ func TestCloseCancelsActiveExecution(t *testing.T) {
 		release: make(chan struct{}),
 	}
 
-	session := newAgentSession(context.Background(),
+	session := newAgentSession(context.Background(), t,
 		"session-1",
 		entry.NewMemoryStore(),
 		agent.New(kit.AgentConfig{}, staticModelResolver{model}))
@@ -447,6 +443,17 @@ type finishFailingStore struct {
 	err      error
 	failing  atomic.Bool
 	finishes atomic.Int32
+	reads    atomic.Int32
+}
+
+func newFinishFailingStore(err error) *finishFailingStore {
+	return &finishFailingStore{Store: entry.NewMemoryStore(), err: err}
+}
+
+func (s *finishFailingStore) Latest(ctx context.Context, sessionID, entryType string) (entry.Entry, bool, error) {
+	s.reads.Add(1)
+
+	return s.Store.Latest(ctx, sessionID, entryType)
 }
 
 func (s *finishFailingStore) Append(
@@ -516,7 +523,7 @@ func TestFunctionExecutionUsesSessionLifetimeAndDetachedInput(t *testing.T) {
 		return nil, params.Events.Commit(ctx, params.ExecutionID, "function.output", params.Input)
 	})
 
-	session := newExecutorSession(context.Background(), "session-1", store, "function", executor)
+	session := newExecutorSession(context.Background(), t, "session-1", store, "function", executor)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -580,7 +587,7 @@ func TestExecuteValidatesBeforeRecording(t *testing.T) {
 		return nil, nil
 	})
 
-	session := newExecutorSession(context.Background(), "session-1", entry.NewMemoryStore(), "work", executor)
+	session := newExecutorSession(context.Background(), t, "session-1", entry.NewMemoryStore(), "work", executor)
 
 	for _, request := range []execution.Request{
 		{Executor: "missing"},
@@ -605,211 +612,6 @@ func TestExecuteValidatesBeforeRecording(t *testing.T) {
 	}
 }
 
-func TestTerminalPersistenceFailureRetainsOutcome(t *testing.T) {
-	t.Parallel()
-
-	for _, runErr := range []error{nil, errors.New("function failed")} {
-		t.Run(fmt.Sprint(runErr), func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-
-			store := &finishFailingStore{Store: entry.NewMemoryStore(), err: errors.New("storage unavailable")}
-			store.failing.Store(true)
-
-			var calls atomic.Int32
-
-			executor := execution.Func(func(context.Context, execution.ExecuteParams) (any, error) {
-				calls.Add(1)
-
-				return nil, runErr
-			})
-
-			session := newExecutorSession(context.Background(), "session-1", store, "work", executor)
-
-			request := execution.Request{Executor: "work"}
-
-			first, err := session.Execute(context.Background(), request)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			if _, err := first.Wait(ctx); !errors.Is(err, store.err) {
-				t.Fatalf("terminal persistence error = %v", err)
-			}
-
-			if err := session.Cancel(context.Background(), first.ID()); !errors.Is(err, ErrExecutionNotActive) {
-				t.Fatalf("cancel after invocation returned = %v", err)
-			}
-
-			if _, err := session.Execute(context.Background(), request); !errors.Is(err, ErrBusy) {
-				t.Fatalf("submission after failed commit = %v", err)
-			}
-
-			if err := session.Recover(ctx); !errors.Is(err, store.err) {
-				t.Fatalf("retry after failed commit = %v", err)
-			}
-
-			store.failing.Store(false)
-
-			if _, err := session.Execute(ctx, request); !errors.Is(err, ErrBusy) {
-				t.Fatalf("submission retried persistence = %v", err)
-			}
-
-			if err := session.Recover(ctx); err != nil {
-				t.Fatal(err)
-			}
-
-			if _, err := session.Execute(context.Background(), request); err != nil {
-				t.Fatal(err)
-			}
-
-			waitSessionIdle(t, session)
-
-			entries, err := session.Entries(context.Background(), 0)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			var finished execution.Result
-			if err := json.Unmarshal(entries[1].Payload, &finished); err != nil {
-				t.Fatal(err)
-			}
-
-			want := execution.Completed
-			if runErr != nil {
-				want = execution.Failed
-
-				if finished.Error != runErr.Error() {
-					t.Fatalf("original failure was lost: %+v", finished)
-				}
-			}
-
-			if finished.Outcome != want || finished.EndedAt.IsZero() || entries[1].ExecutionID != first.ID() || calls.Load() != 2 {
-				t.Fatalf("recovered result = %+v, calls = %d", finished, calls.Load())
-			}
-		})
-	}
-}
-
-func TestSubmissionRequiresRecoveryBeforeInvokingExecutor(t *testing.T) {
-	t.Parallel()
-
-	store := &finishFailingStore{Store: entry.NewMemoryStore(), err: errors.New("storage unavailable")}
-
-	bus := event.NewBus("session-1", store)
-	if err := bus.Commit(context.Background(), "unfinished", execution.StartedEntryType, execution.Started{
-		Executor: "removed-executor", Input: json.RawMessage(`{"value":1}`),
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	var calls atomic.Int32
-
-	executor := execution.Func(func(ctx context.Context, params execution.ExecuteParams) (any, error) {
-		calls.Add(1)
-
-		entries, err := params.Entries.List(ctx, params.SessionID, 0)
-		if err != nil {
-			return nil, err
-		}
-
-		if len(entries) != 3 || entries[1].Type != execution.FinishedEntryType {
-			t.Errorf("new work started before recovery: %+v", entries)
-		}
-
-		return nil, nil
-	})
-
-	session := newExecutorSession(context.Background(), "session-1", store, "work", executor)
-
-	before, err := session.Entries(context.Background(), 0)
-	if err != nil || len(before) != 1 {
-		t.Fatalf("opening changed entries: %+v, %v", before, err)
-	}
-
-	store.failing.Store(true)
-
-	request := execution.Request{Executor: "work"}
-	if _, err := session.Execute(context.Background(), request); !errors.Is(err, ErrExecutionUnfinished) {
-		t.Fatalf("submission before recovery = %v", err)
-	}
-
-	if store.finishes.Load() != 0 {
-		t.Fatal("submission attempted recovery")
-	}
-
-	if err := session.Recover(context.Background()); !errors.Is(err, store.err) {
-		t.Fatalf("recovery persistence error = %v", err)
-	}
-
-	if calls.Load() != 0 {
-		t.Fatal("executor ran before recovery was durable")
-	}
-
-	if _, err := session.Execute(context.Background(), request); !errors.Is(err, ErrBusy) {
-		t.Fatalf("repeated submission error = %v", err)
-	}
-
-	store.failing.Store(false)
-
-	if err := session.Recover(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := session.Execute(context.Background(), request); err != nil {
-		t.Fatal(err)
-	}
-
-	waitSessionIdle(t, session)
-
-	entries, err := session.Entries(context.Background(), 0)
-	if err != nil || len(entries) != 4 {
-		t.Fatalf("recovered journal = %+v, %v", entries, err)
-	}
-
-	var previous execution.Result
-	if err := json.Unmarshal(entries[1].Payload, &previous); err != nil {
-		t.Fatal(err)
-	}
-
-	if previous.Outcome != execution.Interrupted || calls.Load() != 1 {
-		t.Fatalf("previous outcome = %+v, calls = %d", previous, calls.Load())
-	}
-}
-
-func TestSubmissionPreservesPreviouslyFinishedExecution(t *testing.T) {
-	t.Parallel()
-
-	store := entry.NewMemoryStore()
-
-	bus := event.NewBus("session-1", store)
-	if err := bus.Commit(context.Background(), "completed", execution.StartedEntryType, execution.Started{Executor: "work"}); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := bus.Commit(context.Background(), "completed", execution.FinishedEntryType, execution.Result{Outcome: execution.Completed}); err != nil {
-		t.Fatal(err)
-	}
-
-	executor := execution.Func(func(context.Context, execution.ExecuteParams) (any, error) { return nil, nil })
-	session := newExecutorSession(context.Background(), "session-1", store, "work", executor)
-
-	if err := session.Recover(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := session.Execute(context.Background(), execution.Request{Executor: "work"}); err != nil {
-		t.Fatal(err)
-	}
-
-	waitSessionIdle(t, session)
-
-	entries, err := session.Entries(context.Background(), 0)
-	if err != nil || len(entries) != 4 {
-		t.Fatalf("completed execution changed: %+v, %v", entries, err)
-	}
-}
-
 func TestExecutionWaitReturnsDurableOutputToIndependentClients(t *testing.T) {
 	t.Parallel()
 
@@ -826,7 +628,7 @@ func TestExecutionWaitReturnsDurableOutputToIndependentClients(t *testing.T) {
 		}
 	})
 
-	session := newExecutorSession(ctx, "session-1", entry.NewMemoryStore(), "work", executor)
+	session := newExecutorSession(ctx, t, "session-1", entry.NewMemoryStore(), "work", executor)
 	defer session.Close()
 
 	current, err := session.Execute(ctx, execution.Request{Executor: "work"})
@@ -912,7 +714,7 @@ func TestExecutionResultSeparatesWorkFailuresFromWaitErrors(t *testing.T) {
 				return test.output, test.err
 			})
 
-			session := newExecutorSession(ctx, "session-1", entry.NewMemoryStore(), "work", executor)
+			session := newExecutorSession(ctx, t, "session-1", entry.NewMemoryStore(), "work", executor)
 			defer session.Close()
 
 			current, err := session.Execute(ctx, execution.Request{Executor: "work"})
@@ -941,7 +743,7 @@ func TestExecutionLookupDoesNotRetryPersistence(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	store := &finishFailingStore{Store: entry.NewMemoryStore(), err: errors.New("storage unavailable")}
+	store := newFinishFailingStore(errors.New("storage unavailable"))
 	store.failing.Store(true)
 
 	var calls atomic.Int32
@@ -952,7 +754,7 @@ func TestExecutionLookupDoesNotRetryPersistence(t *testing.T) {
 		return map[string]int{"value": 42}, errors.New("work failed")
 	})
 
-	session := newExecutorSession(ctx, "session-1", store, "work", executor)
+	session := newExecutorSession(ctx, t, "session-1", store, "work", executor)
 	defer session.Close()
 
 	current, err := session.Execute(ctx, execution.Request{Executor: "work"})
@@ -964,7 +766,7 @@ func TestExecutionLookupDoesNotRetryPersistence(t *testing.T) {
 		t.Fatalf("failed persistence was not observable: %v", err)
 	}
 
-	if err := session.Cancel(ctx, current.ID()); !errors.Is(err, ErrExecutionNotActive) {
+	if err := session.Cancel(ctx, current.ID()); !errors.Is(err, ErrClosed) {
 		t.Fatalf("finished work remained cancellable: %v", err)
 	}
 
@@ -975,12 +777,11 @@ func TestExecutionLookupDoesNotRetryPersistence(t *testing.T) {
 	current.mu.RUnlock()
 
 	for range 3 {
-		attached, err := session.Execution(ctx, current.ID())
-		if err != nil || attached != current {
-			t.Fatalf("reattached execution = %v, %v", attached, err)
+		if _, err := session.Execution(ctx, current.ID()); !errors.Is(err, ErrExecutionUnfinished) {
+			t.Fatalf("uncommitted execution lookup = %v", err)
 		}
 
-		if _, err := attached.Wait(ctx); !errors.Is(err, store.err) {
+		if _, err := current.Wait(ctx); !errors.Is(err, store.err) {
 			t.Fatalf("lookup changed persistence error = %v", err)
 		}
 	}
@@ -989,31 +790,21 @@ func TestExecutionLookupDoesNotRetryPersistence(t *testing.T) {
 		t.Fatal("lookup retried persistence")
 	}
 
-	if err := session.Recover(ctx); err != nil {
-		t.Fatal(err)
+	if next, err := session.Execute(ctx, execution.Request{Executor: "work"}); next != nil || !errors.Is(err, ErrClosed) {
+		t.Fatalf("admission after persistence failure = %v, error = %v", next, err)
 	}
 
-	result, err := current.Wait(ctx)
-	if err != nil || result.Outcome != execution.Failed || result.Error != "work failed" || string(result.Output) != `{"value":42}` {
-		t.Fatalf("original result was lost: %+v, %v", result, err)
+	current.mu.RLock()
+	retained := *current.result
+	current.mu.RUnlock()
+
+	if retained.Outcome != original.Outcome || retained.Error != original.Error ||
+		!retained.EndedAt.Equal(original.EndedAt) || string(retained.Output) != string(original.Output) {
+		t.Fatalf("retained result changed: %+v", retained)
 	}
 
-	if !result.EndedAt.Equal(original.EndedAt) {
-		t.Fatal("recovery changed the completion time")
-	}
-
-	if calls.Load() != 1 {
-		t.Fatal("retrying persistence reran the executor")
-	}
-
-	loaded, err := session.Execution(ctx, current.ID())
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	stored, err := loaded.Wait(ctx)
-	if err != nil || !stored.EndedAt.Equal(result.EndedAt) || string(stored.Output) != string(result.Output) {
-		t.Fatalf("persisted result differs from retained result: %+v, %v", stored, err)
+	if calls.Load() != 1 || store.finishes.Load() != 1 {
+		t.Fatal("observation or admission retried failed settlement")
 	}
 }
 
@@ -1034,7 +825,7 @@ func TestExecutionDoneWaitsForPersistence(t *testing.T) {
 		return "done", nil
 	})
 
-	session := newExecutorSession(ctx, "session-1", store, "work", executor)
+	session := newExecutorSession(ctx, t, "session-1", store, "work", executor)
 	defer session.Close()
 	defer release()
 
@@ -1092,6 +883,9 @@ func TestExecutionLookupLeavesUnfinishedHistoryUntouched(t *testing.T) {
 	ctx := context.Background()
 	store := entry.NewMemoryStore()
 
+	session := newSession(ctx, t, "session-1", store, execution.NewRegistry())
+	defer session.Close()
+
 	if _, err := store.Append(ctx, "session-1",
 		entry.Entry{ExecutionID: "old", Type: execution.StartedEntryType, Payload: json.RawMessage(`{}`)},
 		entry.Entry{ExecutionID: "old", Type: execution.FinishedEntryType, Payload: json.RawMessage(`{"outcome":"completed"}`)},
@@ -1099,9 +893,6 @@ func TestExecutionLookupLeavesUnfinishedHistoryUntouched(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-
-	session := New(ctx, "session-1", store, execution.NewRegistry())
-	defer session.Close()
 
 	for range 3 {
 		if _, err := session.Execution(ctx, "missing"); !errors.Is(err, ErrExecutionNotFound) {
@@ -1127,144 +918,96 @@ func TestExecutionLookupLeavesUnfinishedHistoryUntouched(t *testing.T) {
 			t.Fatalf("lookup changed history = %+v, %v", entries, err)
 		}
 	}
-
-	if err := session.Recover(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	recovered, err := session.Execution(ctx, "unfinished")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := recovered.Wait(ctx)
-	if err != nil || result.Outcome != execution.Interrupted {
-		t.Fatalf("recovered result = %+v, %v", result, err)
-	}
-
-	if err := session.Recover(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	entries, err := session.Entries(ctx, 0)
-	if err != nil || len(entries) != 4 {
-		t.Fatalf("repeated recovery changed history = %+v, %v", entries, err)
-	}
 }
 
-func TestRecoveryRetainsInterruptedResultAfterPersistenceFailure(t *testing.T) {
+func TestExecuteRejectsAfterTerminalPersistenceFailure(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	store := &finishFailingStore{Store: entry.NewMemoryStore(), err: errors.New("storage unavailable")}
-	store.failing.Store(true)
-
-	if _, err := store.Append(ctx, "session-1", entry.Entry{
-		ExecutionID: "unfinished", Type: execution.StartedEntryType, Payload: json.RawMessage(`{}`),
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	session := New(ctx, "session-1", store, execution.NewRegistry())
-	defer session.Close()
-
-	if err := session.Recover(ctx); !errors.Is(err, store.err) {
-		t.Fatalf("recovery persistence error = %v", err)
-	}
-
-	current, err := session.Execution(ctx, "unfinished")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := current.Wait(ctx); !errors.Is(err, store.err) {
-		t.Fatalf("retained recovery persistence error = %v", err)
-	}
-
-	current.mu.RLock()
-	original := *current.result
-	current.mu.RUnlock()
-
-	if err := session.Recover(ctx); !errors.Is(err, store.err) {
-		t.Fatalf("repeated recovery persistence error = %v", err)
-	}
-
-	store.failing.Store(false)
-
-	attached, err := session.Execution(ctx, current.ID())
-	if err != nil || attached != current {
-		t.Fatalf("reattachment after storage recovery = %v, %v", attached, err)
-	}
-
-	if _, err := attached.Wait(ctx); !errors.Is(err, store.err) {
-		t.Fatalf("lookup changed recovery error = %v", err)
-	}
-
-	if store.finishes.Load() != 2 {
-		t.Fatal("lookup retried recovery")
-	}
-
-	if err := session.Recover(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := current.Wait(ctx)
-	if err != nil || result.Outcome != execution.Interrupted || !result.EndedAt.Equal(original.EndedAt) {
-		t.Fatalf("recovered result = %+v, %v", result, err)
-	}
-
-	if err := session.Recover(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	entries, err := session.Entries(ctx, 0)
-	if err != nil || len(entries) != 2 || entries[1].ExecutionID != current.ID() || store.finishes.Load() != 3 {
-		t.Fatalf("recovery history = %+v, %v", entries, err)
-	}
-}
-
-func TestRecoverRespectsSessionLifetimeAndCallerContext(t *testing.T) {
-	t.Parallel()
-
-	for _, test := range []struct {
-		name            string
-		closed          bool
-		lifetimeEnded   bool
-		callerCancelled bool
-		want            error
-	}{
-		{name: "empty session"},
-		{name: "closed session", closed: true, want: ErrClosed},
-		{name: "ended lifetime", lifetimeEnded: true, want: ErrClosed},
-		{name: "cancelled caller", callerCancelled: true, want: context.Canceled},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			lifetime, endLifetime := context.WithCancel(context.Background())
-			defer endLifetime()
-
-			session := New(lifetime, "session-1", entry.NewMemoryStore(), execution.NewRegistry())
-			defer session.Close()
-
-			if test.closed {
-				session.Close()
-			}
-
-			if test.lifetimeEnded {
-				endLifetime()
-			}
-
-			ctx, cancel := context.WithCancel(context.Background())
+	for _, runErr := range []error{nil, errors.New("function failed")} {
+		t.Run(fmt.Sprint(runErr), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			if test.callerCancelled {
-				cancel()
+			store := newFinishFailingStore(errors.New("storage unavailable"))
+			store.failing.Store(true)
+
+			var calls atomic.Int32
+
+			executor := execution.Func(func(context.Context, execution.ExecuteParams) (any, error) {
+				calls.Add(1)
+
+				return nil, runErr
+			})
+
+			session := newExecutorSession(context.Background(), t, "session-1", store, "work", executor)
+
+			request := execution.Request{Executor: "work"}
+
+			first, err := session.Execute(context.Background(), request)
+			if err != nil {
+				t.Fatal(err)
 			}
 
-			if err := session.Recover(ctx); !errors.Is(err, test.want) {
-				t.Fatalf("Recover() = %v, want %v", err, test.want)
+			if _, err := first.Wait(ctx); !errors.Is(err, store.err) {
+				t.Fatalf("terminal persistence error = %v", err)
+			}
+
+			if err := session.Cancel(context.Background(), first.ID()); !errors.Is(err, ErrClosed) {
+				t.Fatalf("cancel after invocation returned = %v", err)
+			}
+
+			if _, err := session.Execute(ctx, request); !errors.Is(err, ErrClosed) {
+				t.Fatalf("submission after failed commit = %v", err)
+			}
+
+			store.failing.Store(false)
+
+			if next, err := session.Execute(ctx, request); next != nil || !errors.Is(err, ErrClosed) {
+				t.Fatalf("submission after storage recovered = %v, error = %v", next, err)
+			}
+
+			waitSessionIdle(t, session)
+
+			entries, err := session.Entries(context.Background(), 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if len(entries) != 1 || calls.Load() != 1 || store.finishes.Load() != 1 {
+				t.Fatalf("failed settlement was retried: entries = %+v, calls = %d", entries, calls.Load())
 			}
 		})
+	}
+}
+
+func TestExecuteDoesNotReloadExecutionState(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := newFinishFailingStore(nil)
+
+	session := newExecutorSession(ctx, t, "session-1", store, "work", execution.Func(
+		func(context.Context, execution.ExecuteParams) (any, error) { return nil, nil },
+	))
+	defer session.Close()
+
+	reads := store.reads.Load()
+	if reads == 0 {
+		t.Fatal("initialization did not read persisted execution state")
+	}
+
+	for range 3 {
+		current, err := session.Execute(ctx, execution.Request{Executor: "work"})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := current.Wait(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if got := store.reads.Load(); got != reads {
+		t.Fatalf("execution state was reloaded: reads = %d, want %d", got, reads)
 	}
 }

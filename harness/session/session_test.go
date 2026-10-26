@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -18,7 +19,7 @@ import (
 func TestSessionID(t *testing.T) {
 	t.Parallel()
 
-	session := New(context.Background(), "session-1", entry.NewMemoryStore(), execution.NewRegistry())
+	session := newSession(context.Background(), t, "session-1", entry.NewMemoryStore(), execution.NewRegistry())
 
 	if got, want := session.ID(), "session-1"; got != want {
 		t.Fatalf("ID() = %q, want %q", got, want)
@@ -52,7 +53,7 @@ func TestSessionEntries(t *testing.T) {
 		t.Fatalf("Append() other session error = %v", err)
 	}
 
-	session := New(context.Background(), "session-1", store, execution.NewRegistry())
+	session := newSession(context.Background(), t, "session-1", store, execution.NewRegistry())
 
 	entries, err := session.Entries(context.Background(), 1)
 	if err != nil {
@@ -81,7 +82,7 @@ func TestSubscribeReplaysEntries(t *testing.T) {
 		t.Fatalf("Append() error = %v", err)
 	}
 
-	session := New(context.Background(), "session-1", store, execution.NewRegistry())
+	session := newSession(context.Background(), t, "session-1", store, execution.NewRegistry())
 
 	subscription, err := session.Subscribe(context.Background(), 0)
 	if err != nil {
@@ -99,7 +100,7 @@ func TestSubscribeReplaysEntries(t *testing.T) {
 func TestEmitReachesEverySubscriber(t *testing.T) {
 	t.Parallel()
 
-	session := New(context.Background(), "session-1", entry.NewMemoryStore(), execution.NewRegistry())
+	session := newSession(context.Background(), t, "session-1", entry.NewMemoryStore(), execution.NewRegistry())
 
 	first, err := session.Subscribe(context.Background(), 0)
 	if err != nil {
@@ -153,7 +154,7 @@ func TestExecutePublishesEntriesAndAgentEvents(t *testing.T) {
 		},
 	})
 
-	session := newAgentSession(context.Background(),
+	session := newAgentSession(context.Background(), t,
 		"session-1",
 		entry.NewMemoryStore(),
 		agent.New(kit.AgentConfig{}, staticModelResolver{model}))
@@ -242,13 +243,72 @@ func receiveEvent(t *testing.T, subscription *harnessevent.Subscription) harness
 	}
 }
 
-func newAgentSession(ctx context.Context, id string, entries entry.Store, factory *agent.Factory) *Session {
-	return newExecutorSession(ctx, id, entries, agent.ExecutorName, agent.NewExecutor(factory))
+func newAgentSession(ctx context.Context, t *testing.T, id string, entries entry.Store, factory *agent.Factory) *Session {
+	t.Helper()
+
+	return newExecutorSession(ctx, t, id, entries, agent.ExecutorName, agent.NewExecutor(factory))
 }
 
-func newExecutorSession(ctx context.Context, id string, entries entry.Store, name string, executor execution.Executor) *Session {
+func newExecutorSession(ctx context.Context, t *testing.T, id string, entries entry.Store, name string, executor execution.Executor) *Session {
+	t.Helper()
+
 	registry := execution.NewRegistry()
 	registry.Register(name, executor)
 
-	return New(ctx, id, entries, registry)
+	return newSession(ctx, t, id, entries, registry)
+}
+
+func newSession(ctx context.Context, t *testing.T, id string, entries entry.Store, executors execution.Resolver) *Session {
+	t.Helper()
+
+	opened, err := New(ctx, id, entries, executors)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(opened.Close)
+
+	return opened
+}
+
+func TestNewUsesContextForConstructionAndLifetime(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name      string
+		cancelled bool
+	}{
+		{name: "active context"},
+		{name: "cancelled context", cancelled: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			if test.cancelled {
+				cancel()
+			}
+
+			opened, err := New(ctx, "session-1", entry.NewMemoryStore(), execution.NewRegistry())
+			if test.cancelled {
+				if opened != nil || !errors.Is(err, context.Canceled) {
+					t.Fatalf("cancelled construction = %v, error = %v", opened, err)
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			defer opened.Close()
+
+			cancel()
+
+			if _, err := opened.Execute(context.Background(), execution.Request{}); !errors.Is(err, ErrClosed) {
+				t.Fatalf("session after context cancelled = %v", err)
+			}
+		})
+	}
 }

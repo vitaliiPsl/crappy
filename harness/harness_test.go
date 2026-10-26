@@ -401,7 +401,7 @@ func TestSessionLoadsPersistedMetadata(t *testing.T) {
 	}
 }
 
-func TestConcurrentSessionLookupSharesInstance(t *testing.T) {
+func TestConcurrentSessionLookupInitializesOnce(t *testing.T) {
 	t.Parallel()
 
 	metadata := newMemorySessionStore()
@@ -409,7 +409,14 @@ func TestConcurrentSessionLookupSharesInstance(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := newTestHarness(t, testStore{metadata, entry.NewMemoryStore()}, kittest.NewModel(t))
+	entries := newFailingEntryStore(nil)
+
+	bus := event.NewBus("shared", entries)
+	if err := bus.Commit(context.Background(), "unfinished", execution.StartedEntryType, execution.Started{Executor: "removed"}); err != nil {
+		t.Fatal(err)
+	}
+
+	h := newTestHarness(t, testStore{metadata, entries}, kittest.NewModel(t))
 
 	const clients = 20
 
@@ -440,6 +447,15 @@ func TestConcurrentSessionLookupSharesInstance(t *testing.T) {
 		} else if opened != shared {
 			t.Fatal("clients received different instances of one session")
 		}
+	}
+
+	stored, err := entries.List(context.Background(), "shared", 0)
+	if err != nil || len(stored) != 2 || stored[1].Type != execution.FinishedEntryType || stored[1].ExecutionID != "unfinished" {
+		t.Fatalf("reconciled entries = %+v, error = %v", stored, err)
+	}
+
+	if reads := entries.reads.Load(); reads != 2 {
+		t.Fatalf("concurrent opening read execution state %d times, want 2", reads)
 	}
 }
 
@@ -899,11 +915,14 @@ func waitRunning(t *testing.T, h *Harness) {
 	}
 }
 
-func TestRunLeavesSessionHistoryUntouched(t *testing.T) {
+func TestSessionInitializesBeforeReturning(t *testing.T) {
 	t.Parallel()
 
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	store := newTestStore()
-	if err := store.sessions.Save(context.Background(), session.State{ID: "persisted"}); err != nil {
+	if err := store.sessions.Save(ctx, session.State{ID: "persisted"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -916,42 +935,557 @@ func TestRunLeavesSessionHistoryUntouched(t *testing.T) {
 
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 
-	opened, err := h.Session(context.Background(), "persisted")
+	opened, err := h.Session(ctx, "persisted")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	result := make(chan error, 1)
-	go func() { result <- h.Run(context.Background()) }()
-
-	waitRunning(t, h)
-
-	entries, err := opened.Entries(context.Background(), 0)
-	if err != nil || len(entries) != 1 {
-		t.Fatalf("starting harness changed history: %+v, %v", entries, err)
-	}
-
-	if _, err := opened.Execute(context.Background(), execution.Request{Executor: "work"}); !errors.Is(err, session.ErrExecutionUnfinished) {
-		t.Fatalf("submission before explicit recovery = %v", err)
-	}
-
-	if err := opened.Recover(context.Background()); err != nil {
+	subscription, err := opened.Subscribe(ctx, 0)
+	if err != nil {
 		t.Fatal(err)
 	}
+	defer subscription.Close()
 
-	if _, err := opened.Execute(context.Background(), execution.Request{Executor: "work"}); err != nil {
-		t.Fatal(err)
+	for _, want := range []string{execution.StartedEntryType, execution.FinishedEntryType} {
+		select {
+		case value := <-subscription.Events():
+			if value.Type != want || value.ExecutionID != "unfinished" {
+				t.Fatalf("replayed event = %+v, want %s", value, want)
+			}
+		case <-ctx.Done():
+			t.Fatal("reconciled history was not replayed")
+		}
 	}
 
 	if finished := waitFinished(t, opened, "unfinished"); finished.Outcome != execution.Interrupted {
 		t.Fatalf("previous outcome = %+v", finished)
 	}
 
-	if err := h.Shutdown(context.Background()); err != nil {
+	current, err := opened.Execute(ctx, execution.Request{Executor: "work"})
+	if err != nil {
 		t.Fatal(err)
 	}
+
+	if finished, err := current.Wait(ctx); err != nil || finished.Outcome != execution.Completed {
+		t.Fatalf("new execution = %+v, error = %v", finished, err)
+	}
+}
+
+func TestSessionAttachmentPreservesActiveExecution(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	finish := sync.OnceFunc(func() { close(release) })
+	h := New(newTestStore(), WithExecutor("work", execution.Func(func(ctx context.Context, _ execution.ExecuteParams) (any, error) {
+		close(started)
+
+		select {
+		case <-release:
+			return "done", nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	})))
+	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
+	t.Cleanup(finish)
+
+	opened, err := h.Session(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	current, err := opened.Execute(ctx, execution.Request{Executor: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	waitSignal(t, started)
+
+	for range 3 {
+		attached, err := h.Session(ctx, opened.ID())
+		if err != nil || attached != opened {
+			t.Fatalf("active session attachment = %v, error = %v", attached, err)
+		}
+	}
+
+	select {
+	case <-current.Done():
+		t.Fatal("attachment interrupted active work")
+	default:
+	}
+
+	finish()
+
+	if result, err := current.Wait(ctx); err != nil || result.Outcome != execution.Completed {
+		t.Fatalf("active execution = %+v, error = %v", result, err)
+	}
+}
+
+func TestSessionOpeningRetriesFailedInitialization(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	failure := errors.New("storage unavailable")
+	entries := newFailingEntryStore(failure)
+	entries.failing.Store(true)
+
+	metadata := newMemorySessionStore()
+	if err := metadata.Save(ctx, session.State{ID: "persisted"}); err != nil {
+		t.Fatal(err)
+	}
+
+	bus := event.NewBus("persisted", entries)
+	if err := bus.Commit(ctx, "unfinished", execution.StartedEntryType, execution.Started{Executor: "removed"}); err != nil {
+		t.Fatal(err)
+	}
+
+	h := newTestHarness(t, testStore{metadata, entries}, kittest.NewModel(t))
+	for range 2 {
+		opened, err := h.Session(ctx, "persisted")
+		if opened != nil || !errors.Is(err, failure) {
+			t.Fatalf("failed reconciliation = %v, error = %v", opened, err)
+		}
+	}
+
+	entries.failing.Store(false)
+
+	opened, err := h.Session(ctx, "persisted")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	finished := waitFinished(t, opened, "unfinished")
+	if finished.Outcome != execution.Interrupted || finished.EndedAt.IsZero() {
+		t.Fatalf("reconciled outcome = %+v", finished)
+	}
+
+	stored, err := opened.Entries(ctx, 0)
+	if err != nil || len(stored) != 2 {
+		t.Fatalf("reconciliation duplicated history: %+v, error = %v", stored, err)
+	}
+}
+
+func TestSessionAttachmentDoesNotRetryFailedSettlement(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	failure := errors.New("storage unavailable")
+	entries := newFailingEntryStore(failure)
+
+	var calls atomic.Int32
+
+	h := New(testStore{newMemorySessionStore(), entries}, WithExecutor("work", execution.Func(func(context.Context, execution.ExecuteParams) (any, error) {
+		calls.Add(1)
+
+		return map[string]int{"value": 42}, errors.New("work failed")
+	})))
+	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
+
+	opened, err := h.Session(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	entries.failing.Store(true)
+
+	current, err := opened.Execute(ctx, execution.Request{Executor: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := current.Wait(ctx); !errors.Is(err, failure) {
+		t.Fatalf("terminal persistence error = %v", err)
+	}
+
+	for _, failing := range []bool{true, false} {
+		entries.failing.Store(failing)
+
+		attached, err := h.Session(ctx, opened.ID())
+		if attached != opened || err != nil {
+			t.Fatalf("failed session attachment = %v, error = %v", attached, err)
+		}
+
+		if next, err := opened.Execute(ctx, execution.Request{Executor: "work"}); next != nil || !errors.Is(err, session.ErrClosed) {
+			t.Fatalf("failed session admission = %v, error = %v", next, err)
+		}
+
+		if _, err := current.Wait(ctx); !errors.Is(err, failure) {
+			t.Fatalf("execution lost persistence failure: %v", err)
+		}
+	}
+
+	if calls.Load() != 1 {
+		t.Fatal("failed settlement reran work or admitted another execution")
+	}
+}
+
+func TestSessionAttachmentDoesNotReloadExecutionState(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	entries := newFailingEntryStore(errors.New("journal unavailable"))
+
+	metadata := newMemorySessionStore()
+	if err := metadata.Save(ctx, session.State{ID: "persisted"}); err != nil {
+		t.Fatal(err)
+	}
+
+	h := newTestHarness(t, testStore{metadata, entries}, kittest.NewModel(t))
+
+	opened, err := h.Session(ctx, "persisted")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reads := entries.reads.Load()
+
+	entries.readFailing.Store(true)
+
+	for range 3 {
+		attached, err := h.Session(ctx, opened.ID())
+		if err != nil || attached != opened {
+			t.Fatalf("cached session attachment = %v, error = %v", attached, err)
+		}
+	}
+
+	if entries.reads.Load() != reads {
+		t.Fatal("cached session attachment reloaded execution state")
+	}
+}
+
+func TestSessionAttachmentReturnsExistingClosedSession(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t, newTestStore(), kittest.NewModel(t))
+
+	opened, err := h.Session(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	opened.Close()
+
+	attached, err := h.Session(context.Background(), opened.ID())
+	if attached != opened || err != nil {
+		t.Fatalf("closed session attachment = %v, error = %v", attached, err)
+	}
+
+	if _, err := attached.Execute(context.Background(), execution.Request{}); !errors.Is(err, session.ErrClosed) {
+		t.Fatalf("closed session admission = %v", err)
+	}
+}
+
+func TestSessionOpeningReturnsInitializationReadFailure(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	failure := errors.New("journal unavailable")
+	entries := newFailingEntryStore(failure)
+	entries.readFailing.Store(true)
+
+	metadata := newMemorySessionStore()
+	if err := metadata.Save(ctx, session.State{ID: "persisted"}); err != nil {
+		t.Fatal(err)
+	}
+
+	h := newTestHarness(t, testStore{metadata, entries}, kittest.NewModel(t))
+
+	opened, err := h.Session(ctx, "persisted")
+	if opened != nil || !errors.Is(err, failure) {
+		t.Fatalf("journal read failure = %v, error = %v", opened, err)
+	}
+
+	entries.readFailing.Store(false)
+
+	opened, err = h.Session(ctx, "persisted")
+	if err != nil || opened.ID() != "persisted" {
+		t.Fatalf("attachment after journal recovery = %v, error = %v", opened, err)
+	}
+}
+
+func TestSessionInitializationDoesNotBlockOtherSessions(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	entries := newBlockingInitializationStore("blocked")
+
+	metadata := newMemorySessionStore()
+	for _, id := range []string{"blocked", "other"} {
+		if err := metadata.Save(ctx, session.State{ID: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	h := newTestHarness(t, testStore{metadata, entries}, kittest.NewModel(t))
+	release := sync.OnceFunc(func() { close(entries.release) })
+	t.Cleanup(release)
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := h.Session(ctx, "blocked")
+		result <- err
+	}()
+
+	waitSignal(t, entries.started)
+
+	opened, err := h.Session(ctx, "other")
+	if err != nil || opened.ID() != "other" {
+		t.Fatalf("independent session attachment = %v, error = %v", opened, err)
+	}
+
+	release()
 
 	if err := waitError(t, result); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestShutdownCancelsSessionInitialization(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	entries := newBlockingInitializationStore("blocked")
+
+	metadata := newMemorySessionStore()
+	if err := metadata.Save(ctx, session.State{ID: "blocked"}); err != nil {
+		t.Fatal(err)
+	}
+
+	h := newTestHarness(t, testStore{metadata, entries}, kittest.NewModel(t))
+	t.Cleanup(sync.OnceFunc(func() { close(entries.release) }))
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := h.Session(context.Background(), "blocked")
+		result <- err
+	}()
+
+	waitSignal(t, entries.started)
+
+	if err := h.Shutdown(ctx); err != nil {
+		t.Fatalf("shutdown while reconciling = %v", err)
+	}
+
+	if err := waitError(t, result); !errors.Is(err, ErrClosed) {
+		t.Fatalf("attachment after shutdown = %v", err)
+	}
+}
+
+func TestSessionOpeningWaitsForInitialization(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	entries := newBlockingInitializationStore("persisted")
+
+	metadata := newMemorySessionStore()
+	if err := metadata.Save(ctx, session.State{ID: "persisted"}); err != nil {
+		t.Fatal(err)
+	}
+
+	h := newTestHarness(t, testStore{metadata, entries}, kittest.NewModel(t))
+	release := sync.OnceFunc(func() { close(entries.release) })
+	t.Cleanup(release)
+
+	results := make(chan *session.Session, 2)
+
+	errors := make(chan error, 2)
+	for range 2 {
+		go func() {
+			opened, err := h.Session(ctx, "persisted")
+			results <- opened
+
+			errors <- err
+		}()
+	}
+
+	waitSignal(t, entries.started)
+
+	select {
+	case <-results:
+		t.Fatal("session was exposed before initialization completed")
+	default:
+	}
+
+	release()
+
+	var shared *session.Session
+	for range 2 {
+		if err := waitError(t, errors); err != nil {
+			t.Fatal(err)
+		}
+
+		opened := <-results
+		if shared != nil && shared != opened {
+			t.Fatal("concurrent openers received different sessions")
+		}
+
+		shared = opened
+	}
+}
+
+func TestCancelledSessionOpeningCanBeRetried(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	entries := newBlockingInitializationStore("persisted")
+
+	metadata := newMemorySessionStore()
+	if err := metadata.Save(ctx, session.State{ID: "persisted"}); err != nil {
+		t.Fatal(err)
+	}
+
+	h := newTestHarness(t, testStore{metadata, entries}, kittest.NewModel(t))
+	release := sync.OnceFunc(func() { close(entries.release) })
+	t.Cleanup(release)
+
+	opening, cancelOpening := context.WithCancel(ctx)
+	defer cancelOpening()
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := h.Session(opening, "persisted")
+		result <- err
+	}()
+
+	waitSignal(t, entries.started)
+	cancelOpening()
+
+	if err := waitError(t, result); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled opening = %v", err)
+	}
+
+	release()
+
+	opened, err := h.Session(ctx, "persisted")
+	if err != nil || opened.ID() != "persisted" {
+		t.Fatalf("opening after cancellation = %v, error = %v", opened, err)
+	}
+
+	if reads := entries.reads.Load(); reads != 1 {
+		t.Fatalf("caller cancellation restarted construction: journal reads = %d", reads)
+	}
+}
+
+func TestWaitingClientCancellationPreservesSessionConstruction(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	entries := newBlockingInitializationStore("persisted")
+
+	metadata := newMemorySessionStore()
+	if err := metadata.Save(ctx, session.State{ID: "persisted"}); err != nil {
+		t.Fatal(err)
+	}
+
+	h := newTestHarness(t, testStore{metadata, entries}, kittest.NewModel(t))
+	release := sync.OnceFunc(func() { close(entries.release) })
+	t.Cleanup(release)
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := h.Session(ctx, "persisted")
+		result <- err
+	}()
+
+	waitSignal(t, entries.started)
+
+	waiting, stopWaiting := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer stopWaiting()
+
+	if opened, err := h.Session(waiting, "persisted"); opened != nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("cancelled waiter = %v, error = %v", opened, err)
+	}
+
+	select {
+	case err := <-result:
+		t.Fatalf("waiting client ended construction: %v", err)
+	default:
+	}
+
+	release()
+
+	if err := waitError(t, result); err != nil {
+		t.Fatalf("construction after waiter cancelled = %v", err)
+	}
+}
+
+type failingEntryStore struct {
+	entry.Store
+	failure     error
+	failing     atomic.Bool
+	readFailing atomic.Bool
+	reads       atomic.Int32
+}
+
+func newFailingEntryStore(failure error) *failingEntryStore {
+	return &failingEntryStore{Store: entry.NewMemoryStore(), failure: failure}
+}
+
+func (s *failingEntryStore) Append(ctx context.Context, sessionID string, entries ...entry.Entry) ([]entry.Entry, error) {
+	for _, value := range entries {
+		if value.Type == execution.FinishedEntryType && s.failing.Load() {
+			return nil, s.failure
+		}
+	}
+
+	return s.Store.Append(ctx, sessionID, entries...)
+}
+
+func (s *failingEntryStore) Latest(ctx context.Context, sessionID, entryType string) (entry.Entry, bool, error) {
+	s.reads.Add(1)
+
+	if s.readFailing.Load() {
+		return entry.Entry{}, false, s.failure
+	}
+
+	return s.Store.Latest(ctx, sessionID, entryType)
+}
+
+type blockingInitializationStore struct {
+	entry.Store
+	sessionID string
+	started   chan struct{}
+	release   chan struct{}
+	start     sync.Once
+	reads     atomic.Int32
+}
+
+func newBlockingInitializationStore(sessionID string) *blockingInitializationStore {
+	return &blockingInitializationStore{
+		Store:     entry.NewMemoryStore(),
+		sessionID: sessionID,
+		started:   make(chan struct{}),
+		release:   make(chan struct{}),
+	}
+}
+
+func (s *blockingInitializationStore) Latest(ctx context.Context, sessionID, entryType string) (entry.Entry, bool, error) {
+	if sessionID == s.sessionID {
+		s.reads.Add(1)
+		s.start.Do(func() { close(s.started) })
+
+		select {
+		case <-s.release:
+		case <-ctx.Done():
+			return entry.Entry{}, false, ctx.Err()
+		}
+	}
+
+	return s.Store.Latest(ctx, sessionID, entryType)
 }

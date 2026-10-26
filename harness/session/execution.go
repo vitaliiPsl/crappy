@@ -76,6 +76,10 @@ func (s *Session) Execute(ctx context.Context, request execution.Request) (*Exec
 		return nil, ErrClosed
 	}
 
+	if s.current != nil {
+		return nil, ErrBusy
+	}
+
 	if request.Executor == "" {
 		request.Executor = execution.DefaultName
 	}
@@ -88,19 +92,6 @@ func (s *Session) Execute(ctx context.Context, request execution.Request) (*Exec
 	input, err := json.Marshal(request.Input)
 	if err != nil {
 		return nil, fmt.Errorf("encode execution input: %w", err)
-	}
-
-	if s.current != nil {
-		return nil, ErrBusy
-	}
-
-	unfinishedID, err := s.unfinishedExecution(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	if unfinishedID != "" {
-		return nil, ErrExecutionUnfinished
 	}
 
 	id := uuid.NewString()
@@ -178,39 +169,6 @@ func (s *Session) Execution(ctx context.Context, id string) (*Execution, error) 
 	return nil, ErrExecutionUnfinished
 }
 
-func (s *Session) Recover(ctx context.Context) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
-	if s.closed || s.ctx.Err() != nil {
-		return ErrClosed
-	}
-
-	if s.current != nil {
-		if s.current.result == nil {
-			return ErrBusy
-		}
-
-		return s.finishExecution(ctx, *s.current.result)
-	}
-
-	id, err := s.unfinishedExecution(ctx)
-	if err != nil || id == "" {
-		return err
-	}
-
-	s.current = &Execution{id: id, done: make(chan struct{})}
-
-	return s.finishExecution(ctx, execution.Result{
-		Outcome: execution.Interrupted,
-		EndedAt: time.Now().UTC(),
-	})
-}
-
 func (s *Session) Cancel(ctx context.Context, executionID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -223,7 +181,7 @@ func (s *Session) Cancel(ctx context.Context, executionID string) error {
 		return ErrClosed
 	}
 
-	if s.current == nil || s.current.id != executionID || s.current.result != nil {
+	if s.current == nil || s.current.id != executionID {
 		return ErrExecutionNotActive
 	}
 
@@ -268,10 +226,10 @@ func (s *Session) runExecution(ctx context.Context, executor execution.Executor,
 		result.Error = runErr.Error()
 	}
 
-	_ = s.finishExecution(context.WithoutCancel(ctx), result)
+	s.finishExecution(context.WithoutCancel(ctx), result)
 }
 
-func (s *Session) finishExecution(ctx context.Context, result execution.Result) error {
+func (s *Session) finishExecution(ctx context.Context, result execution.Result) {
 	current := s.current
 
 	err := s.Commit(ctx, current.id, execution.FinishedEntryType, result)
@@ -284,33 +242,11 @@ func (s *Session) finishExecution(ctx context.Context, result execution.Result) 
 	current.err = err
 	current.mu.Unlock()
 
-	if err == nil {
-		s.current = nil
-	}
-
-	select {
-	case <-current.done:
-	default:
-		close(current.done)
-	}
-
-	return err
-}
-
-func (s *Session) unfinishedExecution(ctx context.Context) (string, error) {
-	started, found, err := s.entries.Latest(ctx, s.id, execution.StartedEntryType)
-	if err != nil || !found {
-		return "", err
-	}
-
-	finished, found, err := s.entries.Latest(ctx, s.id, execution.FinishedEntryType)
+	s.current = nil
 	if err != nil {
-		return "", err
+		s.closed = true
+		s.events.Close()
 	}
 
-	if found && finished.ExecutionID == started.ExecutionID && finished.ID > started.ID {
-		return "", nil
-	}
-
-	return started.ExecutionID, nil
+	close(current.done)
 }

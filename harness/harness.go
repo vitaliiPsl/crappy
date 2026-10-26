@@ -62,8 +62,16 @@ type Harness struct {
 
 	mu      sync.Mutex
 	opened  map[string]*session.Session
+	pending map[string]*sessionOpening
+	opening sync.WaitGroup
 	stop    sync.Once
 	running bool
+}
+
+type sessionOpening struct {
+	done    chan struct{}
+	session *session.Session
+	err     error
 }
 
 func New(store Store, options ...Option) *Harness {
@@ -87,17 +95,15 @@ func New(store Store, options ...Option) *Harness {
 		entries:   store.EntryStore(),
 		executors: c.executors,
 
-		ctx:    ctx,
-		cancel: cancel,
-		done:   make(chan struct{}),
-		opened: make(map[string]*session.Session),
+		ctx:     ctx,
+		cancel:  cancel,
+		done:    make(chan struct{}),
+		opened:  make(map[string]*session.Session),
+		pending: make(map[string]*sessionOpening),
 	}
 }
 
 func (h *Harness) Session(ctx context.Context, sessionID string) (*session.Session, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -106,48 +112,124 @@ func (h *Harness) Session(ctx context.Context, sessionID string) (*session.Sessi
 		return nil, ErrClosed
 	}
 
-	var state session.State
-	if sessionID == "" {
-		now := time.Now().UTC()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
-		state = session.State{
-			ID:        uuid.NewString(),
-			CreatedAt: now,
-			UpdatedAt: now,
-		}
-		if err := h.sessions.Save(ctx, state); err != nil {
-			return nil, fmt.Errorf("save session: %w", err)
-		}
-	} else {
-		var err error
+	stop := context.AfterFunc(h.ctx, cancel)
+	defer stop()
 
-		state, err = h.sessions.Get(ctx, sessionID)
-		if err != nil {
-			if errors.Is(err, session.ErrNotFound) {
-				if opened := h.opened[sessionID]; opened != nil {
-					opened.Close()
-					delete(h.opened, sessionID)
-				}
+	state, err := h.sessionState(ctx, sessionID)
+	if err != nil {
+		if h.ctx.Err() != nil {
+			return nil, ErrClosed
+		}
+
+		if errors.Is(err, session.ErrNotFound) {
+			h.mu.Lock()
+			opened := h.opened[sessionID]
+			delete(h.opened, sessionID)
+			h.mu.Unlock()
+
+			if opened != nil {
+				opened.Close()
 			}
-
-			return nil, err
 		}
+
+		return nil, err
 	}
 
-	if opened := h.opened[state.ID]; opened != nil {
+	return h.openSession(ctx, state.ID)
+}
+
+func (h *Harness) openSession(ctx context.Context, sessionID string) (*session.Session, error) {
+	h.mu.Lock()
+	if h.ctx.Err() != nil {
+		h.mu.Unlock()
+
+		return nil, ErrClosed
+	}
+
+	if err := ctx.Err(); err != nil {
+		h.mu.Unlock()
+
+		return nil, err
+	}
+
+	if opened := h.opened[sessionID]; opened != nil {
+		h.mu.Unlock()
+
 		return opened, nil
 	}
 
-	opened := session.New(
-		h.ctx,
-		state.ID,
-		h.entries,
-		h.executors,
-	)
+	pending := h.pending[sessionID]
+	if pending == nil {
+		pending = &sessionOpening{done: make(chan struct{})}
+		h.pending[sessionID] = pending
+		h.opening.Add(1)
 
-	h.opened[state.ID] = opened
+		go h.constructSession(sessionID, pending)
+	}
+	h.mu.Unlock()
 
-	return opened, nil
+	select {
+	case <-ctx.Done():
+		if h.ctx.Err() != nil {
+			return nil, ErrClosed
+		}
+
+		return nil, ctx.Err()
+	case <-pending.done:
+	}
+
+	return pending.session, pending.err
+}
+
+func (h *Harness) constructSession(sessionID string, pending *sessionOpening) {
+	defer h.opening.Done()
+
+	opened, err := session.New(h.ctx, sessionID, h.entries, h.executors)
+	if err != nil {
+		err = fmt.Errorf("open session %s: %w", sessionID, err)
+	}
+
+	h.mu.Lock()
+	if h.ctx.Err() != nil {
+		err = ErrClosed
+	}
+
+	if err == nil {
+		h.opened[sessionID] = opened
+		pending.session = opened
+	}
+
+	pending.err = err
+	delete(h.pending, sessionID)
+	h.mu.Unlock()
+
+	if err != nil && opened != nil {
+		opened.Close()
+	}
+
+	close(pending.done)
+}
+
+func (h *Harness) sessionState(ctx context.Context, sessionID string) (session.State, error) {
+	if sessionID != "" {
+		return h.sessions.Get(ctx, sessionID)
+	}
+
+	now := time.Now().UTC()
+
+	state := session.State{
+		ID:        uuid.NewString(),
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := h.sessions.Save(ctx, state); err != nil {
+		return session.State{}, fmt.Errorf("save session: %w", err)
+	}
+
+	return state, nil
 }
 
 func (h *Harness) Run(ctx context.Context) error {
@@ -198,8 +280,14 @@ func (h *Harness) Shutdown(ctx context.Context) error {
 
 func (h *Harness) closeSessions() {
 	h.mu.Lock()
-	opened := h.opened
+
+	opened := make([]*session.Session, 0, len(h.opened))
+	for _, s := range h.opened {
+		opened = append(opened, s)
+	}
 	h.mu.Unlock()
+
+	h.opening.Wait()
 
 	for _, s := range opened {
 		s.Close()

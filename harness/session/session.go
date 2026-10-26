@@ -23,14 +23,26 @@ type Session struct {
 	closed bool
 }
 
-func New(ctx context.Context, id string, entries entry.Store, executors execution.Resolver) *Session {
-	return &Session{
+func New(ctx context.Context, id string, entries entry.Store, executors execution.Resolver) (*Session, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	s := &Session{
 		ctx:       ctx,
 		id:        id,
 		entries:   entries,
 		events:    event.NewBus(id, entries),
 		executors: executors,
 	}
+
+	if err := s.restore(ctx); err != nil {
+		s.events.Close()
+
+		return nil, err
+	}
+
+	return s, nil
 }
 
 func (s *Session) ID() string {
@@ -68,10 +80,7 @@ func (s *Session) Close() {
 	s.mu.Unlock()
 
 	if current != nil {
-		if current.cancel != nil {
-			current.cancel()
-		}
-
+		current.cancel()
 		<-current.done
 	}
 
