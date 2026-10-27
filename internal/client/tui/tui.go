@@ -11,9 +11,10 @@ import (
 	"github.com/vitaliipsl/crappy/internal/client/tui/routes"
 	sessionscreen "github.com/vitaliipsl/crappy/internal/client/tui/screens/session"
 	sessionsscreen "github.com/vitaliipsl/crappy/internal/client/tui/screens/sessions"
+	"github.com/vitaliipsl/crappy/internal/config"
 )
 
-func Run(ctx context.Context, appHarness *harness.Harness, store session.Store) error {
+func Run(ctx context.Context, harness *harness.Harness, store session.Store, config config.Config) error {
 	sessions, err := store.List(ctx)
 	if err != nil {
 		return err
@@ -30,14 +31,15 @@ func Run(ctx context.Context, appHarness *harness.Harness, store session.Store) 
 			routes.SessionName: func(route navigation.Route) tea.Model {
 				return sessionscreen.New(
 					ctx,
-					appHarness,
+					harness,
+					config,
 					route.Param(routes.ParamSessionID),
 				)
 			},
 			routes.SessionsName: func(route navigation.Route) tea.Model {
 				return sessionsscreen.New(
 					ctx,
-					appHarness,
+					harness,
 					store,
 					route.Param(routes.ParamSessionID),
 				)

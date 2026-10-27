@@ -7,13 +7,14 @@ import (
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
+	"github.com/vitaliipsl/crappy/harness/event"
 	harnesssession "github.com/vitaliipsl/crappy/harness/session"
 )
 
 const cancelKey = "esc"
 
 func (m *Model) submit(text string) tea.Cmd {
-	if m.running() {
+	if m.running() || m.terminalErr != nil {
 		return nil
 	}
 
@@ -66,6 +67,9 @@ func (m *Model) handleEvent(message eventMsg) tea.Cmd {
 
 	if !message.open {
 		m.subscription = nil
+		if errors.Is(message.err, event.ErrClosed) {
+			m.executionID = ""
+		}
 
 		if message.err != nil {
 			m.notice = errorNotice(message.err)
@@ -79,18 +83,29 @@ func (m *Model) handleEvent(message eventMsg) tea.Cmd {
 	return m.waitForEvent()
 }
 
-func (m *Model) handleExecuteResult(message executeResultMsg) {
-	if message.target != m {
-		return
+func (m *Model) handleExecuteResult(message executeResultMsg) tea.Cmd {
+	if message.target != m || m.ctx.Err() != nil {
+		return nil
 	}
 
 	if message.err != nil {
 		m.notice = errorNotice(message.err)
 
-		return
+		return nil
 	}
 
 	m.composer.Reset()
+
+	return m.waitForExecution(message.execution)
+}
+
+func (m *Model) handleExecutionWait(message executionWaitMsg) {
+	if message.target != m || m.ctx.Err() != nil || message.err == nil {
+		return
+	}
+
+	m.executionID = ""
+	m.terminalErr = message.err
 }
 
 func (m *Model) handleCancelResult(message cancelResultMsg) {

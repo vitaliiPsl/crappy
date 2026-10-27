@@ -16,10 +16,11 @@ import (
 	"github.com/vitaliipsl/crappy/harness/compaction"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
+	"github.com/vitaliipsl/crappy/internal/config"
 )
 
 func TestEventsUpdateTranscript(t *testing.T) {
-	model := New(context.Background(), nil, "session-1")
+	model := New(context.Background(), nil, config.Config{}, "session-1")
 	model.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
 
 	input, err := json.Marshal(kit.NewUserMessage(kit.NewTextContent("hello")))
@@ -48,7 +49,7 @@ func TestEventsUpdateTranscript(t *testing.T) {
 }
 
 func TestViewFitsWindow(t *testing.T) {
-	model := New(context.Background(), nil, "session-1")
+	model := New(context.Background(), nil, config.Config{}, "session-1")
 	model.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
 
 	view := model.View().Content
@@ -73,7 +74,7 @@ func executionEvent(t *testing.T, eventType, executionID string, payload any) ev
 }
 
 func TestExecutionLifecycleDrivesStatus(t *testing.T) {
-	model := New(context.Background(), nil, "session-1")
+	model := New(context.Background(), nil, config.Config{}, "session-1")
 	model.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
 
 	if model.running() {
@@ -112,7 +113,7 @@ func TestExecutionLifecycleDrivesStatus(t *testing.T) {
 }
 
 func TestFailedExecutionIsSurfaced(t *testing.T) {
-	model := New(context.Background(), nil, "session-1")
+	model := New(context.Background(), nil, config.Config{}, "session-1")
 	model.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
 
 	model.applyEvent(executionEvent(
@@ -142,7 +143,7 @@ func TestInterruptedExecutionIsSurfaced(t *testing.T) {
 		execution.Interrupted,
 	} {
 		t.Run(string(outcome), func(t *testing.T) {
-			model := New(context.Background(), nil, "session-1")
+			model := New(context.Background(), nil, config.Config{}, "session-1")
 			model.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
 
 			model.applyEvent(executionEvent(
@@ -160,7 +161,7 @@ func TestInterruptedExecutionIsSurfaced(t *testing.T) {
 }
 
 func TestSubmitIsIgnoredWhileBusy(t *testing.T) {
-	model := New(context.Background(), nil, "session-1")
+	model := New(context.Background(), nil, config.Config{}, "session-1")
 	model.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
 
 	model.applyEvent(executionEvent(
@@ -176,7 +177,7 @@ func TestSubmitIsIgnoredWhileBusy(t *testing.T) {
 }
 
 func TestCancelKeyOnlyFiresWhileRunning(t *testing.T) {
-	model := New(context.Background(), nil, "session-1")
+	model := New(context.Background(), nil, config.Config{}, "session-1")
 	model.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
 
 	if _, command := model.Update(tea.KeyPressMsg{Code: tea.KeyEscape}); command != nil {
@@ -196,7 +197,7 @@ func TestCancelKeyOnlyFiresWhileRunning(t *testing.T) {
 }
 
 func TestMouseWheelScrollsTranscript(t *testing.T) {
-	model := New(context.Background(), nil, "session-1")
+	model := New(context.Background(), nil, config.Config{}, "session-1")
 	model.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
 
 	for i := range 40 {
@@ -218,7 +219,7 @@ func TestMouseWheelScrollsTranscript(t *testing.T) {
 }
 
 func TestCompactionEventsUpdateTranscript(t *testing.T) {
-	model := New(context.Background(), nil, "session-1")
+	model := New(context.Background(), nil, config.Config{}, "session-1")
 	model.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
 	model.applyEvent(event.Event{Type: compaction.StartedEventType, ExecutionID: "execution-1"})
 

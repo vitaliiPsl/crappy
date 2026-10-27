@@ -8,6 +8,7 @@ import (
 
 const (
 	pagePaddingHorizontal  = 2
+	headerMarginBottom     = 1
 	transcriptMarginBottom = 1
 )
 
@@ -16,6 +17,7 @@ var (
 			PaddingLeft(pagePaddingHorizontal).
 			PaddingRight(pagePaddingHorizontal)
 	transcriptAreaStyle = lipgloss.NewStyle().MarginBottom(transcriptMarginBottom)
+	headerStyle         = lipgloss.NewStyle().Foreground(theme.Default.Subtle).MarginBottom(headerMarginBottom)
 	errorStyle          = lipgloss.NewStyle().Foreground(theme.Default.Error)
 	workingStyle        = lipgloss.NewStyle().Foreground(theme.Default.Primary)
 	noticeStyle         = lipgloss.NewStyle().Foreground(theme.Default.Warning)

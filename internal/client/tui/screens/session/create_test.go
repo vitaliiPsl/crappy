@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/vitaliipsl/crappy/harness"
+	"github.com/vitaliipsl/crappy/internal/config"
 	"github.com/vitaliipsl/crappy/internal/storage/jsonl"
 )
 
@@ -17,7 +18,7 @@ func TestFirstSubmitCreatesSession(t *testing.T) {
 	h := harness.New(storage)
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 
-	screen := New(context.Background(), h, "")
+	screen := New(context.Background(), h, config.Config{}, "")
 	defer screen.Close()
 
 	created := screen.submit("fix the compaction")().(createdMsg)

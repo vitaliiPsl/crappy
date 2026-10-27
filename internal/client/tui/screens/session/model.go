@@ -5,10 +5,13 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/vitaliiPsl/crappy-adk/kit"
+
 	"github.com/vitaliipsl/crappy/harness"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/internal/client/tui/components/composer"
 	"github.com/vitaliipsl/crappy/internal/client/tui/components/transcript"
+	"github.com/vitaliipsl/crappy/internal/config"
 )
 
 type Model struct {
@@ -17,10 +20,15 @@ type Model struct {
 
 	harness      *harness.Harness
 	subscription *event.Subscription
+	config       config.Config
 
 	sessionID   string
 	executionID string
+	executor    string
 	notice      notice
+	terminalErr error
+
+	sessionUsage kit.Usage
 
 	transcript transcript.Model
 	composer   composer.Model
@@ -28,13 +36,14 @@ type Model struct {
 	height     int
 }
 
-func New(ctx context.Context, harness *harness.Harness, sessionID string) *Model {
+func New(ctx context.Context, harness *harness.Harness, config config.Config, sessionID string) *Model {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Model{
 		ctx:        ctx,
 		cancel:     cancel,
 		harness:    harness,
+		config:     config,
 		sessionID:  sessionID,
 		transcript: transcript.New(),
 		composer:   composer.New(),
@@ -63,7 +72,9 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case createdMsg:
 		return m, m.handleCreated(message)
 	case executeResultMsg:
-		m.handleExecuteResult(message)
+		return m, m.handleExecuteResult(message)
+	case executionWaitMsg:
+		m.handleExecutionWait(message)
 
 		return m, nil
 	case cancelResultMsg:
@@ -100,5 +111,5 @@ func (m *Model) Close() {
 }
 
 func (m *Model) running() bool {
-	return m.executionID != ""
+	return m.executionID != "" && m.terminalErr == nil
 }

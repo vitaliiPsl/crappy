@@ -7,6 +7,7 @@ import (
 
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
+	"github.com/vitaliipsl/crappy/harness/session"
 )
 
 const subscriptionStartEntryID uint64 = 0
@@ -38,11 +39,19 @@ type createdMsg struct {
 func (createdMsg) Broadcast() {}
 
 type executeResultMsg struct {
+	target    *Model
+	execution *session.Execution
+	err       error
+}
+
+func (executeResultMsg) Broadcast() {}
+
+type executionWaitMsg struct {
 	target *Model
 	err    error
 }
 
-func (executeResultMsg) Broadcast() {}
+func (executionWaitMsg) Broadcast() {}
 
 type cancelResultMsg struct {
 	target *Model
@@ -101,9 +110,17 @@ func (m *Model) execute(input kit.Message) tea.Cmd {
 			return executeResultMsg{target: m, err: err}
 		}
 
-		_, err = opened.Execute(m.ctx, execution.Request{Input: input})
+		current, err := opened.Execute(m.ctx, execution.Request{Input: input})
 
-		return executeResultMsg{target: m, err: err}
+		return executeResultMsg{target: m, execution: current, err: err}
+	}
+}
+
+func (m *Model) waitForExecution(current *session.Execution) tea.Cmd {
+	return func() tea.Msg {
+		_, err := current.Wait(m.ctx)
+
+		return executionWaitMsg{target: m, err: err}
 	}
 }
 

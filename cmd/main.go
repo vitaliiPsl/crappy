@@ -39,7 +39,17 @@ func main() {
 }
 
 func run(ctx context.Context) error {
-	h, sessions, err := newHarness(ctx)
+	settings, err := settings.Load()
+	if err != nil {
+		return fmt.Errorf("load settings: %w", err)
+	}
+
+	config, err := config.LoadFile(settings.ConfigPath)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+
+	h, sessions, err := newHarness(ctx, settings, config)
 	if err != nil {
 		return err
 	}
@@ -57,20 +67,10 @@ func run(ctx context.Context) error {
 		<-done
 	}()
 
-	return tui.Run(ctx, h, sessions)
+	return tui.Run(ctx, h, sessions, config)
 }
 
-func newHarness(ctx context.Context) (*harness.Harness, session.Store, error) {
-	settings, err := settings.Load()
-	if err != nil {
-		return nil, nil, fmt.Errorf("load settings: %w", err)
-	}
-
-	config, err := config.LoadFile(settings.ConfigPath)
-	if err != nil {
-		return nil, nil, fmt.Errorf("load config: %w", err)
-	}
-
+func newHarness(ctx context.Context, settings settings.Settings, config config.Config) (*harness.Harness, session.Store, error) {
 	models, err := model.NewRegistry(settings.Providers)
 	if err != nil {
 		return nil, nil, fmt.Errorf("create model registry: %w", err)
