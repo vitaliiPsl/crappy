@@ -197,6 +197,7 @@ func (s *Session) runExecution(ctx context.Context, executor execution.Executor,
 		SessionID:   s.id,
 		ExecutionID: current.id,
 		Input:       input,
+		State:       s.state,
 		Entries:     s.entries,
 		Events:      s.events,
 	})

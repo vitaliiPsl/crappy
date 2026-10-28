@@ -3,7 +3,7 @@ package sessions
 import (
 	"slices"
 
-	"github.com/vitaliipsl/crappy/harness/session"
+	"github.com/vitaliipsl/crappy/harness/session/state"
 )
 
 func (m *Model) applyLoaded(message loadedMsg) {
@@ -41,16 +41,16 @@ func (m *Model) applyDeleted(message deletedMsg) {
 	m.ensureVisible()
 }
 
-func withCurrent(sessions []session.State, currentID string) []session.State {
+func withCurrent(sessions []state.Record, currentID string) []state.Record {
 	values := slices.Clone(sessions)
 	if currentID != "" && !hasSession(values, currentID) {
-		values = append([]session.State{{ID: currentID}}, values...)
+		values = append([]state.Record{{ID: currentID}}, values...)
 	}
 
 	return values
 }
 
-func hasSession(sessions []session.State, sessionID string) bool {
+func hasSession(sessions []state.Record, sessionID string) bool {
 	for _, value := range sessions {
 		if value.ID == sessionID {
 			return true
@@ -60,7 +60,7 @@ func hasSession(sessions []session.State, sessionID string) bool {
 	return false
 }
 
-func sessionIndex(sessions []session.State, sessionID string) int {
+func sessionIndex(sessions []state.Record, sessionID string) int {
 	for index, value := range sessions {
 		if value.ID == sessionID {
 			return index
@@ -70,8 +70,8 @@ func sessionIndex(sessions []session.State, sessionID string) int {
 	return 0
 }
 
-func withoutSession(sessions []session.State, sessionID string) []session.State {
-	values := make([]session.State, 0, len(sessions))
+func withoutSession(sessions []state.Record, sessionID string) []state.Record {
+	values := make([]state.Record, 0, len(sessions))
 
 	for _, value := range sessions {
 		if value.ID != sessionID {

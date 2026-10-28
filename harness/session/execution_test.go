@@ -49,14 +49,14 @@ func TestExecuteMaintainsContext(t *testing.T) {
 		t.Fatalf("first Execute() error = %v", err)
 	}
 
-	waitSessionIdle(t, session)
+	waitExecution(t, firstExecution)
 
 	secondExecution, err := session.Execute(context.Background(), execution.Request{Executor: agent.ExecutorName, Input: kit.NewUserMessage(kit.NewTextContent("second input"))})
 	if err != nil {
 		t.Fatalf("second Execute() error = %v", err)
 	}
 
-	waitSessionIdle(t, session)
+	waitExecution(t, secondExecution)
 
 	request := model.CallAt(1)
 	if got, want := len(request.Messages), 3; got != want {
@@ -203,7 +203,7 @@ func TestExecuteRejectsConcurrentExecution(t *testing.T) {
 	}
 
 	close(model.release)
-	waitSessionIdle(t, session)
+	waitExecution(t, current)
 }
 
 func TestExecuteRecordsFailure(t *testing.T) {
@@ -222,7 +222,7 @@ func TestExecuteRecordsFailure(t *testing.T) {
 		t.Fatalf("Execute() error = %v", err)
 	}
 
-	waitSessionIdle(t, session)
+	waitExecution(t, current)
 
 	entries, err := session.Entries(context.Background(), 0)
 	if err != nil {
@@ -276,7 +276,7 @@ func TestCancelActiveExecution(t *testing.T) {
 		t.Fatalf("Cancel() error = %v", err)
 	}
 
-	waitSessionIdle(t, session)
+	waitExecution(t, current)
 
 	entries, err := session.Entries(context.Background(), 0)
 	if err != nil {
@@ -311,13 +311,14 @@ func TestSessionLifetimeCancelsActiveExecution(t *testing.T) {
 		entry.NewMemoryStore(),
 		agent.New(kit.AgentConfig{}, staticModelResolver{model}))
 
-	if _, err := session.Execute(context.Background(), execution.Request{Executor: agent.ExecutorName, Input: kit.NewUserMessage(kit.NewTextContent("input"))}); err != nil {
+	current, err := session.Execute(context.Background(), execution.Request{Executor: agent.ExecutorName, Input: kit.NewUserMessage(kit.NewTextContent("input"))})
+	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
 
 	<-model.started
 	cancel()
-	waitSessionIdle(t, session)
+	waitExecution(t, current)
 
 	entries, err := session.Entries(context.Background(), 0)
 	if err != nil {
@@ -331,180 +332,6 @@ func TestSessionLifetimeCancelsActiveExecution(t *testing.T) {
 
 	if finished.Outcome != execution.Cancelled {
 		t.Fatalf("execution outcome = %q, want %q", finished.Outcome, execution.Cancelled)
-	}
-}
-
-func TestCloseRejectsExecution(t *testing.T) {
-	t.Parallel()
-
-	session := newAgentSession(context.Background(), t,
-		"session-1",
-		entry.NewMemoryStore(),
-		agent.New(kit.AgentConfig{}, staticModelResolver{kittest.NewModel(t)}))
-
-	session.Close()
-	session.Close()
-
-	_, err := session.Execute(context.Background(), execution.Request{Executor: agent.ExecutorName, Input: kit.NewUserMessage(kit.NewTextContent("input"))})
-	if !errors.Is(err, ErrClosed) {
-		t.Fatalf("Execute() error = %v, want ErrClosed", err)
-	}
-}
-
-func TestCloseCancelsActiveExecution(t *testing.T) {
-	t.Parallel()
-
-	model := &blockingModel{
-		started: make(chan struct{}),
-		release: make(chan struct{}),
-	}
-
-	session := newAgentSession(context.Background(), t,
-		"session-1",
-		entry.NewMemoryStore(),
-		agent.New(kit.AgentConfig{}, staticModelResolver{model}))
-
-	subscription, err := session.Subscribe(context.Background(), 0)
-	if err != nil {
-		t.Fatalf("Subscribe() error = %v", err)
-	}
-
-	current, err := session.Execute(context.Background(), execution.Request{Executor: agent.ExecutorName, Input: kit.NewUserMessage(kit.NewTextContent("input"))})
-	if err != nil {
-		t.Fatalf("Execute() error = %v", err)
-	}
-
-	<-model.started
-	session.Close()
-
-	select {
-	case <-subscription.Done():
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for subscription to stop")
-	}
-
-	if err := subscription.Err(); !errors.Is(err, event.ErrClosed) {
-		t.Fatalf("subscription Err() = %v, want event.ErrClosed", err)
-	}
-
-	entries, err := session.Entries(context.Background(), 0)
-	if err != nil {
-		t.Fatalf("Entries() error = %v", err)
-	}
-
-	last := entries[len(entries)-1]
-	if last.ExecutionID != current.ID() || last.Type != execution.FinishedEntryType {
-		t.Fatalf("last entry = %#v, want finished execution %q", last, current.ID())
-	}
-
-	var finished execution.Result
-	if err := json.Unmarshal(last.Payload, &finished); err != nil {
-		t.Fatalf("decode finished execution: %v", err)
-	}
-
-	if finished.Outcome != execution.Cancelled {
-		t.Fatalf("execution outcome = %q, want %q", finished.Outcome, execution.Cancelled)
-	}
-}
-
-func waitSessionIdle(t *testing.T, session *Session) {
-	t.Helper()
-
-	ticker := time.NewTicker(time.Millisecond)
-	defer ticker.Stop()
-
-	timeout := time.NewTimer(time.Second)
-	defer timeout.Stop()
-
-	for {
-		session.mu.Lock()
-		idle := session.current == nil
-		session.mu.Unlock()
-
-		if idle {
-			return
-		}
-
-		select {
-		case <-ticker.C:
-		case <-timeout.C:
-			t.Fatal("timed out waiting for session to become idle")
-		}
-	}
-}
-
-type blockingModel struct {
-	started chan struct{}
-	release chan struct{}
-}
-
-type finishFailingStore struct {
-	entry.Store
-	err      error
-	failing  atomic.Bool
-	finishes atomic.Int32
-	reads    atomic.Int32
-}
-
-func newFinishFailingStore(err error) *finishFailingStore {
-	return &finishFailingStore{Store: entry.NewMemoryStore(), err: err}
-}
-
-func (s *finishFailingStore) Latest(ctx context.Context, sessionID, entryType string) (entry.Entry, bool, error) {
-	s.reads.Add(1)
-
-	return s.Store.Latest(ctx, sessionID, entryType)
-}
-
-func (s *finishFailingStore) Append(
-	ctx context.Context,
-	sessionID string,
-	entries ...entry.Entry,
-) ([]entry.Entry, error) {
-	for _, current := range entries {
-		if current.Type == execution.FinishedEntryType {
-			s.finishes.Add(1)
-
-			if s.failing.Load() {
-				return nil, s.err
-			}
-		}
-	}
-
-	return s.Store.Append(ctx, sessionID, entries...)
-}
-
-func (m *blockingModel) Config() kit.ModelConfig {
-	return kit.ModelConfig{ID: "blocking"}
-}
-
-func (m *blockingModel) Generate(
-	ctx context.Context,
-	_ kit.ModelRequest,
-) (kit.ModelResponse, error) {
-	return m.response(ctx)
-}
-
-func (m *blockingModel) Stream(
-	ctx context.Context,
-	_ kit.ModelRequest,
-) *kit.Stream[kit.ModelEvent, kit.ModelResponse] {
-	return kit.NewStream(func(kit.Emitter[kit.ModelEvent]) (kit.ModelResponse, error) {
-		return m.response(ctx)
-	})
-}
-
-func (m *blockingModel) response(ctx context.Context) (kit.ModelResponse, error) {
-	close(m.started)
-
-	select {
-	case <-m.release:
-		return kit.ModelResponse{
-			Message:      kit.NewModelMessage(kit.NewTextContent("done")),
-			FinishReason: kit.FinishReasonStop,
-		}, nil
-	case <-ctx.Done():
-		return kit.ModelResponse{}, ctx.Err()
 	}
 }
 
@@ -548,7 +375,7 @@ func TestFunctionExecutionUsesSessionLifetimeAndDetachedInput(t *testing.T) {
 
 	cancel()
 	close(release)
-	waitSessionIdle(t, session)
+	waitExecution(t, current)
 
 	entries, err := session.Entries(context.Background(), 0)
 	if err != nil {
@@ -772,10 +599,6 @@ func TestExecutionLookupDoesNotRetryPersistence(t *testing.T) {
 
 	store.failing.Store(false)
 
-	current.mu.RLock()
-	original := *current.result
-	current.mu.RUnlock()
-
 	for range 3 {
 		if _, err := session.Execution(ctx, current.ID()); !errors.Is(err, ErrExecutionUnfinished) {
 			t.Fatalf("uncommitted execution lookup = %v", err)
@@ -792,15 +615,6 @@ func TestExecutionLookupDoesNotRetryPersistence(t *testing.T) {
 
 	if next, err := session.Execute(ctx, execution.Request{Executor: "work"}); next != nil || !errors.Is(err, ErrClosed) {
 		t.Fatalf("admission after persistence failure = %v, error = %v", next, err)
-	}
-
-	current.mu.RLock()
-	retained := *current.result
-	current.mu.RUnlock()
-
-	if retained.Outcome != original.Outcome || retained.Error != original.Error ||
-		!retained.EndedAt.Equal(original.EndedAt) || string(retained.Output) != string(original.Output) {
-		t.Fatalf("retained result changed: %+v", retained)
 	}
 
 	if calls.Load() != 1 || store.finishes.Load() != 1 {
@@ -858,23 +672,6 @@ func TestExecutionDoneWaitsForPersistence(t *testing.T) {
 	if result, err := current.Wait(ctx); err != nil || result.Outcome != execution.Completed {
 		t.Fatalf("durable completion = %+v, %v", result, err)
 	}
-}
-
-type blockingFinishStore struct {
-	entry.Store
-	started chan struct{}
-	release chan struct{}
-}
-
-func (s *blockingFinishStore) Append(ctx context.Context, sessionID string, entries ...entry.Entry) ([]entry.Entry, error) {
-	for _, value := range entries {
-		if value.Type == execution.FinishedEntryType {
-			close(s.started)
-			<-s.release
-		}
-	}
-
-	return s.Store.Append(ctx, sessionID, entries...)
 }
 
 func TestExecutionLookupLeavesUnfinishedHistoryUntouched(t *testing.T) {
@@ -966,7 +763,7 @@ func TestExecuteRejectsAfterTerminalPersistenceFailure(t *testing.T) {
 				t.Fatalf("submission after storage recovered = %v, error = %v", next, err)
 			}
 
-			waitSessionIdle(t, session)
+			waitExecution(t, first)
 
 			entries, err := session.Entries(context.Background(), 0)
 			if err != nil {
@@ -1010,4 +807,153 @@ func TestExecuteDoesNotReloadExecutionState(t *testing.T) {
 	if got := store.reads.Load(); got != reads {
 		t.Fatalf("execution state was reloaded: reads = %d, want %d", got, reads)
 	}
+}
+
+func TestExecutionRetainsResultWhenFinishCannotBeCommitted(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	registry := execution.NewRegistry()
+	opened := newSession(ctx, t, "session", entry.NewMemoryStore(), registry)
+
+	workErr := errors.New("work failed")
+	registry.Register("work", execution.Func(func(context.Context, execution.ExecuteParams) (any, error) {
+		opened.events.Close()
+
+		return map[string]int{"value": 42}, workErr
+	}))
+
+	current, err := opened.Execute(ctx, execution.Request{Executor: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := current.Wait(ctx); !errors.Is(err, event.ErrClosed) {
+		t.Fatalf("finish error = %v", err)
+	}
+
+	current.mu.RLock()
+	original := *current.result
+	current.mu.RUnlock()
+
+	for range 3 {
+		if _, err := opened.Execution(ctx, current.ID()); !errors.Is(err, ErrExecutionUnfinished) {
+			t.Fatalf("uncommitted execution lookup = %v", err)
+		}
+
+		if _, err := current.Wait(ctx); !errors.Is(err, event.ErrClosed) {
+			t.Fatalf("finish error changed = %v", err)
+		}
+	}
+
+	current.mu.RLock()
+	retained := *current.result
+	current.mu.RUnlock()
+
+	if retained.Outcome != execution.Failed || retained.Error != workErr.Error() ||
+		!retained.EndedAt.Equal(original.EndedAt) || string(retained.Output) != `{"value":42}` {
+		t.Fatalf("execution result changed after failed commit: %+v", retained)
+	}
+}
+
+func waitExecution(t *testing.T, current *Execution) {
+	t.Helper()
+
+	select {
+	case <-current.Done():
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for execution to finish")
+	}
+}
+
+type blockingModel struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+type finishFailingStore struct {
+	entry.Store
+	err      error
+	failing  atomic.Bool
+	finishes atomic.Int32
+	reads    atomic.Int32
+}
+
+func newFinishFailingStore(err error) *finishFailingStore {
+	return &finishFailingStore{Store: entry.NewMemoryStore(), err: err}
+}
+
+func (s *finishFailingStore) Latest(ctx context.Context, sessionID, entryType string) (entry.Entry, bool, error) {
+	s.reads.Add(1)
+
+	return s.Store.Latest(ctx, sessionID, entryType)
+}
+
+func (s *finishFailingStore) Append(
+	ctx context.Context,
+	sessionID string,
+	entries ...entry.Entry,
+) ([]entry.Entry, error) {
+	for _, current := range entries {
+		if current.Type == execution.FinishedEntryType {
+			s.finishes.Add(1)
+
+			if s.failing.Load() {
+				return nil, s.err
+			}
+		}
+	}
+
+	return s.Store.Append(ctx, sessionID, entries...)
+}
+
+func (m *blockingModel) Config() kit.ModelConfig {
+	return kit.ModelConfig{ID: "blocking"}
+}
+
+func (m *blockingModel) Generate(
+	ctx context.Context,
+	_ kit.ModelRequest,
+) (kit.ModelResponse, error) {
+	return m.response(ctx)
+}
+
+func (m *blockingModel) Stream(
+	ctx context.Context,
+	_ kit.ModelRequest,
+) *kit.Stream[kit.ModelEvent, kit.ModelResponse] {
+	return kit.NewStream(func(kit.Emitter[kit.ModelEvent]) (kit.ModelResponse, error) {
+		return m.response(ctx)
+	})
+}
+
+func (m *blockingModel) response(ctx context.Context) (kit.ModelResponse, error) {
+	close(m.started)
+
+	select {
+	case <-m.release:
+		return kit.ModelResponse{
+			Message:      kit.NewModelMessage(kit.NewTextContent("done")),
+			FinishReason: kit.FinishReasonStop,
+		}, nil
+	case <-ctx.Done():
+		return kit.ModelResponse{}, ctx.Err()
+	}
+}
+
+type blockingFinishStore struct {
+	entry.Store
+	started chan struct{}
+	release chan struct{}
+}
+
+func (s *blockingFinishStore) Append(ctx context.Context, sessionID string, entries ...entry.Entry) ([]entry.Entry, error) {
+	for _, value := range entries {
+		if value.Type == execution.FinishedEntryType {
+			close(s.started)
+			<-s.release
+		}
+	}
+
+	return s.Store.Append(ctx, sessionID, entries...)
 }

@@ -44,7 +44,7 @@ func TestNewSettlesAbandonedExecutionBeforeReturning(t *testing.T) {
 	store.failing.Store(true)
 
 	for range 2 {
-		opened, err := New(context.Background(), "session-1", store, execution.NewRegistry())
+		opened, err := New(context.Background(), "session-1", newSessionState(t, "session-1"), store, execution.NewRegistry())
 		if opened != nil || !errors.Is(err, store.err) {
 			t.Fatalf("failed construction = %v, error = %v", opened, err)
 		}
@@ -58,11 +58,12 @@ func TestNewSettlesAbandonedExecutionBeforeReturning(t *testing.T) {
 
 	session := newExecutorSession(context.Background(), t, "session-1", store, "work", executor)
 
-	if _, err := session.Execute(context.Background(), execution.Request{Executor: "work"}); err != nil {
+	current, err := session.Execute(context.Background(), execution.Request{Executor: "work"})
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	waitSessionIdle(t, session)
+	waitExecution(t, current)
 
 	entries, err := session.Entries(context.Background(), 0)
 	if err != nil || len(entries) != 4 {
@@ -96,11 +97,12 @@ func TestNewPreservesCompletedExecution(t *testing.T) {
 	executor := execution.Func(func(context.Context, execution.ExecuteParams) (any, error) { return nil, nil })
 	session := newExecutorSession(context.Background(), t, "session-1", store, "work", executor)
 
-	if _, err := session.Execute(context.Background(), execution.Request{Executor: "work"}); err != nil {
+	current, err := session.Execute(context.Background(), execution.Request{Executor: "work"})
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	waitSessionIdle(t, session)
+	waitExecution(t, current)
 
 	entries, err := session.Entries(context.Background(), 0)
 	if err != nil || len(entries) != 4 {

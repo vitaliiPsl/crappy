@@ -8,7 +8,7 @@ import (
 	"sync"
 
 	"github.com/vitaliipsl/crappy/harness/entry"
-	"github.com/vitaliipsl/crappy/harness/session"
+	"github.com/vitaliipsl/crappy/harness/session/state"
 )
 
 const transcriptFilename = "transcript.jsonl"
@@ -48,7 +48,7 @@ func Open(ctx context.Context, root string) (*Storage, error) {
 	}, nil
 }
 
-func (s *Storage) SessionStore() session.Store {
+func (s *Storage) SessionStore() state.Store {
 	return &sessionStore{storage: s}
 }
 

@@ -14,13 +14,14 @@ import (
 	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/session"
+	"github.com/vitaliipsl/crappy/harness/session/state"
 	"github.com/vitaliipsl/crappy/internal/client/tui/navigation"
 	"github.com/vitaliipsl/crappy/internal/client/tui/routes"
 	"github.com/vitaliipsl/crappy/internal/storage/jsonl"
 )
 
 func TestLoadSelectsCurrentSession(t *testing.T) {
-	model := testModel(t, "session-2", []session.State{
+	model := testModel(t, "session-2", []state.Record{
 		{ID: "session-1"},
 		{ID: "session-2"},
 	})
@@ -37,7 +38,7 @@ func TestLoadSelectsCurrentSession(t *testing.T) {
 }
 
 func TestLoadIncludesUnstoredCurrentSession(t *testing.T) {
-	model := testModel(t, "current", []session.State{{ID: "stored"}})
+	model := testModel(t, "current", []state.Record{{ID: "stored"}})
 
 	model.Update(model.Init()())
 
@@ -47,7 +48,7 @@ func TestLoadIncludesUnstoredCurrentSession(t *testing.T) {
 }
 
 func TestEnterOpensSelectedSession(t *testing.T) {
-	model := testModel(t, "session-1", []session.State{
+	model := testModel(t, "session-1", []state.Record{
 		{ID: "session-1"},
 		{ID: "session-2"},
 	})
@@ -86,7 +87,7 @@ func TestEscapeReturnsToSession(t *testing.T) {
 }
 
 func TestDeleteRequiresConfirmation(t *testing.T) {
-	model := testModel(t, "session-1", []session.State{
+	model := testModel(t, "session-1", []state.Record{
 		{ID: "session-1"},
 		{ID: "session-2"},
 	})
@@ -111,7 +112,7 @@ func TestDeleteRequiresConfirmation(t *testing.T) {
 }
 
 func TestDeleteRemovesSession(t *testing.T) {
-	model := testModel(t, "session-1", []session.State{
+	model := testModel(t, "session-1", []state.Record{
 		{ID: "session-1"},
 		{ID: "session-2"},
 	})
@@ -128,7 +129,7 @@ func TestDeleteRemovesSession(t *testing.T) {
 }
 
 func TestDeleteRejectsCurrentSession(t *testing.T) {
-	model := testModel(t, "session-1", []session.State{{ID: "session-1"}})
+	model := testModel(t, "session-1", []state.Record{{ID: "session-1"}})
 	model.Update(model.Init()())
 
 	_, command := model.Update(tea.KeyPressMsg(tea.Key{Code: 'd'}))
@@ -193,7 +194,7 @@ func TestDeleteClosesLiveSessionBeforeRemovingStorage(t *testing.T) {
 		t.Fatal("deleted session retained a live subscription")
 	}
 
-	if _, err := h.Session(ctx, opened.ID()); !errors.Is(err, session.ErrNotFound) {
+	if _, err := h.Session(ctx, opened.ID()); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("deleted session lookup error = %v", err)
 	}
 
@@ -241,41 +242,23 @@ func TestViewFitsWindow(t *testing.T) {
 	}
 }
 
-func testModel(t *testing.T, currentID string, sessions []session.State) *Model {
+func testModel(t *testing.T, currentID string, sessions []state.Record) *Model {
 	t.Helper()
 
-	store := staticSessionStore{sessions: sessions}
-	h := harness.New(store)
+	store := state.NewMemoryStore()
+	for _, record := range sessions {
+		if err := store.Save(context.Background(), record); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	h := harness.New(testStorage{store})
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 
 	return New(context.Background(), h, store, currentID)
 }
 
-type staticSessionStore struct {
-	sessions []session.State
-}
+type testStorage struct{ state.Store }
 
-func (s staticSessionStore) List(context.Context) ([]session.State, error) {
-	return s.sessions, nil
-}
-
-func (s staticSessionStore) Get(_ context.Context, id string) (session.State, error) {
-	for _, state := range s.sessions {
-		if state.ID == id {
-			return state, nil
-		}
-	}
-
-	return session.State{}, session.ErrNotFound
-}
-
-func (staticSessionStore) Save(context.Context, session.State) error {
-	return nil
-}
-
-func (staticSessionStore) Delete(context.Context, string) error {
-	return nil
-}
-
-func (s staticSessionStore) SessionStore() session.Store { return s }
-func (staticSessionStore) EntryStore() entry.Store       { return entry.NewMemoryStore() }
+func (s testStorage) SessionStore() state.Store { return s.Store }
+func (testStorage) EntryStore() entry.Store     { return entry.NewMemoryStore() }

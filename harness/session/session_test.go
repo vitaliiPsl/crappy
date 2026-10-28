@@ -12,8 +12,9 @@ import (
 
 	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/entry"
-	harnessevent "github.com/vitaliipsl/crappy/harness/event"
+	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
+	"github.com/vitaliipsl/crappy/harness/session/state"
 )
 
 func TestSessionID(t *testing.T) {
@@ -125,7 +126,7 @@ func TestEmitReachesEverySubscriber(t *testing.T) {
 		t.Fatalf("Emit() error = %v", err)
 	}
 
-	for _, subscription := range []*harnessevent.Subscription{first, second} {
+	for _, subscription := range []*event.Subscription{first, second} {
 		received := receiveEvent(t, subscription)
 		if received.SessionID != "session-1" {
 			t.Fatalf("SessionID = %q, want %q", received.SessionID, "session-1")
@@ -171,7 +172,7 @@ func TestExecutePublishesEntriesAndAgentEvents(t *testing.T) {
 		t.Fatalf("Execute() error = %v", err)
 	}
 
-	events := make([]harnessevent.Event, 7)
+	events := make([]event.Event, 7)
 	for i := range events {
 		events[i] = receiveEvent(t, subscription)
 	}
@@ -218,59 +219,6 @@ func TestExecutePublishesEntriesAndAgentEvents(t *testing.T) {
 	}
 }
 
-type staticModelResolver struct {
-	model kit.Model
-}
-
-func (r staticModelResolver) Resolve(context.Context) (kit.Model, error) {
-	return r.model, nil
-}
-
-func receiveEvent(t *testing.T, subscription *harnessevent.Subscription) harnessevent.Event {
-	t.Helper()
-
-	select {
-	case event, ok := <-subscription.Events():
-		if !ok {
-			t.Fatalf("subscription closed: %v", subscription.Err())
-		}
-
-		return event
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for subscription event")
-
-		return harnessevent.Event{}
-	}
-}
-
-func newAgentSession(ctx context.Context, t *testing.T, id string, entries entry.Store, factory *agent.Factory) *Session {
-	t.Helper()
-
-	return newExecutorSession(ctx, t, id, entries, agent.ExecutorName, agent.NewExecutor(factory))
-}
-
-func newExecutorSession(ctx context.Context, t *testing.T, id string, entries entry.Store, name string, executor execution.Executor) *Session {
-	t.Helper()
-
-	registry := execution.NewRegistry()
-	registry.Register(name, executor)
-
-	return newSession(ctx, t, id, entries, registry)
-}
-
-func newSession(ctx context.Context, t *testing.T, id string, entries entry.Store, executors execution.Resolver) *Session {
-	t.Helper()
-
-	opened, err := New(ctx, id, entries, executors)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	t.Cleanup(opened.Close)
-
-	return opened
-}
-
 func TestNewUsesContextForConstructionAndLifetime(t *testing.T) {
 	t.Parallel()
 
@@ -289,7 +237,7 @@ func TestNewUsesContextForConstructionAndLifetime(t *testing.T) {
 				cancel()
 			}
 
-			opened, err := New(ctx, "session-1", entry.NewMemoryStore(), execution.NewRegistry())
+			opened, err := New(ctx, "session-1", newSessionState(t, "session-1"), entry.NewMemoryStore(), execution.NewRegistry())
 			if test.cancelled {
 				if opened != nil || !errors.Is(err, context.Canceled) {
 					t.Fatalf("cancelled construction = %v, error = %v", opened, err)
@@ -311,4 +259,141 @@ func TestNewUsesContextForConstructionAndLifetime(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCloseRejectsExecution(t *testing.T) {
+	t.Parallel()
+
+	session := newAgentSession(context.Background(), t,
+		"session-1",
+		entry.NewMemoryStore(),
+		agent.New(kit.AgentConfig{}, staticModelResolver{kittest.NewModel(t)}))
+
+	session.Close()
+	session.Close()
+
+	_, err := session.Execute(context.Background(), execution.Request{Executor: agent.ExecutorName, Input: kit.NewUserMessage(kit.NewTextContent("input"))})
+	if !errors.Is(err, ErrClosed) {
+		t.Fatalf("Execute() error = %v, want ErrClosed", err)
+	}
+}
+
+func TestCloseCancelsActiveExecution(t *testing.T) {
+	t.Parallel()
+
+	model := &blockingModel{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+
+	session := newAgentSession(context.Background(), t,
+		"session-1",
+		entry.NewMemoryStore(),
+		agent.New(kit.AgentConfig{}, staticModelResolver{model}))
+
+	subscription, err := session.Subscribe(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("Subscribe() error = %v", err)
+	}
+
+	current, err := session.Execute(context.Background(), execution.Request{Executor: agent.ExecutorName, Input: kit.NewUserMessage(kit.NewTextContent("input"))})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	<-model.started
+	session.Close()
+
+	select {
+	case <-subscription.Done():
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for subscription to stop")
+	}
+
+	if err := subscription.Err(); !errors.Is(err, event.ErrClosed) {
+		t.Fatalf("subscription Err() = %v, want event.ErrClosed", err)
+	}
+
+	entries, err := session.Entries(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("Entries() error = %v", err)
+	}
+
+	last := entries[len(entries)-1]
+	if last.ExecutionID != current.ID() || last.Type != execution.FinishedEntryType {
+		t.Fatalf("last entry = %#v, want finished execution %q", last, current.ID())
+	}
+
+	var finished execution.Result
+	if err := json.Unmarshal(last.Payload, &finished); err != nil {
+		t.Fatalf("decode finished execution: %v", err)
+	}
+
+	if finished.Outcome != execution.Cancelled {
+		t.Fatalf("execution outcome = %q, want %q", finished.Outcome, execution.Cancelled)
+	}
+}
+
+type staticModelResolver struct {
+	model kit.Model
+}
+
+func (r staticModelResolver) Resolve(context.Context) (kit.Model, error) {
+	return r.model, nil
+}
+
+func receiveEvent(t *testing.T, subscription *event.Subscription) event.Event {
+	t.Helper()
+
+	select {
+	case event, ok := <-subscription.Events():
+		if !ok {
+			t.Fatalf("subscription closed: %v", subscription.Err())
+		}
+
+		return event
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for subscription event")
+
+		return event.Event{}
+	}
+}
+
+func newAgentSession(ctx context.Context, t *testing.T, id string, entries entry.Store, factory *agent.Factory) *Session {
+	t.Helper()
+
+	return newExecutorSession(ctx, t, id, entries, agent.ExecutorName, agent.NewExecutor(factory))
+}
+
+func newExecutorSession(ctx context.Context, t *testing.T, id string, entries entry.Store, name string, executor execution.Executor) *Session {
+	t.Helper()
+
+	registry := execution.NewRegistry()
+	registry.Register(name, executor)
+
+	return newSession(ctx, t, id, entries, registry)
+}
+
+func newSession(ctx context.Context, t *testing.T, id string, entries entry.Store, executors execution.Resolver) *Session {
+	t.Helper()
+
+	opened, err := New(ctx, id, newSessionState(t, id), entries, executors)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(opened.Close)
+
+	return opened
+}
+
+func newSessionState(t *testing.T, id string) state.State {
+	t.Helper()
+
+	store := state.NewMemoryStore()
+	if err := store.Save(context.Background(), state.Record{ID: id}); err != nil {
+		t.Fatal(err)
+	}
+
+	return state.New(store, id)
 }

@@ -339,3 +339,37 @@ func TestEntryStoreLatestAndListAfterAcrossReopen(t *testing.T) {
 		}
 	}
 }
+
+func TestEntryStoreProtectsTranscript(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join(t.TempDir(), "sessions")
+	storage := openStorage(t, root)
+
+	if _, err := storage.EntryStore().Append(context.Background(), "session-1", entry.Entry{
+		Type: "test.entry",
+	}); err != nil {
+		t.Fatalf("Append() error = %v", err)
+	}
+
+	assertMode(t, root, 0o700)
+	assertMode(t, filepath.Join(root, "session-1"), 0o700)
+
+	path := filepath.Join(root, "session-1", transcriptFilename)
+	assertMode(t, path, 0o600)
+}
+
+func TestEntryStoreRejectsUnsafeSessionID(t *testing.T) {
+	t.Parallel()
+
+	storage := openStorage(t, filepath.Join(t.TempDir(), "sessions"))
+	for _, sessionID := range []string{"", ".", "..", "nested/session", `nested\session`} {
+		if _, err := storage.EntryStore().Append(
+			context.Background(),
+			sessionID,
+			entry.Entry{},
+		); err == nil {
+			t.Fatalf("Append(%q) error = nil", sessionID)
+		}
+	}
+}

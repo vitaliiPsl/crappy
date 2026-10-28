@@ -6,6 +6,7 @@ import (
 
 	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/event"
+	"github.com/vitaliipsl/crappy/harness/session/state"
 )
 
 const DefaultName = "agent"
@@ -16,6 +17,7 @@ type ExecuteParams struct {
 
 	Input json.RawMessage
 
+	State   state.State
 	Entries entry.Store
 	Events  event.Publisher
 }

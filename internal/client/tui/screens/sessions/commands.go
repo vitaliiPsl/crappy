@@ -5,14 +5,14 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/vitaliipsl/crappy/harness/session"
+	"github.com/vitaliipsl/crappy/harness/session/state"
 	"github.com/vitaliipsl/crappy/internal/client/tui/navigation"
 	"github.com/vitaliipsl/crappy/internal/client/tui/routes"
 )
 
 type loadedMsg struct {
 	target   *Model
-	sessions []session.State
+	sessions []state.Record
 	err      error
 }
 
@@ -33,7 +33,7 @@ func (m *Model) load() tea.Cmd {
 func (m *Model) deleteSession(sessionID string) tea.Cmd {
 	return func() tea.Msg {
 		opened, err := m.harness.Session(m.ctx, sessionID)
-		if err != nil && !errors.Is(err, session.ErrNotFound) {
+		if err != nil && !errors.Is(err, state.ErrNotFound) {
 			return deletedMsg{target: m, sessionID: sessionID, err: err}
 		}
 

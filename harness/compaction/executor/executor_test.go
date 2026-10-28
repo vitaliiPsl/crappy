@@ -18,6 +18,7 @@ import (
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/session"
+	"github.com/vitaliipsl/crappy/harness/session/state"
 )
 
 func TestExecutorPersistsCompactionAndReceipt(t *testing.T) {
@@ -104,7 +105,7 @@ func TestExecutorPersistsCompactionAndReceipt(t *testing.T) {
 		t.Fatalf("model context = %+v", messages)
 	}
 
-	reopened, err := session.New(context.Background(), opened.ID(), store, execution.NewRegistry())
+	reopened, err := session.New(context.Background(), opened.ID(), opened.State(), store, execution.NewRegistry())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +290,12 @@ func newTestSession(t *testing.T, model kit.Model, store entry.Store) *session.S
 	registry := execution.NewRegistry()
 	registry.Register(ExecutorName, New(compactor))
 
-	opened, err := session.New(context.Background(), "session", store, registry)
+	sessions := state.NewMemoryStore()
+	if err := sessions.Save(context.Background(), state.Record{ID: "session"}); err != nil {
+		t.Fatal(err)
+	}
+
+	opened, err := session.New(context.Background(), "session", state.New(sessions, "session"), store, registry)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -10,60 +10,85 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/vitaliipsl/crappy/harness/session"
+	"github.com/vitaliipsl/crappy/harness/session/state"
 )
 
 const stateFilename = "session.json"
 
-var _ session.Store = (*sessionStore)(nil)
+var _ state.Store = (*sessionStore)(nil)
 
 type sessionStore struct {
 	storage *Storage
 }
 
-func (s *sessionStore) Get(ctx context.Context, sessionID string) (session.State, error) {
+func (s *sessionStore) Get(ctx context.Context, sessionID string) (state.Record, error) {
 	if err := ctx.Err(); err != nil {
-		return session.State{}, err
+		return state.Record{}, err
 	}
 
-	state, err := s.storage.state(sessionID)
+	current, err := s.storage.state(sessionID)
 	if err != nil {
-		return session.State{}, err
+		return state.Record{}, err
 	}
 
-	state.mu.Lock()
-	defer state.mu.Unlock()
+	current.mu.Lock()
+	defer current.mu.Unlock()
 
 	return s.read(sessionID)
 }
 
-func (s *sessionStore) Save(ctx context.Context, value session.State) error {
+func (s *sessionStore) Save(ctx context.Context, record state.Record) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 
-	state, err := s.storage.state(value.ID)
+	current, err := s.storage.state(record.ID)
 	if err != nil {
 		return err
 	}
 
-	state.mu.Lock()
-	defer state.mu.Unlock()
+	current.mu.Lock()
+	defer current.mu.Unlock()
 
-	directory, err := s.storage.createSessionDirectory(value.ID)
+	directory, err := s.storage.createSessionDirectory(record.ID)
 	if err != nil {
 		return err
 	}
 
-	data, err := json.Marshal(value)
-	if err != nil {
-		return fmt.Errorf("encode session state: %w", err)
-	}
-
-	return writeFileAtomic(directory, stateFilename, data)
+	return s.write(ctx, directory, record)
 }
 
-func (s *sessionStore) List(ctx context.Context) ([]session.State, error) {
+func (s *sessionStore) Update(ctx context.Context, sessionID string, update func(*state.Record) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	current, err := s.storage.state(sessionID)
+	if err != nil {
+		return err
+	}
+
+	current.mu.Lock()
+	defer current.mu.Unlock()
+
+	record, err := s.read(sessionID)
+	if err != nil {
+		return err
+	}
+
+	if err := update(&record); err != nil {
+		return err
+	}
+
+	directory, err := s.storage.sessionDirectory(sessionID)
+	if err != nil {
+		return err
+	}
+
+	return s.write(ctx, directory, record)
+}
+
+func (s *sessionStore) List(ctx context.Context) ([]state.Record, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -73,7 +98,7 @@ func (s *sessionStore) List(ctx context.Context) ([]session.State, error) {
 		return nil, fmt.Errorf("read sessions directory: %w", err)
 	}
 
-	states := make([]session.State, 0, len(directories))
+	states := make([]state.Record, 0, len(directories))
 	for _, directory := range directories {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -83,8 +108,8 @@ func (s *sessionStore) List(ctx context.Context) ([]session.State, error) {
 			continue
 		}
 
-		value, err := s.Get(ctx, directory.Name())
-		if errors.Is(err, session.ErrNotFound) {
+		record, err := s.Get(ctx, directory.Name())
+		if errors.Is(err, state.ErrNotFound) {
 			continue
 		}
 
@@ -92,10 +117,10 @@ func (s *sessionStore) List(ctx context.Context) ([]session.State, error) {
 			return nil, err
 		}
 
-		states = append(states, value)
+		states = append(states, record)
 	}
 
-	slices.SortFunc(states, func(a, b session.State) int {
+	slices.SortFunc(states, func(a, b state.Record) int {
 		return cmp.Or(b.UpdatedAt.Compare(a.UpdatedAt), cmp.Compare(a.ID, b.ID))
 	})
 
@@ -115,13 +140,13 @@ func (s *sessionStore) Delete(ctx context.Context, sessionID string) error {
 	s.storage.mu.Lock()
 	defer s.storage.mu.Unlock()
 
-	state := s.storage.states[sessionID]
-	if state == nil {
-		state = &sessionState{}
+	current := s.storage.states[sessionID]
+	if current == nil {
+		current = &sessionState{}
 	}
 
-	state.mu.Lock()
-	defer state.mu.Unlock()
+	current.mu.Lock()
+	defer current.mu.Unlock()
 
 	if err := ctx.Err(); err != nil {
 		return err
@@ -140,36 +165,53 @@ func (s *sessionStore) Delete(ctx context.Context, sessionID string) error {
 	return nil
 }
 
-func (s *sessionStore) read(sessionID string) (session.State, error) {
+func (s *sessionStore) read(sessionID string) (state.Record, error) {
 	directory, err := s.storage.sessionDirectory(sessionID)
 	if err != nil {
-		return session.State{}, err
+		return state.Record{}, err
 	}
 
 	info, err := os.Stat(directory)
 	if errors.Is(err, os.ErrNotExist) {
-		return session.State{}, session.ErrNotFound
+		return state.Record{}, state.ErrNotFound
 	}
 
 	if err != nil {
-		return session.State{}, fmt.Errorf("stat session directory: %w", err)
+		return state.Record{}, fmt.Errorf("stat session directory: %w", err)
 	}
 
 	data, err := os.ReadFile(filepath.Join(directory, stateFilename))
 	if errors.Is(err, os.ErrNotExist) {
-		return session.State{ID: sessionID, CreatedAt: info.ModTime(), UpdatedAt: info.ModTime()}, nil
+		return state.Record{ID: sessionID, CreatedAt: info.ModTime(), UpdatedAt: info.ModTime()}, nil
 	}
 
 	if err != nil {
-		return session.State{}, fmt.Errorf("read session state: %w", err)
+		return state.Record{}, fmt.Errorf("read session state: %w", err)
 	}
 
-	var value session.State
-	if err := json.Unmarshal(data, &value); err != nil {
-		return session.State{}, fmt.Errorf("decode session state: %w", err)
+	var record *state.Record
+	if err := json.Unmarshal(data, &record); err != nil {
+		return state.Record{}, fmt.Errorf("decode session state: %w", err)
 	}
 
-	return value, nil
+	if record == nil {
+		return state.Record{}, errors.New("session state must be a JSON object")
+	}
+
+	return *record, nil
+}
+
+func (s *sessionStore) write(ctx context.Context, directory string, record state.Record) error {
+	data, err := json.Marshal(record)
+	if err != nil {
+		return fmt.Errorf("encode session state: %w", err)
+	}
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	return writeFileAtomic(directory, stateFilename, data)
 }
 
 func writeFileAtomic(directory, name string, data []byte) (resultErr error) {

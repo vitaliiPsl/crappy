@@ -115,6 +115,7 @@ func (c *Contributor) compact(run *kit.RunContext, build agent.BuildRequest) (bo
 	output, err := c.executor.Execute(run.Context, execution.ExecuteParams{
 		SessionID:   build.SessionID,
 		ExecutionID: build.ExecutionID,
+		State:       build.State,
 		Entries:     build.Entries,
 		Events:      build.Events,
 	})

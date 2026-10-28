@@ -47,6 +47,7 @@ func (e *Executor) Execute(ctx context.Context, params execution.ExecuteParams) 
 		SessionID:   params.SessionID,
 		ExecutionID: params.ExecutionID,
 		Memory:      memory,
+		State:       params.State,
 		Entries:     params.Entries,
 		Events:      params.Events,
 	})

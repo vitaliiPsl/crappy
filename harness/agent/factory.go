@@ -10,12 +10,14 @@ import (
 
 	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/event"
+	"github.com/vitaliipsl/crappy/harness/session/state"
 )
 
 type BuildRequest struct {
 	SessionID   string
 	ExecutionID string
 	Memory      kit.Memory
+	State       state.State
 	Entries     entry.Store
 	Events      event.Publisher
 }

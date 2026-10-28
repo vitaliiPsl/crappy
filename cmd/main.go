@@ -14,7 +14,7 @@ import (
 	"github.com/vitaliipsl/crappy/harness/compaction"
 	"github.com/vitaliipsl/crappy/harness/compaction/automatic"
 	compactionexec "github.com/vitaliipsl/crappy/harness/compaction/executor"
-	"github.com/vitaliipsl/crappy/harness/session"
+	"github.com/vitaliipsl/crappy/harness/session/state"
 	"github.com/vitaliipsl/crappy/internal/client/tui"
 	"github.com/vitaliipsl/crappy/internal/config"
 	"github.com/vitaliipsl/crappy/internal/model"
@@ -70,7 +70,7 @@ func run(ctx context.Context) error {
 	return tui.Run(ctx, h, sessions, config)
 }
 
-func newHarness(ctx context.Context, settings settings.Settings, config config.Config) (*harness.Harness, session.Store, error) {
+func newHarness(ctx context.Context, settings settings.Settings, config config.Config) (*harness.Harness, state.Store, error) {
 	models, err := model.NewRegistry(settings.Providers)
 	if err != nil {
 		return nil, nil, fmt.Errorf("create model registry: %w", err)

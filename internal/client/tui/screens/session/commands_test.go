@@ -15,7 +15,7 @@ import (
 	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
-	harnesssession "github.com/vitaliipsl/crappy/harness/session"
+	"github.com/vitaliipsl/crappy/harness/session/state"
 	"github.com/vitaliipsl/crappy/internal/config"
 	"github.com/vitaliipsl/crappy/internal/storage/jsonl"
 )
@@ -154,12 +154,41 @@ func TestWaitForExecutionStopsWhenScreenCloses(t *testing.T) {
 	}
 }
 
+func TestFirstSubmitCreatesSession(t *testing.T) {
+	storage, err := jsonl.Open(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	h := harness.New(storage)
+	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
+
+	screen := New(context.Background(), h, config.Config{}, "")
+	defer screen.Close()
+
+	created := screen.submit("fix the compaction")().(createdMsg)
+	screen.handleCreated(created)
+
+	if screen.sessionID == "" || screen.sessionID != created.sessionID {
+		t.Fatalf("sessionID = %q, want created session %q", screen.sessionID, created.sessionID)
+	}
+
+	sessions, err := storage.SessionStore().List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(sessions) != 1 || sessions[0].ID != screen.sessionID {
+		t.Fatalf("List() = %#v, want created session", sessions)
+	}
+}
+
 type executionTestStore struct {
-	sessions harnesssession.Store
+	sessions state.Store
 	entries  entry.Store
 }
 
-func (s executionTestStore) SessionStore() harnesssession.Store {
+func (s executionTestStore) SessionStore() state.Store {
 	return s.sessions
 }
 

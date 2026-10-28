@@ -15,6 +15,7 @@ import (
 	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/session"
+	"github.com/vitaliipsl/crappy/harness/session/state"
 )
 
 var (
@@ -23,7 +24,7 @@ var (
 )
 
 type Store interface {
-	SessionStore() session.Store
+	SessionStore() state.Store
 	EntryStore() entry.Store
 }
 
@@ -52,7 +53,7 @@ func WithExecutor(name string, executor execution.Executor) Option {
 }
 
 type Harness struct {
-	sessions  session.Store
+	sessions  state.Store
 	entries   entry.Store
 	executors execution.Resolver
 
@@ -103,6 +104,52 @@ func New(store Store, options ...Option) *Harness {
 	}
 }
 
+func (h *Harness) Run(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	h.mu.Lock()
+	if h.ctx.Err() != nil {
+		h.mu.Unlock()
+
+		return ErrClosed
+	}
+
+	if h.running {
+		h.mu.Unlock()
+
+		return ErrAlreadyRunning
+	}
+
+	h.running = true
+	h.mu.Unlock()
+
+	select {
+	case <-ctx.Done():
+		_ = h.Shutdown(context.Background())
+
+		return ctx.Err()
+	case <-h.done:
+		return nil
+	}
+}
+
+func (h *Harness) Shutdown(ctx context.Context) error {
+	h.stop.Do(func() {
+		h.cancel()
+
+		go h.closeSessions()
+	})
+
+	select {
+	case <-h.done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func (h *Harness) Session(ctx context.Context, sessionID string) (*session.Session, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -118,13 +165,13 @@ func (h *Harness) Session(ctx context.Context, sessionID string) (*session.Sessi
 	stop := context.AfterFunc(h.ctx, cancel)
 	defer stop()
 
-	state, err := h.sessionState(ctx, sessionID)
+	record, err := h.sessionState(ctx, sessionID)
 	if err != nil {
 		if h.ctx.Err() != nil {
 			return nil, ErrClosed
 		}
 
-		if errors.Is(err, session.ErrNotFound) {
+		if errors.Is(err, state.ErrNotFound) {
 			h.mu.Lock()
 			opened := h.opened[sessionID]
 			delete(h.opened, sessionID)
@@ -138,7 +185,7 @@ func (h *Harness) Session(ctx context.Context, sessionID string) (*session.Sessi
 		return nil, err
 	}
 
-	return h.openSession(ctx, state.ID)
+	return h.openSession(ctx, record.ID)
 }
 
 func (h *Harness) openSession(ctx context.Context, sessionID string) (*session.Session, error) {
@@ -187,7 +234,7 @@ func (h *Harness) openSession(ctx context.Context, sessionID string) (*session.S
 func (h *Harness) constructSession(sessionID string, pending *sessionOpening) {
 	defer h.opening.Done()
 
-	opened, err := session.New(h.ctx, sessionID, h.entries, h.executors)
+	opened, err := session.New(h.ctx, sessionID, state.New(h.sessions, sessionID), h.entries, h.executors)
 	if err != nil {
 		err = fmt.Errorf("open session %s: %w", sessionID, err)
 	}
@@ -213,69 +260,23 @@ func (h *Harness) constructSession(sessionID string, pending *sessionOpening) {
 	close(pending.done)
 }
 
-func (h *Harness) sessionState(ctx context.Context, sessionID string) (session.State, error) {
+func (h *Harness) sessionState(ctx context.Context, sessionID string) (state.Record, error) {
 	if sessionID != "" {
 		return h.sessions.Get(ctx, sessionID)
 	}
 
 	now := time.Now().UTC()
 
-	state := session.State{
+	record := state.Record{
 		ID:        uuid.NewString(),
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	if err := h.sessions.Save(ctx, state); err != nil {
-		return session.State{}, fmt.Errorf("save session: %w", err)
+	if err := h.sessions.Save(ctx, record); err != nil {
+		return state.Record{}, fmt.Errorf("save session: %w", err)
 	}
 
-	return state, nil
-}
-
-func (h *Harness) Run(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
-	h.mu.Lock()
-	if h.ctx.Err() != nil {
-		h.mu.Unlock()
-
-		return ErrClosed
-	}
-
-	if h.running {
-		h.mu.Unlock()
-
-		return ErrAlreadyRunning
-	}
-
-	h.running = true
-	h.mu.Unlock()
-
-	select {
-	case <-ctx.Done():
-		_ = h.Shutdown(context.Background())
-
-		return ctx.Err()
-	case <-h.done:
-		return nil
-	}
-}
-
-func (h *Harness) Shutdown(ctx context.Context) error {
-	h.stop.Do(func() {
-		h.cancel()
-
-		go h.closeSessions()
-	})
-
-	select {
-	case <-h.done:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return record, nil
 }
 
 func (h *Harness) closeSessions() {
