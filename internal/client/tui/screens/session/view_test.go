@@ -27,6 +27,7 @@ func TestViewShowsAgentContextAndUsage(t *testing.T) {
 
 			screen.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
 			screen.sessionUsage = kit.Usage{InputTokens: 3400, OutputTokens: 900}
+			screen.workdir = "/projects/crappy"
 
 			if thinking == "" {
 				thinking = "default"
@@ -34,8 +35,7 @@ func TestViewShowsAgentContextAndUsage(t *testing.T) {
 
 			view := screen.View().Content
 			for _, want := range []string{
-				"openai / test-model",
-				thinking + " reasoning",
+				"/projects/crappy · openai / test-model · " + thinking,
 				"3.4k in / 900 out",
 				"Shift+Enter",
 				"Ctrl+P",
@@ -61,7 +61,12 @@ func TestViewFitsWindowWithContext(t *testing.T) {
 
 			screen.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 			screen.sessionUsage = kit.Usage{InputTokens: 1200, OutputTokens: 300}
+			screen.workdir = "/projects/" + strings.Repeat("long-directory/", 12) + "crappy"
 			screen.applyEvent(executionEvent(t, execution.StartedEntryType, "execution-1", execution.Started{}))
+
+			if height := lipgloss.Height(screen.headerView()); height != 1+headerMarginBottom {
+				t.Fatalf("header height = %d, want one line with its bottom margin", height)
+			}
 
 			view := screen.View().Content
 			if width, height := lipgloss.Width(view), lipgloss.Height(view); width != size[0] || height != size[1] {
@@ -70,6 +75,10 @@ func TestViewFitsWindowWithContext(t *testing.T) {
 
 			if !strings.Contains(view, "Esc") {
 				t.Fatal("running execution has no interrupt hint")
+			}
+
+			if !strings.Contains(view, "…") || !strings.Contains(view, "crappy") {
+				t.Fatalf("long workdir is missing its suffix: %q", view)
 			}
 		})
 	}

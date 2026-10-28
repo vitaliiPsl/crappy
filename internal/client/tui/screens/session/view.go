@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/vitaliipsl/crappy/internal/client/tui/components/hints"
 )
@@ -52,21 +53,41 @@ func (m *Model) transcriptHeight(header, status, shortcuts string) int {
 }
 
 func (m *Model) headerView() string {
-	model := cmp.Or(m.config.ModelID, "No model selected")
+	width := m.contentWidth()
+	usage := ansi.Truncate(m.usageLabel(), width, "…")
+	available := max(0, width-ansi.StringWidth(usage)-2)
+	modelID := cmp.Or(m.config.ModelID, "No model selected")
+
+	model := modelID
 	if m.config.ProviderID != "" {
 		model = m.config.ProviderID + " / " + model
 	}
 
-	details := model + " · " + cmp.Or(m.config.Generation.Thinking, "default") + " reasoning"
-	usage := m.usageLabel()
-	content := details + "\n" + usage
+	details := model + " · " + cmp.Or(m.config.Generation.Thinking, "default")
+	if m.workdir != "" && available > 3 {
+		directory := m.workdir
+		directoryWidth := min(ansi.StringWidth(directory), available/2)
 
-	gap := m.contentWidth() - lipgloss.Width(details) - lipgloss.Width(usage)
-	if gap >= 2 {
-		content = details + strings.Repeat(" ", gap) + usage
+		modelWidth := max(0, available-directoryWidth-3)
+		if ansi.StringWidth(details) > modelWidth {
+			details = model
+		}
+
+		if ansi.StringWidth(details) > modelWidth {
+			details = modelID
+		}
+
+		if overflow := ansi.StringWidth(directory) - directoryWidth; overflow > 0 {
+			directory = "…" + ansi.TruncateLeft(directory, overflow+1, "")
+		}
+
+		details = directory + " · " + ansi.Truncate(details, modelWidth, "…")
 	}
 
-	return headerStyle.Width(m.contentWidth()).Render(content)
+	details = ansi.Truncate(details, available, "…")
+	gap := width - ansi.StringWidth(details) - ansi.StringWidth(usage)
+
+	return headerStyle.Width(width).Render(details + strings.Repeat(" ", gap) + usage)
 }
 
 func (m *Model) usageLabel() string {

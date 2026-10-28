@@ -32,6 +32,14 @@ func TestSessionPersistsWorkdirAtCreationAndPreservesItOnResume(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if directory, err := app.Workdir(ctx, ""); err != nil || directory != firstDirectory {
+		t.Fatalf("new conversation workdir = %q, error = %v; want %q", directory, err, firstDirectory)
+	}
+
+	if records, err := storage.SessionStore().List(ctx); err != nil || len(records) != 0 {
+		t.Fatalf("workdir lookup created a session: records = %v, error = %v", records, err)
+	}
+
 	first, err := app.Session(ctx, "")
 	if err != nil {
 		t.Fatal(err)
@@ -52,6 +60,10 @@ func TestSessionPersistsWorkdirAtCreationAndPreservesItOnResume(t *testing.T) {
 	}
 
 	assertSessionWorkdir(t, resumed, firstDirectory)
+
+	if directory, err := app.Workdir(ctx, first.ID()); err != nil || directory != firstDirectory {
+		t.Fatalf("resumed workdir = %q, error = %v; want %q", directory, err, firstDirectory)
+	}
 
 	second, err := app.Session(ctx, "")
 	if err != nil {

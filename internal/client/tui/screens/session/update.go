@@ -13,6 +13,20 @@ import (
 
 const cancelKey = "esc"
 
+func (m *Model) handleWorkdir(message workdirMsg) {
+	if message.target != m || message.sessionID != m.sessionID || m.ctx.Err() != nil {
+		return
+	}
+
+	if message.err != nil {
+		m.notice = errorNotice(message.err)
+
+		return
+	}
+
+	m.workdir = message.directory
+}
+
 func (m *Model) submit(text string) tea.Cmd {
 	if m.running() || m.terminalErr != nil {
 		return nil
@@ -41,7 +55,7 @@ func (m *Model) handleCreated(message createdMsg) tea.Cmd {
 
 	m.sessionID = message.sessionID
 
-	return tea.Batch(m.subscribe(), m.execute(message.input))
+	return tea.Batch(m.loadWorkdir(), m.subscribe(), m.execute(message.input))
 }
 
 func (m *Model) handleSubscribed(message subscribedMsg) tea.Cmd {

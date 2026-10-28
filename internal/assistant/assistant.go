@@ -25,9 +25,9 @@ func (a *Assistant) Session(ctx context.Context, sessionID string) (*session.Ses
 		return a.harness.Session(ctx, sessionID)
 	}
 
-	directory, err := os.Getwd()
+	directory, err := a.Workdir(ctx, "")
 	if err != nil {
-		return nil, fmt.Errorf("get process workdir: %w", err)
+		return nil, err
 	}
 
 	opened, err := a.harness.Session(ctx, "")
@@ -40,4 +40,35 @@ func (a *Assistant) Session(ctx context.Context, sessionID string) (*session.Ses
 	}
 
 	return opened, nil
+}
+
+func (a *Assistant) Workdir(ctx context.Context, sessionID string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+
+	if sessionID != "" {
+		opened, err := a.harness.Session(ctx, sessionID)
+		if err != nil {
+			return "", err
+		}
+
+		var directory string
+
+		found, err := opened.State().Get(ctx, workdir.StateKey, &directory)
+		if err != nil {
+			return "", fmt.Errorf("read session workdir: %w", err)
+		}
+
+		if found {
+			return directory, nil
+		}
+	}
+
+	directory, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("get process workdir: %w", err)
+	}
+
+	return directory, nil
 }

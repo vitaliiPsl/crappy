@@ -23,6 +23,7 @@ type Model struct {
 	config       config.Config
 
 	sessionID   string
+	workdir     string
 	executionID string
 	executor    string
 	notice      notice
@@ -52,10 +53,10 @@ func New(ctx context.Context, app *assistant.Assistant, config config.Config, se
 
 func (m *Model) Init() tea.Cmd {
 	if m.sessionID == "" {
-		return m.composer.Init()
+		return tea.Batch(m.composer.Init(), m.loadWorkdir())
 	}
 
-	return tea.Batch(m.composer.Init(), m.subscribe())
+	return tea.Batch(m.composer.Init(), m.loadWorkdir(), m.subscribe())
 }
 
 func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
@@ -63,6 +64,10 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = message.Width
 		m.height = message.Height
+
+		return m, nil
+	case workdirMsg:
+		m.handleWorkdir(message)
 
 		return m, nil
 	case subscribedMsg:

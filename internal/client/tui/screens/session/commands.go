@@ -12,6 +12,15 @@ import (
 
 const subscriptionStartEntryID uint64 = 0
 
+type workdirMsg struct {
+	target    *Model
+	sessionID string
+	directory string
+	err       error
+}
+
+func (workdirMsg) Broadcast() {}
+
 type subscribedMsg struct {
 	target       *Model
 	subscription *event.Subscription
@@ -59,6 +68,16 @@ type cancelResultMsg struct {
 }
 
 func (cancelResultMsg) Broadcast() {}
+
+func (m *Model) loadWorkdir() tea.Cmd {
+	sessionID := m.sessionID
+
+	return func() tea.Msg {
+		directory, err := m.assistant.Workdir(m.ctx, sessionID)
+
+		return workdirMsg{target: m, sessionID: sessionID, directory: directory, err: err}
+	}
+}
 
 func (m *Model) subscribe() tea.Cmd {
 	return func() tea.Msg {
