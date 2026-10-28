@@ -18,7 +18,7 @@ func TestExecuteTerminatesBackgroundProcessesAfterExit(t *testing.T) {
 
 	started := time.Now()
 
-	output, err := execute(context.Background(), "sleep 40 & echo $!")
+	output, err := execute(context.Background(), t.TempDir(), "sleep 40 & echo $!")
 	if err != nil {
 		t.Fatalf("execute() error = %v", err)
 	}
@@ -45,7 +45,7 @@ func TestExecuteTerminatesBackgroundProcessesOnCancel(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	if _, err := execute(ctx, "sleep 40 & echo $! > "+pidFile+"; sleep 30"); err == nil {
+	if _, err := execute(ctx, t.TempDir(), "sleep 40 & echo $! > "+pidFile+"; sleep 30"); err == nil {
 		t.Fatal("execute() error = nil, want cancellation error")
 	}
 

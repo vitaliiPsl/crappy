@@ -26,12 +26,12 @@ type writeFileInput struct {
 	Content string `json:"content" jsonschema:"Complete file contents"`
 }
 
-func NewWriteFile() kit.Tool {
+func NewWriteFile(workdir string) kit.Tool {
 	return tool.MustNew(
 		writeFileName,
 		writeFileDescription,
 		func(run *kit.RunContext, input writeFileInput) (string, error) {
-			path, err := utils.ResolvePath(input.Path)
+			path, err := utils.ResolvePathFromDirectory(workdir, input.Path)
 			if err != nil {
 				return "", err
 			}

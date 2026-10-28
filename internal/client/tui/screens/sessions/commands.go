@@ -32,7 +32,7 @@ func (m *Model) load() tea.Cmd {
 
 func (m *Model) deleteSession(sessionID string) tea.Cmd {
 	return func() tea.Msg {
-		opened, err := m.harness.Session(m.ctx, sessionID)
+		opened, err := m.assistant.Session(m.ctx, sessionID)
 		if err != nil && !errors.Is(err, state.ErrNotFound) {
 			return deletedMsg{target: m, sessionID: sessionID, err: err}
 		}

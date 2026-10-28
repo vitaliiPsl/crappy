@@ -10,17 +10,17 @@ import (
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
-	"github.com/vitaliipsl/crappy/harness"
 	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/session"
+	"github.com/vitaliipsl/crappy/internal/assistant"
 )
 
 const prompt = "> "
 
 type Client struct {
-	harness   *harness.Harness
+	assistant *assistant.Assistant
 	sessionID string
 	input     io.Reader
 	output    io.Writer
@@ -32,13 +32,13 @@ type input struct {
 }
 
 func New(
-	harness *harness.Harness,
+	app *assistant.Assistant,
 	sessionID string,
 	input io.Reader,
 	output io.Writer,
 ) *Client {
 	return &Client{
-		harness:   harness,
+		assistant: app,
 		sessionID: sessionID,
 		input:     input,
 		output:    output,
@@ -46,7 +46,7 @@ func New(
 }
 
 func (c *Client) Run(ctx context.Context) error {
-	opened, err := c.harness.Session(ctx, c.sessionID)
+	opened, err := c.assistant.Session(ctx, c.sessionID)
 	if err != nil {
 		return fmt.Errorf("open session: %w", err)
 	}

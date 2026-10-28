@@ -7,8 +7,8 @@ import (
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
-	"github.com/vitaliipsl/crappy/harness"
 	"github.com/vitaliipsl/crappy/harness/event"
+	"github.com/vitaliipsl/crappy/internal/assistant"
 	"github.com/vitaliipsl/crappy/internal/client/tui/components/composer"
 	"github.com/vitaliipsl/crappy/internal/client/tui/components/transcript"
 	"github.com/vitaliipsl/crappy/internal/config"
@@ -18,7 +18,7 @@ type Model struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	harness      *harness.Harness
+	assistant    *assistant.Assistant
 	subscription *event.Subscription
 	config       config.Config
 
@@ -36,13 +36,13 @@ type Model struct {
 	height     int
 }
 
-func New(ctx context.Context, harness *harness.Harness, config config.Config, sessionID string) *Model {
+func New(ctx context.Context, app *assistant.Assistant, config config.Config, sessionID string) *Model {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Model{
 		ctx:        ctx,
 		cancel:     cancel,
-		harness:    harness,
+		assistant:  app,
 		config:     config,
 		sessionID:  sessionID,
 		transcript: transcript.New(),

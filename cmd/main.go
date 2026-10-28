@@ -15,14 +15,14 @@ import (
 	"github.com/vitaliipsl/crappy/harness/compaction/automatic"
 	compactionexec "github.com/vitaliipsl/crappy/harness/compaction/executor"
 	"github.com/vitaliipsl/crappy/harness/session/state"
+	"github.com/vitaliipsl/crappy/internal/assistant"
 	"github.com/vitaliipsl/crappy/internal/client/tui"
 	"github.com/vitaliipsl/crappy/internal/config"
 	"github.com/vitaliipsl/crappy/internal/model"
 	"github.com/vitaliipsl/crappy/internal/settings"
 	"github.com/vitaliipsl/crappy/internal/storage/jsonl"
 	"github.com/vitaliipsl/crappy/internal/tools"
-	"github.com/vitaliipsl/crappy/internal/tools/bash"
-	"github.com/vitaliipsl/crappy/internal/tools/filesystem"
+	"github.com/vitaliipsl/crappy/internal/tools/local"
 )
 
 func main() {
@@ -67,7 +67,7 @@ func run(ctx context.Context) error {
 		<-done
 	}()
 
-	return tui.Run(ctx, h, sessions, config)
+	return tui.Run(ctx, assistant.New(h), sessions, config)
 }
 
 func newHarness(ctx context.Context, settings settings.Settings, config config.Config) (*harness.Harness, state.Store, error) {
@@ -99,14 +99,15 @@ func newHarness(ctx context.Context, settings settings.Settings, config config.C
 		harness.WithModel(modelResolver),
 		harness.WithExecutor(compactionexec.ExecutorName, compactionExecutor),
 		harness.WithAgentConfig(config.AgentConfig(),
-			agent.WithTools(bash.New()),
-			agent.WithTools(filesystem.New()...),
 			agent.WithToolMiddleware(tools.Timeout(settings.Tools)),
-			agent.WithContributors(automatic.New(compactionExecutor,
-				automatic.WithTrigger(
-					automatic.WhenInputExceedsTokens(config.Compaction.ThresholdTokens),
+			agent.WithContributors(
+				local.NewContributor(),
+				automatic.New(compactionExecutor,
+					automatic.WithTrigger(
+						automatic.WhenInputExceedsTokens(config.Compaction.ThresholdTokens),
+					),
 				),
-			)),
+			),
 		),
 	), storage.SessionStore(), nil
 }

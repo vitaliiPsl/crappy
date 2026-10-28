@@ -13,6 +13,7 @@ import (
 	"github.com/vitaliipsl/crappy/harness/compaction"
 	compactionexec "github.com/vitaliipsl/crappy/harness/compaction/executor"
 	"github.com/vitaliipsl/crappy/harness/execution"
+	"github.com/vitaliipsl/crappy/internal/assistant"
 	"github.com/vitaliipsl/crappy/internal/config"
 	"github.com/vitaliipsl/crappy/internal/storage/jsonl"
 )
@@ -67,7 +68,7 @@ func TestUsageRebuildsFromJournal(t *testing.T) {
 	}
 
 	for range 2 {
-		screen := New(ctx, h, config.Config{}, opened.ID())
+		screen := New(ctx, assistant.New(h), config.Config{}, opened.ID())
 		_, next := screen.Update(screen.subscribe()())
 
 		for range records {

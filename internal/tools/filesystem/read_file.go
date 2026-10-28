@@ -30,12 +30,12 @@ type readFileInput struct {
 	End   *int   `json:"end,omitempty" jsonschema:"Last line to return, one-based and inclusive; defaults to the end of the file"`
 }
 
-func NewReadFile() kit.Tool {
+func NewReadFile(workdir string) kit.Tool {
 	return tool.MustNew(
 		readFileName,
 		readFileDescription,
 		func(run *kit.RunContext, input readFileInput) (string, error) {
-			path, err := utils.ResolvePath(input.Path)
+			path, err := utils.ResolvePathFromDirectory(workdir, input.Path)
 			if err != nil {
 				return "", err
 			}

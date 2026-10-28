@@ -62,7 +62,7 @@ func (cancelResultMsg) Broadcast() {}
 
 func (m *Model) subscribe() tea.Cmd {
 	return func() tea.Msg {
-		opened, err := m.harness.Session(m.ctx, m.sessionID)
+		opened, err := m.assistant.Session(m.ctx, m.sessionID)
 		if err != nil {
 			return subscribedMsg{target: m, err: err}
 		}
@@ -94,7 +94,7 @@ func (m *Model) waitForEvent() tea.Cmd {
 
 func (m *Model) create(input kit.Message) tea.Cmd {
 	return func() tea.Msg {
-		opened, err := m.harness.Session(m.ctx, "")
+		opened, err := m.assistant.Session(m.ctx, "")
 		if err != nil {
 			return createdMsg{target: m, err: err}
 		}
@@ -105,7 +105,7 @@ func (m *Model) create(input kit.Message) tea.Cmd {
 
 func (m *Model) execute(input kit.Message) tea.Cmd {
 	return func() tea.Msg {
-		opened, err := m.harness.Session(m.ctx, m.sessionID)
+		opened, err := m.assistant.Session(m.ctx, m.sessionID)
 		if err != nil {
 			return executeResultMsg{target: m, err: err}
 		}
@@ -126,7 +126,7 @@ func (m *Model) waitForExecution(current *session.Execution) tea.Cmd {
 
 func (m *Model) cancelExecution(executionID string) tea.Cmd {
 	return func() tea.Msg {
-		opened, err := m.harness.Session(m.ctx, m.sessionID)
+		opened, err := m.assistant.Session(m.ctx, m.sessionID)
 		if err != nil {
 			return cancelResultMsg{target: m, err: err}
 		}

@@ -28,12 +28,12 @@ type editFileInput struct {
 	ReplaceAll bool   `json:"replace_all,omitempty" jsonschema:"Replace every occurrence instead of requiring exactly one"`
 }
 
-func NewEditFile() kit.Tool {
+func NewEditFile(workdir string) kit.Tool {
 	return tool.MustNew(
 		editFileName,
 		editFileDescription,
 		func(run *kit.RunContext, input editFileInput) (string, error) {
-			path, err := utils.ResolvePath(input.Path)
+			path, err := utils.ResolvePathFromDirectory(workdir, input.Path)
 			if err != nil {
 				return "", err
 			}

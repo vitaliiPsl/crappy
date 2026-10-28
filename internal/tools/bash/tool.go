@@ -19,6 +19,7 @@ const (
 	description = `Execute a shell command and return combined stdout and stderr output.
 
 Use this tool to run shell commands, scripts, build tools, tests, and other executables.
+Each command starts in the working directory. Directory changes apply only to that command.
 Avoid commands that run indefinitely. Commands and any background processes they start are killed when execution is cancelled.`
 
 	waitDelay = 2 * time.Second
@@ -29,23 +30,24 @@ type Input struct {
 	Description string `json:"description" jsonschema:"A short description of what the command does"`
 }
 
-func New() kit.Tool {
+func New(workdir string) kit.Tool {
 	return tool.MustNew(
 		Name,
 		description,
 		func(run *kit.RunContext, input Input) (string, error) {
-			return execute(run.Context, input.Command)
+			return execute(run.Context, workdir, input.Command)
 		},
 	)
 }
 
-func execute(ctx context.Context, command string) (string, error) {
+func execute(ctx context.Context, workdir, command string) (string, error) {
 	shell := os.Getenv("SHELL")
 	if shell == "" {
 		shell = "sh"
 	}
 
 	cmd := exec.CommandContext(ctx, shell, "-c", command)
+	cmd.Dir = workdir
 	cmd.WaitDelay = waitDelay
 	isolateProcessGroup(cmd)
 

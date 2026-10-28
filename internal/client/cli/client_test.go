@@ -10,6 +10,7 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kittest"
 
 	"github.com/vitaliipsl/crappy/harness"
+	"github.com/vitaliipsl/crappy/internal/assistant"
 	"github.com/vitaliipsl/crappy/internal/storage/jsonl"
 )
 
@@ -42,7 +43,7 @@ func TestClientRunsSession(t *testing.T) {
 			var output bytes.Buffer
 
 			err = New(
-				h,
+				assistant.New(h),
 				"",
 				strings.NewReader("hi\n"),
 				&output,

@@ -48,6 +48,23 @@ func ResolvePath(path string) (string, error) {
 	return filepath.Clean(resolved), nil
 }
 
+func ResolvePathFromDirectory(directory, path string) (string, error) {
+	if path == "" {
+		return "", errors.New("path is required")
+	}
+
+	resolved, err := ExpandHome(path)
+	if err != nil {
+		return "", err
+	}
+
+	if !filepath.IsAbs(resolved) {
+		resolved = filepath.Join(directory, resolved)
+	}
+
+	return filepath.Clean(resolved), nil
+}
+
 func ResolvePathFromFile(filePath, path string) (string, error) {
 	resolved, err := ExpandHome(path)
 	if err != nil {

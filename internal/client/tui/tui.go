@@ -5,8 +5,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/vitaliipsl/crappy/harness"
 	"github.com/vitaliipsl/crappy/harness/session/state"
+	"github.com/vitaliipsl/crappy/internal/assistant"
 	"github.com/vitaliipsl/crappy/internal/client/tui/navigation"
 	"github.com/vitaliipsl/crappy/internal/client/tui/routes"
 	sessionscreen "github.com/vitaliipsl/crappy/internal/client/tui/screens/session"
@@ -14,7 +14,7 @@ import (
 	"github.com/vitaliipsl/crappy/internal/config"
 )
 
-func Run(ctx context.Context, harness *harness.Harness, store state.Store, config config.Config) error {
+func Run(ctx context.Context, app *assistant.Assistant, store state.Store, config config.Config) error {
 	sessions, err := store.List(ctx)
 	if err != nil {
 		return err
@@ -31,7 +31,7 @@ func Run(ctx context.Context, harness *harness.Harness, store state.Store, confi
 			routes.SessionName: func(route navigation.Route) tea.Model {
 				return sessionscreen.New(
 					ctx,
-					harness,
+					app,
 					config,
 					route.Param(routes.ParamSessionID),
 				)
@@ -39,7 +39,7 @@ func Run(ctx context.Context, harness *harness.Harness, store state.Store, confi
 			routes.SessionsName: func(route navigation.Route) tea.Model {
 				return sessionsscreen.New(
 					ctx,
-					harness,
+					app,
 					store,
 					route.Param(routes.ParamSessionID),
 				)
