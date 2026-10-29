@@ -2,8 +2,10 @@ package local
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -28,10 +30,14 @@ func TestContributorBindsToolsToSessionAndExecution(t *testing.T) {
 		state   state.State
 		workdir string
 	}{
-		{name: "first execution", state: first, workdir: t.TempDir()},
+		{name: "first execution", state: first, workdir: filepath.Join(t.TempDir(), `quoted "目录"`)},
 		{name: "other session", state: second, workdir: t.TempDir()},
 		{name: "next execution", state: first, workdir: t.TempDir()},
 	} {
+		if err := os.MkdirAll(test.workdir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+
 		if err := os.WriteFile(filepath.Join(test.workdir, "marker"), []byte(test.workdir), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -41,7 +47,7 @@ func TestContributorBindsToolsToSessionAndExecution(t *testing.T) {
 		}
 
 		contribution := contributeForSession(t, contributor, test.state)
-		if len(contribution.Instructions) != 1 || !strings.Contains(contribution.Instructions[0], test.workdir) {
+		if len(contribution.Instructions) != 1 || !strings.Contains(contribution.Instructions[0], fmt.Sprintf("Working directory: %q", test.workdir)) {
 			t.Fatalf("instructions = %v, want workdir %q", contribution.Instructions, test.workdir)
 		}
 
@@ -55,6 +61,65 @@ func TestContributorBindsToolsToSessionAndExecution(t *testing.T) {
 				if got := executeContributedTool(t, contribution, call); got != test.workdir {
 					t.Fatalf("%s used another workdir: got %q, want %q", call.Name, got, test.workdir)
 				}
+			}
+		})
+	}
+}
+
+func TestContributorBindsShellToExecution(t *testing.T) {
+	shell := filepath.Join(t.TempDir(), "shell")
+	if err := os.WriteFile(shell, []byte("#!/bin/sh\nprintf 'custom:'\nexec /bin/sh \"$@\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		name   string
+		shell  string
+		bound  string
+		output string
+	}{
+		{name: "configured", shell: shell, bound: shell, output: "custom:hello"},
+		{name: "default", shell: "", bound: "sh", output: "hello"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("SHELL", test.shell)
+
+			ctx := context.Background()
+
+			sessionState := newSessionState(t, state.NewMemoryStore(), "session")
+			if err := sessionState.Set(ctx, workdir.StateKey, t.TempDir()); err != nil {
+				t.Fatal(err)
+			}
+
+			contributor := NewContributor()
+
+			first := contributeForSession(t, contributor, sessionState)
+			for _, want := range []string{
+				fmt.Sprintf("Shell: %q", test.bound),
+				"Platform: " + runtime.GOOS,
+				"Timezone: ",
+			} {
+				if !strings.Contains(first.Instructions[0], want) {
+					t.Fatalf("instructions are missing %q: %q", want, first.Instructions[0])
+				}
+			}
+
+			t.Setenv("SHELL", "/bin/sh")
+			next := contributeForSession(t, contributor, sessionState)
+			call := kit.NewToolCall("bash", "bash", map[string]any{
+				"command": "printf hello", "description": "Check the selected shell",
+			})
+
+			if got := executeContributedTool(t, first, call); got != test.output {
+				t.Fatalf("first execution output = %q, want %q", got, test.output)
+			}
+
+			if got := executeContributedTool(t, next, call); got != "hello" {
+				t.Fatalf("next execution output = %q, want hello", got)
+			}
+
+			if !strings.Contains(next.Instructions[0], `Shell: "/bin/sh"`) {
+				t.Fatalf("next execution has stale shell instructions: %q", next.Instructions[0])
 			}
 		})
 	}

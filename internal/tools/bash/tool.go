@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -30,22 +29,17 @@ type Input struct {
 	Description string `json:"description" jsonschema:"A short description of what the command does"`
 }
 
-func New(workdir string) kit.Tool {
+func New(workdir, shell string) kit.Tool {
 	return tool.MustNew(
 		Name,
 		description,
 		func(run *kit.RunContext, input Input) (string, error) {
-			return execute(run.Context, workdir, input.Command)
+			return execute(run.Context, workdir, shell, input.Command)
 		},
 	)
 }
 
-func execute(ctx context.Context, workdir, command string) (string, error) {
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "sh"
-	}
-
+func execute(ctx context.Context, workdir, shell, command string) (string, error) {
 	cmd := exec.CommandContext(ctx, shell, "-c", command)
 	cmd.Dir = workdir
 	cmd.WaitDelay = waitDelay

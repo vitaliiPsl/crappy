@@ -10,7 +10,7 @@ import (
 )
 
 func TestExecute(t *testing.T) {
-	output, err := execute(context.Background(), t.TempDir(), "printf hello")
+	output, err := execute(context.Background(), t.TempDir(), "sh", "printf hello")
 	if err != nil {
 		t.Fatalf("execute() error = %v", err)
 	}
@@ -23,7 +23,7 @@ func TestExecute(t *testing.T) {
 func TestExecuteUsesWorkingDirectory(t *testing.T) {
 	workingDirectory := t.TempDir()
 
-	output, err := execute(context.Background(), workingDirectory, "pwd -P")
+	output, err := execute(context.Background(), workingDirectory, "sh", "pwd -P")
 	if err != nil {
 		t.Fatalf("execute() error = %v", err)
 	}
@@ -53,7 +53,7 @@ func TestExecuteDirectoryChangesStayInSubprocess(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	output, err := execute(context.Background(), workdir, "cd nested && pwd -P")
+	output, err := execute(context.Background(), workdir, "sh", "cd nested && pwd -P")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestExecuteDirectoryChangesStayInSubprocess(t *testing.T) {
 		t.Fatalf("shell workdir = %q, want %q", output, want)
 	}
 
-	output, err = execute(context.Background(), workdir, "pwd -P")
+	output, err = execute(context.Background(), workdir, "sh", "pwd -P")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestExecuteDirectoryChangesStayInSubprocess(t *testing.T) {
 }
 
 func TestExecuteIncludesOutputOnFailure(t *testing.T) {
-	_, err := execute(context.Background(), t.TempDir(), "echo oops >&2; exit 7")
+	_, err := execute(context.Background(), t.TempDir(), "sh", "echo oops >&2; exit 7")
 	if err == nil {
 		t.Fatal("execute() error = nil")
 	}
@@ -106,33 +106,23 @@ func TestExecuteCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	if _, err := execute(ctx, t.TempDir(), "sleep 10"); err == nil {
+	if _, err := execute(ctx, t.TempDir(), "sh", "sleep 10"); err == nil {
 		t.Fatal("execute() error = nil")
 	}
 }
 
 func TestExecuteUsesConfiguredShell(t *testing.T) {
-	t.Setenv("SHELL", "/bin/sh")
+	shell := filepath.Join(t.TempDir(), "shell")
+	if err := os.WriteFile(shell, []byte("#!/bin/sh\nprintf 'custom:'\nexec /bin/sh \"$@\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 
-	output, err := execute(context.Background(), t.TempDir(), "printf configured")
+	output, err := execute(context.Background(), t.TempDir(), shell, "printf configured")
 	if err != nil {
 		t.Fatalf("execute() error = %v", err)
 	}
 
-	if got, want := output, "configured"; got != want {
-		t.Fatalf("execute() = %q, want %q", got, want)
-	}
-}
-
-func TestExecuteDefaultsToSh(t *testing.T) {
-	t.Setenv("SHELL", "")
-
-	output, err := execute(context.Background(), t.TempDir(), "printf fallback")
-	if err != nil {
-		t.Fatalf("execute() error = %v", err)
-	}
-
-	if got, want := output, "fallback"; got != want {
+	if got, want := output, "custom:configured"; got != want {
 		t.Fatalf("execute() = %q, want %q", got, want)
 	}
 }

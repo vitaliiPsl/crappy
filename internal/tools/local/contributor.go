@@ -1,8 +1,12 @@
 package local
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"os"
+	"runtime"
+	"time"
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
@@ -13,6 +17,13 @@ import (
 )
 
 var _ agent.Contributor = (*Contributor)(nil)
+
+const instructionsTemplate = `# Environment
+
+- Working directory: %q
+- Platform: %s
+- Shell: %q
+- Timezone: %s`
 
 type Contributor struct{}
 
@@ -26,10 +37,14 @@ func (*Contributor) Contribute(ctx context.Context, build agent.BuildContext) (a
 		return agent.Contribution{}, err
 	}
 
+	shell := cmp.Or(os.Getenv("SHELL"), "sh")
+	timezone := time.Now().Format("MST (UTC-07:00)")
+	instructions := fmt.Sprintf(instructionsTemplate, directory, runtime.GOOS, shell, timezone)
+
 	return agent.Contribution{
-		Instructions: []string{fmt.Sprintf("Working directory: %q", directory)},
+		Instructions: []string{instructions},
 		Tools: append(
-			[]kit.Tool{bash.New(directory)},
+			[]kit.Tool{bash.New(directory, shell)},
 			filesystem.New(directory)...,
 		),
 	}, nil
