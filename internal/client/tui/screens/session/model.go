@@ -9,6 +9,7 @@ import (
 
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/internal/assistant"
+	"github.com/vitaliipsl/crappy/internal/client/tui/commands"
 	"github.com/vitaliipsl/crappy/internal/client/tui/components/composer"
 	"github.com/vitaliipsl/crappy/internal/client/tui/components/transcript"
 	"github.com/vitaliipsl/crappy/internal/config"
@@ -21,6 +22,7 @@ type Model struct {
 	assistant    *assistant.Assistant
 	subscription *event.Subscription
 	config       config.Config
+	commands     *commands.Registry
 
 	sessionID   string
 	workdir     string
@@ -40,7 +42,7 @@ type Model struct {
 func New(ctx context.Context, app *assistant.Assistant, config config.Config, sessionID string) *Model {
 	ctx, cancel := context.WithCancel(ctx)
 
-	return &Model{
+	model := &Model{
 		ctx:        ctx,
 		cancel:     cancel,
 		assistant:  app,
@@ -49,6 +51,9 @@ func New(ctx context.Context, app *assistant.Assistant, config config.Config, se
 		transcript: transcript.New(),
 		composer:   composer.New(),
 	}
+	model.commands = model.newCommands()
+
+	return model
 }
 
 func (m *Model) Init() tea.Cmd {

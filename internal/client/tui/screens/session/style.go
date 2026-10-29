@@ -21,4 +21,5 @@ var (
 	errorStyle          = lipgloss.NewStyle().Foreground(theme.Default.Error)
 	workingStyle        = lipgloss.NewStyle().Foreground(theme.Default.Primary)
 	noticeStyle         = lipgloss.NewStyle().Foreground(theme.Default.Warning)
+	infoStyle           = lipgloss.NewStyle().Foreground(theme.Default.Subtle)
 )

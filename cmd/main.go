@@ -68,7 +68,7 @@ func run(ctx context.Context) error {
 		<-done
 	}()
 
-	return tui.Run(ctx, assistant.New(h), sessions, config)
+	return tui.Run(ctx, assistant.New(h, sessions), config)
 }
 
 func newHarness(ctx context.Context, settings settings.Settings, config config.Config) (*harness.Harness, state.Store, error) {

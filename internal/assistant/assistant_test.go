@@ -23,7 +23,7 @@ func TestSessionPersistsWorkdirAtCreationAndPreservesItOnResume(t *testing.T) {
 	h := harness.New(storage)
 	t.Cleanup(func() { _ = h.Shutdown(ctx) })
 
-	app := New(h)
+	app := New(h, storage.SessionStore())
 
 	t.Chdir(t.TempDir())
 
@@ -90,7 +90,7 @@ func TestSessionPersistsWorkdirAtCreationAndPreservesItOnResume(t *testing.T) {
 	restarted := harness.New(storage)
 	t.Cleanup(func() { _ = restarted.Shutdown(ctx) })
 
-	app = New(restarted)
+	app = New(restarted, storage.SessionStore())
 
 	for _, test := range []struct {
 		id      string

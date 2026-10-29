@@ -54,7 +54,7 @@ func TestExecuteReportsTerminalPersistenceFailure(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			screen := New(ctx, assistant.New(h), config.Config{}, opened.ID())
+			screen := New(ctx, assistant.New(h, storage.SessionStore()), config.Config{}, opened.ID())
 			defer screen.Close()
 
 			screen.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
@@ -132,7 +132,7 @@ func TestWaitForExecutionStopsWhenScreenCloses(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	screen := New(ctx, assistant.New(h), config.Config{}, opened.ID())
+	screen := New(ctx, assistant.New(h, storage.SessionStore()), config.Config{}, opened.ID())
 	defer screen.Close()
 
 	accepted := screen.execute(kit.NewUserMessage(kit.NewTextContent("hello")))().(executeResultMsg)
@@ -164,7 +164,7 @@ func TestFirstSubmitCreatesSession(t *testing.T) {
 	h := harness.New(storage)
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 
-	screen := New(context.Background(), assistant.New(h), config.Config{}, "")
+	screen := New(context.Background(), assistant.New(h, storage.SessionStore()), config.Config{}, "")
 	defer screen.Close()
 
 	created := screen.submit("fix the compaction")().(createdMsg)

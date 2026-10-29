@@ -22,7 +22,6 @@ type Model struct {
 	cancel context.CancelFunc
 
 	assistant *assistant.Assistant
-	store     state.Store
 
 	currentID string
 	sessions  []state.Record
@@ -38,14 +37,13 @@ type Model struct {
 	height int
 }
 
-func New(ctx context.Context, app *assistant.Assistant, store state.Store, currentID string) *Model {
+func New(ctx context.Context, app *assistant.Assistant, currentID string) *Model {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Model{
 		ctx:       ctx,
 		cancel:    cancel,
 		assistant: app,
-		store:     store,
 		currentID: currentID,
 		loading:   true,
 	}

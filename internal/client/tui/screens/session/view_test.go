@@ -38,7 +38,6 @@ func TestViewShowsAgentContextAndUsage(t *testing.T) {
 				"/projects/crappy · openai / test-model · " + thinking,
 				"3.4k in / 900 out",
 				"Shift+Enter",
-				"Ctrl+P",
 				"Ctrl+C",
 			} {
 				if !strings.Contains(view, want) {

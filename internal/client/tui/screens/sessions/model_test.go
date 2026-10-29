@@ -181,7 +181,7 @@ func TestDeleteClosesLiveSessionBeforeRemovingStorage(t *testing.T) {
 		t.Fatal("executor did not start")
 	}
 
-	model := New(ctx, assistant.New(h), storage.SessionStore(), "other-session")
+	model := New(ctx, assistant.New(h, storage.SessionStore()), "other-session")
 	defer model.Close()
 
 	deleted := model.deleteSession(opened.ID())().(deletedMsg)
@@ -256,7 +256,7 @@ func testModel(t *testing.T, currentID string, sessions []state.Record) *Model {
 	h := harness.New(testStorage{store})
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 
-	return New(context.Background(), assistant.New(h), store, currentID)
+	return New(context.Background(), assistant.New(h, store), currentID)
 }
 
 type testStorage struct{ state.Store }

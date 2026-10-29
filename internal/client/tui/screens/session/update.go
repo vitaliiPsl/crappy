@@ -28,6 +28,17 @@ func (m *Model) handleWorkdir(message workdirMsg) {
 }
 
 func (m *Model) submit(text string) tea.Cmd {
+	command, handled, err := m.commands.Execute(text)
+	if handled {
+		if err != nil {
+			m.notice = errorNotice(err)
+		} else {
+			m.composer.Reset()
+		}
+
+		return command
+	}
+
 	if m.running() || m.terminalErr != nil {
 		return nil
 	}

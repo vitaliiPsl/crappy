@@ -106,7 +106,6 @@ func (m *Model) shortcutsView() string {
 	}
 
 	values = append(values,
-		hints.Hint{Key: "Ctrl+P", Label: "Sessions"},
 		hints.Hint{Key: "Ctrl+C", Label: "Quit"},
 	)
 
@@ -124,6 +123,10 @@ func (m *Model) statusView() string {
 
 	if m.notice.kind == noticeError {
 		return errorStyle.Width(m.contentWidth()).Render(errorPrefix + m.notice.message)
+	}
+
+	if m.notice.kind == noticeInfo {
+		return infoStyle.Width(m.contentWidth()).Render(m.notice.message)
 	}
 
 	if m.running() {

@@ -10,7 +10,7 @@ import (
 
 const (
 	composerPrompt      = "> "
-	composerPlaceholder = "Type a message… Enter to send"
+	composerPlaceholder = "Type a message or /help… Enter to send"
 	composerMinHeight   = 1
 	composerMaxHeight   = 8
 	composerPaddingX    = 1

@@ -1,8 +1,6 @@
 package sessions
 
 import (
-	"errors"
-
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/vitaliipsl/crappy/harness/session/state"
@@ -24,7 +22,7 @@ type deletedMsg struct {
 
 func (m *Model) load() tea.Cmd {
 	return func() tea.Msg {
-		sessions, err := m.store.List(m.ctx)
+		sessions, err := m.assistant.Sessions(m.ctx)
 
 		return loadedMsg{target: m, sessions: sessions, err: err}
 	}
@@ -32,16 +30,7 @@ func (m *Model) load() tea.Cmd {
 
 func (m *Model) deleteSession(sessionID string) tea.Cmd {
 	return func() tea.Msg {
-		opened, err := m.assistant.Session(m.ctx, sessionID)
-		if err != nil && !errors.Is(err, state.ErrNotFound) {
-			return deletedMsg{target: m, sessionID: sessionID, err: err}
-		}
-
-		if opened != nil {
-			opened.Close()
-		}
-
-		err = m.store.Delete(m.ctx, sessionID)
+		err := m.assistant.DeleteSession(m.ctx, sessionID)
 
 		return deletedMsg{target: m, sessionID: sessionID, err: err}
 	}

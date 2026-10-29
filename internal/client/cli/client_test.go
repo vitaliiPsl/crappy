@@ -43,7 +43,7 @@ func TestClientRunsSession(t *testing.T) {
 			var output bytes.Buffer
 
 			err = New(
-				assistant.New(h),
+				assistant.New(h, storage.SessionStore()),
 				"",
 				strings.NewReader("hi\n"),
 				&output,
