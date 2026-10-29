@@ -18,6 +18,7 @@ import (
 	"github.com/vitaliipsl/crappy/internal/assistant"
 	"github.com/vitaliipsl/crappy/internal/client/tui"
 	"github.com/vitaliipsl/crappy/internal/config"
+	"github.com/vitaliipsl/crappy/internal/instructions"
 	"github.com/vitaliipsl/crappy/internal/model"
 	"github.com/vitaliipsl/crappy/internal/settings"
 	"github.com/vitaliipsl/crappy/internal/storage/jsonl"
@@ -102,6 +103,7 @@ func newHarness(ctx context.Context, settings settings.Settings, config config.C
 			agent.WithToolMiddleware(tools.Timeout(settings.Tools)),
 			agent.WithContributors(
 				local.NewContributor(),
+				instructions.NewContributor(),
 				automatic.New(compactionExecutor,
 					automatic.WithTrigger(
 						automatic.WhenInputExceedsTokens(config.Compaction.ThresholdTokens),
