@@ -11,6 +11,8 @@ import (
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
 	"github.com/vitaliiPsl/crappy-adk/x/output"
+
+	"github.com/vitaliipsl/crappy/harness/token"
 )
 
 var ErrContextOverflow = errors.New("the smallest compaction chunk exceeds the model context")
@@ -49,7 +51,7 @@ func (c Config) withDefaults() Config {
 
 type CompactorOption func(*Compactor)
 
-func WithEstimator(estimator Estimator) CompactorOption {
+func WithEstimator(estimator token.Estimator) CompactorOption {
 	return func(compactor *Compactor) {
 		compactor.estimator = estimator
 	}
@@ -58,7 +60,7 @@ func WithEstimator(estimator Estimator) CompactorOption {
 type Compactor struct {
 	config    Config
 	models    ModelResolver
-	estimator Estimator
+	estimator token.Estimator
 	schema    kit.OutputSchema
 }
 
@@ -71,7 +73,7 @@ func NewCompactor(config Config, models ModelResolver, options ...CompactorOptio
 	compactor := &Compactor{
 		config:    config.withDefaults(),
 		models:    models,
-		estimator: &CharacterEstimator{},
+		estimator: token.NewCharacterEstimator(),
 		schema:    schema,
 	}
 
@@ -108,11 +110,11 @@ func (c *Compactor) Compact(
 func (c *Compactor) estimateContext(compaction *Compaction, messages []kit.Message) int {
 	tokens := 0
 	if compaction != nil {
-		tokens += c.estimator.EstimateMessage(compaction.Message())
+		tokens += token.EstimateMessage(c.estimator, compaction.Message())
 	}
 
 	for _, message := range messages {
-		tokens += c.estimator.EstimateMessage(message)
+		tokens += token.EstimateMessage(c.estimator, message)
 	}
 
 	return tokens
@@ -123,7 +125,7 @@ func (c *Compactor) keepFrom(messages []kit.Message) int {
 	tokens := 0
 
 	for i := len(messages) - 1; i > 0; i-- {
-		tokens += c.estimator.EstimateMessage(messages[i])
+		tokens += token.EstimateMessage(c.estimator, messages[i])
 		if tokens > *c.config.RetainedTokens {
 			break
 		}

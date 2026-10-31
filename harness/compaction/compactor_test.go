@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
+
+	"github.com/vitaliipsl/crappy/harness/token"
 )
 
 func TestCompactorCompact(t *testing.T) {
@@ -260,9 +262,9 @@ func TestCompactorKeepFrom(t *testing.T) {
 		kit.NewModelMessage(kit.NewTextContent("recent")),
 	}
 
-	estimator := CharacterEstimator{}
-	recent := estimator.EstimateMessage(messages[3])
-	toolResult := estimator.EstimateMessage(messages[2])
+	estimator := token.NewCharacterEstimator()
+	recent := token.EstimateMessage(estimator, messages[3])
+	toolResult := token.EstimateMessage(estimator, messages[2])
 
 	tests := []struct {
 		name     string

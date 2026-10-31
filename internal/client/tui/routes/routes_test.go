@@ -12,4 +12,9 @@ func TestSessionRoutes(t *testing.T) {
 	if sessions.Name() != SessionsName || sessions.Param(ParamSessionID) != "session-2" {
 		t.Fatalf("Sessions() = %q/%q", sessions.Name(), sessions.Param(ParamSessionID))
 	}
+
+	inspection := Context("session-3")
+	if inspection.Name() != ContextName || inspection.Param(ParamSessionID) != "session-3" {
+		t.Fatalf("Context() = %q/%q", inspection.Name(), inspection.Param(ParamSessionID))
+	}
 }

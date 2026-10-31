@@ -15,6 +15,7 @@ import (
 	"github.com/vitaliipsl/crappy/harness/compaction/automatic"
 	compactionexec "github.com/vitaliipsl/crappy/harness/compaction/executor"
 	"github.com/vitaliipsl/crappy/harness/session/state"
+	"github.com/vitaliipsl/crappy/harness/token"
 	"github.com/vitaliipsl/crappy/internal/assistant"
 	"github.com/vitaliipsl/crappy/internal/client/tui"
 	"github.com/vitaliipsl/crappy/internal/config"
@@ -50,7 +51,9 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	h, sessions, err := newHarness(ctx, settings, config)
+	estimator := token.NewCharacterEstimator()
+
+	h, sessions, err := newHarness(ctx, settings, config, estimator)
 	if err != nil {
 		return err
 	}
@@ -68,10 +71,15 @@ func run(ctx context.Context) error {
 		<-done
 	}()
 
-	return tui.Run(ctx, assistant.New(h, sessions), config)
+	return tui.Run(ctx, assistant.New(h, sessions, estimator), config)
 }
 
-func newHarness(ctx context.Context, settings settings.Settings, config config.Config) (*harness.Harness, state.Store, error) {
+func newHarness(
+	ctx context.Context,
+	settings settings.Settings,
+	config config.Config,
+	estimator token.Estimator,
+) (*harness.Harness, state.Store, error) {
 	models, err := model.NewRegistry(settings.Providers)
 	if err != nil {
 		return nil, nil, fmt.Errorf("create model registry: %w", err)
@@ -83,7 +91,7 @@ func newHarness(ctx context.Context, settings settings.Settings, config config.C
 		model.Retry(settings.Retry),
 	)
 
-	compactor, err := compaction.NewCompactor(config.CompactionConfig(), modelResolver)
+	compactor, err := compaction.NewCompactor(config.CompactionConfig(), modelResolver, compaction.WithEstimator(estimator))
 	if err != nil {
 		return nil, nil, fmt.Errorf("create compactor: %w", err)
 	}
@@ -106,6 +114,7 @@ func newHarness(ctx context.Context, settings settings.Settings, config config.C
 				local.NewContributor(),
 				instructions.NewContributor(),
 				automatic.New(compactionExecutor,
+					automatic.WithEstimator(estimator),
 					automatic.WithTrigger(
 						automatic.WhenInputExceedsTokens(config.Compaction.ThresholdTokens),
 					),

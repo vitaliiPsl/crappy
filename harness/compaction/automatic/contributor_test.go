@@ -39,7 +39,7 @@ func TestContributorCompactsBeforeModelRequest(t *testing.T) {
 		FinishReason: kit.FinishReasonStop,
 		Usage:        kit.Usage{InputTokens: 50, OutputTokens: 5},
 	}})
-	built := buildAgent(t, model, compactionModel, WithEstimator(fixedEstimator{request: 80}))
+	built := buildAgent(t, model, compactionModel, WithEstimator(fixedEstimator(80)))
 
 	response, err := built.Run(context.Background(), kit.NewUserMessage(kit.NewTextContent("original")))
 	if err != nil {
@@ -82,7 +82,7 @@ func TestContributorCompactsAndRetriesOnContextOverflow(t *testing.T) {
 		Message:      kit.NewModelMessage(kit.NewTextContent(`{"objective":"compaction"}`)),
 		FinishReason: kit.FinishReasonStop,
 	}})
-	built := buildAgent(t, model, compactionModel, WithEstimator(fixedEstimator{}))
+	built := buildAgent(t, model, compactionModel, WithEstimator(fixedEstimator(0)))
 
 	if _, err := built.Run(context.Background(), kit.NewUserMessage(kit.NewTextContent("original"))); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -105,7 +105,7 @@ func TestContributorIgnoresOtherModelErrors(t *testing.T) {
 		kittest.ModelResult{Error: kit.ErrRateLimit},
 	)
 	compactionModel := kittest.NewModel(t)
-	built := buildAgent(t, model, compactionModel, WithEstimator(fixedEstimator{}))
+	built := buildAgent(t, model, compactionModel, WithEstimator(fixedEstimator(0)))
 
 	_, err := built.Run(context.Background(), kit.NewUserMessage(kit.NewTextContent("original")))
 	if !errors.Is(err, kit.ErrRateLimit) {
@@ -327,7 +327,7 @@ func buildAgent(t *testing.T, model, compactionModel kit.Model, options ...Contr
 func TestContributorUsesLastModelUsage(t *testing.T) {
 	t.Parallel()
 
-	contributor := New(nil, WithEstimator(fixedEstimator{request: 1000, message: 7}))
+	contributor := New(nil, WithEstimator(fixedEstimator(7)))
 	run := &kit.RunContext{
 		LastUsage: kit.Usage{InputTokens: 100, OutputTokens: 20},
 		Messages: []kit.Message{
@@ -341,9 +341,10 @@ func TestContributorUsesLastModelUsage(t *testing.T) {
 	}
 }
 
-type fixedEstimator struct {
-	request int
-	message int
+type fixedEstimator int
+
+func (e fixedEstimator) Estimate(string) int {
+	return int(e)
 }
 
 type staticModelResolver struct {
@@ -352,14 +353,6 @@ type staticModelResolver struct {
 
 func (r staticModelResolver) Resolve(context.Context) (kit.Model, error) {
 	return r.model, nil
-}
-
-func (e fixedEstimator) EstimateRequest(kit.ModelRequest) int {
-	return e.request
-}
-
-func (e fixedEstimator) EstimateMessage(kit.Message) int {
-	return e.message
 }
 
 func TestAutomaticCompactionDuringExecution(t *testing.T) {

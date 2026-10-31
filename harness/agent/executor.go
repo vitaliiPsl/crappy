@@ -19,17 +19,19 @@ const (
 	FinishedEntryType = "agent.finished"
 )
 
+type Finished struct {
+	Usage     kit.Usage `json:"usage"`
+	LastUsage kit.Usage `json:"last_usage"`
+}
+
 type Executor struct {
 	factory *Factory
 }
 
+var _ execution.Executor = (*Executor)(nil)
+
 func NewExecutor(factory *Factory) *Executor {
 	return &Executor{factory: factory}
-}
-
-type Finished struct {
-	Usage     kit.Usage `json:"usage"`
-	LastUsage kit.Usage `json:"last_usage"`
 }
 
 func (e *Executor) Execute(ctx context.Context, params execution.ExecuteParams) (any, error) {

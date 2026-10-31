@@ -6,6 +6,8 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kit"
 )
 
+// ToolMiddleware wraps tools during assembly, including context resolution.
+// Execution side effects belong in the wrapped tool's invocation.
 type ToolMiddleware func(BuildContext, kit.Tool) (kit.Tool, error)
 
 func wrapTools(

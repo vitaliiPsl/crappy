@@ -14,6 +14,7 @@ func (m *Model) newCommands() *commands.Registry {
 		commands.Command{Name: "new", Description: "Start a new conversation", Run: m.newSession},
 		commands.Command{Name: "sessions", Description: "Browse sessions", Run: m.showSessions},
 		commands.Command{Name: "compact", Description: "Compact the conversation", Run: m.compact},
+		commands.Command{Name: "context", Description: "Inspect current agent context", Run: m.showContext},
 	)
 }
 
@@ -34,6 +35,14 @@ func (m *Model) showSessions() tea.Cmd {
 
 	return func() tea.Msg {
 		return navigation.Toggle(routes.Sessions(sessionID))
+	}
+}
+
+func (m *Model) showContext() tea.Cmd {
+	sessionID := m.sessionID
+
+	return func() tea.Msg {
+		return navigation.Push(routes.Context(sessionID))
 	}
 }
 

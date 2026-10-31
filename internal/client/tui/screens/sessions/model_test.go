@@ -15,6 +15,7 @@ import (
 	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/session"
 	"github.com/vitaliipsl/crappy/harness/session/state"
+	"github.com/vitaliipsl/crappy/harness/token"
 	"github.com/vitaliipsl/crappy/internal/assistant"
 	"github.com/vitaliipsl/crappy/internal/client/tui/navigation"
 	"github.com/vitaliipsl/crappy/internal/client/tui/routes"
@@ -181,7 +182,7 @@ func TestDeleteClosesLiveSessionBeforeRemovingStorage(t *testing.T) {
 		t.Fatal("executor did not start")
 	}
 
-	model := New(ctx, assistant.New(h, storage.SessionStore()), "other-session")
+	model := New(ctx, assistant.New(h, storage.SessionStore(), token.NewCharacterEstimator()), "other-session")
 	defer model.Close()
 
 	deleted := model.deleteSession(opened.ID())().(deletedMsg)
@@ -256,7 +257,7 @@ func testModel(t *testing.T, currentID string, sessions []state.Record) *Model {
 	h := harness.New(testStorage{store})
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 
-	return New(context.Background(), assistant.New(h, store), currentID)
+	return New(context.Background(), assistant.New(h, store, token.NewCharacterEstimator()), currentID)
 }
 
 type testStorage struct{ state.Store }

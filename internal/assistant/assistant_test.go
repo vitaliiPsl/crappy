@@ -7,6 +7,7 @@ import (
 
 	"github.com/vitaliipsl/crappy/harness"
 	"github.com/vitaliipsl/crappy/harness/session"
+	"github.com/vitaliipsl/crappy/harness/token"
 	"github.com/vitaliipsl/crappy/internal/storage/jsonl"
 	"github.com/vitaliipsl/crappy/internal/workdir"
 )
@@ -23,7 +24,7 @@ func TestSessionPersistsWorkdirAtCreationAndPreservesItOnResume(t *testing.T) {
 	h := harness.New(storage)
 	t.Cleanup(func() { _ = h.Shutdown(ctx) })
 
-	app := New(h, storage.SessionStore())
+	app := New(h, storage.SessionStore(), token.NewCharacterEstimator())
 
 	t.Chdir(t.TempDir())
 
@@ -90,7 +91,7 @@ func TestSessionPersistsWorkdirAtCreationAndPreservesItOnResume(t *testing.T) {
 	restarted := harness.New(storage)
 	t.Cleanup(func() { _ = restarted.Shutdown(ctx) })
 
-	app = New(restarted, storage.SessionStore())
+	app = New(restarted, storage.SessionStore(), token.NewCharacterEstimator())
 
 	for _, test := range []struct {
 		id      string

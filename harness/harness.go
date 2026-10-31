@@ -35,6 +35,7 @@ type config struct {
 	agentConfig  kit.AgentConfig
 	agentOptions []agent.Option
 	executors    *execution.Registry
+	contexts     *agent.ContextResolver
 }
 
 func WithModel(models agent.ModelResolver) Option {
@@ -52,10 +53,15 @@ func WithExecutor(name string, executor execution.Executor) Option {
 	return func(c *config) { c.executors.Register(name, executor) }
 }
 
+func WithContextResolver(resolver *agent.ContextResolver) Option {
+	return func(c *config) { c.contexts = resolver }
+}
+
 type Harness struct {
 	sessions  state.Store
 	entries   entry.Store
 	executors execution.Resolver
+	contexts  *agent.ContextResolver
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -83,9 +89,12 @@ func New(store Store, options ...Option) *Harness {
 
 	if c.models != nil {
 		if _, err := c.executors.Resolve(agent.ExecutorName); err != nil {
-			c.executors.Register(agent.ExecutorName, agent.NewExecutor(
-				agent.New(c.agentConfig, c.models, c.agentOptions...),
-			))
+			factory := agent.New(c.agentConfig, c.models, c.agentOptions...)
+			c.executors.Register(agent.ExecutorName, agent.NewExecutor(factory))
+
+			if c.contexts == nil {
+				c.contexts = agent.NewContextResolver(factory)
+			}
 		}
 	}
 
@@ -95,6 +104,7 @@ func New(store Store, options ...Option) *Harness {
 		sessions:  store.SessionStore(),
 		entries:   store.EntryStore(),
 		executors: c.executors,
+		contexts:  c.contexts,
 
 		ctx:     ctx,
 		cancel:  cancel,
@@ -234,7 +244,7 @@ func (h *Harness) openSession(ctx context.Context, sessionID string) (*session.S
 func (h *Harness) constructSession(sessionID string, pending *sessionOpening) {
 	defer h.opening.Done()
 
-	opened, err := session.New(h.ctx, sessionID, state.New(h.sessions, sessionID), h.entries, h.executors)
+	opened, err := session.New(h.ctx, sessionID, state.New(h.sessions, sessionID), h.entries, h.executors, h.contexts)
 	if err != nil {
 		err = fmt.Errorf("open session %s: %w", sessionID, err)
 	}

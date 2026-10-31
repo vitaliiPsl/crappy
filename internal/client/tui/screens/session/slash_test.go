@@ -14,6 +14,7 @@ import (
 	compactionexec "github.com/vitaliipsl/crappy/harness/compaction/executor"
 	"github.com/vitaliipsl/crappy/harness/execution"
 	harnesssession "github.com/vitaliipsl/crappy/harness/session"
+	"github.com/vitaliipsl/crappy/harness/token"
 	"github.com/vitaliipsl/crappy/internal/assistant"
 	"github.com/vitaliipsl/crappy/internal/client/tui/navigation"
 	"github.com/vitaliipsl/crappy/internal/client/tui/routes"
@@ -34,7 +35,7 @@ func TestHelpCommandWorksWhileExecutionIsActive(t *testing.T) {
 		t.Fatal("help submitted application work")
 	}
 
-	for _, name := range []string{"/help", "/new", "/sessions", "/compact"} {
+	for _, name := range []string{"/help", "/new", "/sessions", "/compact", "/context"} {
 		if !strings.Contains(screen.statusView(), name) {
 			t.Fatalf("help omitted %s: %q", name, screen.statusView())
 		}
@@ -56,6 +57,7 @@ func TestNavigationCommandsWorkWhileExecutionIsActive(t *testing.T) {
 	}{
 		{command: "/new", operation: navigation.OperationReset, route: routes.SessionName},
 		{command: "/sessions", operation: navigation.OperationToggle, route: routes.SessionsName, sessionID: "session-1"},
+		{command: "/context", operation: navigation.OperationPush, route: routes.ContextName, sessionID: "session-1"},
 	} {
 		t.Run(test.command, func(t *testing.T) {
 			screen := New(context.Background(), nil, config.Config{}, "session-1")
@@ -125,7 +127,7 @@ func TestCompactCommandUsesNormalExecutionLifecycle(t *testing.T) {
 	))
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 
-	app := assistant.New(h, storage.SessionStore())
+	app := assistant.New(h, storage.SessionStore(), token.NewCharacterEstimator())
 
 	screen := New(ctx, app, config.Config{}, "")
 	defer screen.Close()

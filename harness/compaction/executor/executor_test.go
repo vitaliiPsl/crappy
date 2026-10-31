@@ -105,7 +105,7 @@ func TestExecutorPersistsCompactionAndReceipt(t *testing.T) {
 		t.Fatalf("model context = %+v", messages)
 	}
 
-	reopened, err := session.New(context.Background(), opened.ID(), opened.State(), store, execution.NewRegistry())
+	reopened, err := session.New(context.Background(), opened.ID(), opened.State(), store, execution.NewRegistry(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,7 +295,7 @@ func newTestSession(t *testing.T, model kit.Model, store entry.Store) *session.S
 		t.Fatal(err)
 	}
 
-	opened, err := session.New(context.Background(), "session", state.New(sessions, "session"), store, registry)
+	opened, err := session.New(context.Background(), "session", state.New(sessions, "session"), store, registry, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

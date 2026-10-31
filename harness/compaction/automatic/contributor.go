@@ -8,9 +8,9 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
 	"github.com/vitaliipsl/crappy/harness/agent"
-	"github.com/vitaliipsl/crappy/harness/compaction"
 	compactionexec "github.com/vitaliipsl/crappy/harness/compaction/executor"
 	"github.com/vitaliipsl/crappy/harness/execution"
+	"github.com/vitaliipsl/crappy/harness/token"
 )
 
 type ContributorOption func(*Contributor)
@@ -21,7 +21,7 @@ func WithTrigger(trigger Trigger) ContributorOption {
 	}
 }
 
-func WithEstimator(estimator compaction.Estimator) ContributorOption {
+func WithEstimator(estimator token.Estimator) ContributorOption {
 	return func(contributor *Contributor) {
 		contributor.estimator = estimator
 	}
@@ -30,7 +30,7 @@ func WithEstimator(estimator compaction.Estimator) ContributorOption {
 type Contributor struct {
 	executor  *compactionexec.Executor
 	trigger   Trigger
-	estimator compaction.Estimator
+	estimator token.Estimator
 }
 
 var _ agent.Contributor = (*Contributor)(nil)
@@ -39,7 +39,7 @@ func New(executor *compactionexec.Executor, options ...ContributorOption) *Contr
 	contributor := &Contributor{
 		executor:  executor,
 		trigger:   WhenInputExceedsRatio(DefaultThresholdRatio),
-		estimator: &compaction.CharacterEstimator{},
+		estimator: token.NewCharacterEstimator(),
 	}
 
 	for _, option := range options {
@@ -130,12 +130,12 @@ func (c *Contributor) inputTokens(
 	request kit.ModelRequest,
 ) int64 {
 	if run.LastUsage.InputTokens == 0 {
-		return int64(c.estimator.EstimateRequest(request))
+		return int64(token.EstimateRequest(c.estimator, request))
 	}
 
 	tokens := run.LastUsage.InputTokens + run.LastUsage.OutputTokens
 	for _, message := range messagesAfterLastModelResponse(run.Messages) {
-		tokens += int64(c.estimator.EstimateMessage(message))
+		tokens += int64(token.EstimateMessage(c.estimator, message))
 	}
 
 	return tokens

@@ -11,20 +11,23 @@ import (
 	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/session"
 	"github.com/vitaliipsl/crappy/harness/session/state"
+	"github.com/vitaliipsl/crappy/harness/token"
 	"github.com/vitaliipsl/crappy/internal/workdir"
 )
 
 var ErrSessionRequired = errors.New("an existing session is required")
 
 type Assistant struct {
-	harness  *harness.Harness
-	sessions state.Store
+	harness   *harness.Harness
+	sessions  state.Store
+	estimator token.Estimator
 }
 
-func New(harness *harness.Harness, sessions state.Store) *Assistant {
+func New(harness *harness.Harness, sessions state.Store, estimator token.Estimator) *Assistant {
 	return &Assistant{
-		harness:  harness,
-		sessions: sessions,
+		harness:   harness,
+		sessions:  sessions,
+		estimator: estimator,
 	}
 }
 

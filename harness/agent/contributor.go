@@ -19,6 +19,7 @@ type Contribution struct {
 	Options      []adkagent.Option
 }
 
+// Contributor also runs during context resolution and must not mutate session data or execute work.
 type Contributor interface {
 	Contribute(context.Context, BuildContext) (Contribution, error)
 }

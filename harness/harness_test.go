@@ -46,6 +46,17 @@ func TestBuiltInAgentIsDefaultAndUsesConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	resolved, err := opened.Context(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if resolved.InstructionsText() != "Be concise." || len(resolved.Tools) != 1 || resolved.Tools[0] != tool {
+		t.Fatalf("session context configuration was lost: %+v", resolved)
+	}
+
+	model.AssertNeverCalled(t)
+
 	current, err := opened.Execute(context.Background(), execution.Request{
 		Input: kit.NewUserMessage(kit.NewTextContent("hello")),
 	})
@@ -86,6 +97,83 @@ func TestBuiltInAgentIsDefaultAndUsesConfiguration(t *testing.T) {
 	}
 
 	model.AssertCallCount(t, 1)
+}
+
+func TestSessionContextUsesConfiguredResolver(t *testing.T) {
+	t.Parallel()
+
+	model := kittest.NewModel(t)
+	replacement := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
+		Message: kit.NewModelMessage(kit.NewTextContent("done")), FinishReason: kit.FinishReasonStop,
+	}})
+	factory := agent.New(kit.AgentConfig{}, testModelResolver{replacement}, agent.WithInstructions("Replacement guidance."))
+	h := New(newTestStore(),
+		WithContextResolver(agent.NewContextResolver(factory)),
+		WithModel(testModelResolver{model}),
+		WithAgentConfig(kit.AgentConfig{}, agent.WithInstructions("Original guidance.")),
+		WithExecutor(agent.ExecutorName, agent.NewExecutor(factory)),
+	)
+	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
+
+	opened, err := h.Session(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, err := opened.Context(context.Background())
+	if err != nil || resolved.InstructionsText() != "Replacement guidance." {
+		t.Fatalf("session context = %+v, error = %v", resolved, err)
+	}
+
+	replacement.AssertNeverCalled(t)
+
+	current, err := opened.Execute(context.Background(), execution.Request{
+		Input: kit.NewUserMessage(kit.NewTextContent("hello")),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if finished := waitFinished(t, opened, current.ID()); finished.Outcome != execution.Completed {
+		t.Fatalf("replacement execution = %+v", finished)
+	}
+
+	if request := replacement.CallAt(0); request.Instructions != resolved.InstructionsText() {
+		t.Fatalf("execution instructions = %q, want %q", request.Instructions, resolved.InstructionsText())
+	}
+
+	model.AssertNeverCalled(t)
+	replacement.AssertCallCount(t, 1)
+}
+
+func TestSessionContextDoesNotRequireRegisteredExecutor(t *testing.T) {
+	t.Parallel()
+
+	model := kittest.NewModel(t)
+	factory := agent.New(kit.AgentConfig{}, testModelResolver{model}, agent.WithInstructions("Preview guidance."))
+	h := New(newTestStore(), WithContextResolver(agent.NewContextResolver(factory)))
+	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
+
+	opened, err := h.Session(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, err := opened.Context(context.Background())
+	if err != nil || resolved.InstructionsText() != "Preview guidance." {
+		t.Fatalf("standalone context = %+v, error = %v", resolved, err)
+	}
+
+	if _, err := opened.Execute(context.Background(), execution.Request{}); err == nil {
+		t.Fatal("context resolution registered an executor")
+	}
+
+	entries, err := opened.Entries(context.Background(), 0)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("context resolution recorded work: %+v, %v", entries, err)
+	}
+
+	model.AssertNeverCalled(t)
 }
 
 func TestManualAndAutomaticCompactionShareExecutor(t *testing.T) {

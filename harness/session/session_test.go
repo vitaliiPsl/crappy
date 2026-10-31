@@ -237,7 +237,7 @@ func TestNewUsesContextForConstructionAndLifetime(t *testing.T) {
 				cancel()
 			}
 
-			opened, err := New(ctx, "session-1", newSessionState(t, "session-1"), entry.NewMemoryStore(), execution.NewRegistry())
+			opened, err := New(ctx, "session-1", newSessionState(t, "session-1"), entry.NewMemoryStore(), execution.NewRegistry(), nil)
 			if test.cancelled {
 				if opened != nil || !errors.Is(err, context.Canceled) {
 					t.Fatalf("cancelled construction = %v, error = %v", opened, err)
@@ -362,7 +362,17 @@ func receiveEvent(t *testing.T, subscription *event.Subscription) event.Event {
 func newAgentSession(ctx context.Context, t *testing.T, id string, entries entry.Store, factory *agent.Factory) *Session {
 	t.Helper()
 
-	return newExecutorSession(ctx, t, id, entries, agent.ExecutorName, agent.NewExecutor(factory))
+	registry := execution.NewRegistry()
+	registry.Register(agent.ExecutorName, agent.NewExecutor(factory))
+
+	opened, err := New(ctx, id, newSessionState(t, id), entries, registry, agent.NewContextResolver(factory))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(opened.Close)
+
+	return opened
 }
 
 func newExecutorSession(ctx context.Context, t *testing.T, id string, entries entry.Store, name string, executor execution.Executor) *Session {
@@ -377,7 +387,7 @@ func newExecutorSession(ctx context.Context, t *testing.T, id string, entries en
 func newSession(ctx context.Context, t *testing.T, id string, entries entry.Store, executors execution.Resolver) *Session {
 	t.Helper()
 
-	opened, err := New(ctx, id, newSessionState(t, id), entries, executors)
+	opened, err := New(ctx, id, newSessionState(t, id), entries, executors, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

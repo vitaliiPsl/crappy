@@ -8,6 +8,7 @@ import (
 	"github.com/vitaliipsl/crappy/internal/assistant"
 	"github.com/vitaliipsl/crappy/internal/client/tui/navigation"
 	"github.com/vitaliipsl/crappy/internal/client/tui/routes"
+	contextscreen "github.com/vitaliipsl/crappy/internal/client/tui/screens/context"
 	sessionscreen "github.com/vitaliipsl/crappy/internal/client/tui/screens/session"
 	sessionsscreen "github.com/vitaliipsl/crappy/internal/client/tui/screens/sessions"
 	"github.com/vitaliipsl/crappy/internal/config"
@@ -41,6 +42,9 @@ func Run(ctx context.Context, app *assistant.Assistant, config config.Config) er
 					app,
 					route.Param(routes.ParamSessionID),
 				)
+			},
+			routes.ContextName: func(route navigation.Route) tea.Model {
+				return contextscreen.New(ctx, app, route.Param(routes.ParamSessionID))
 			},
 		},
 	)
