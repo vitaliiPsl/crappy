@@ -13,6 +13,7 @@ type BuildContext struct {
 }
 
 type Contribution struct {
+	Source       string
 	Instructions []string
 	Tools        []kit.Tool
 	Options      []adkagent.Option

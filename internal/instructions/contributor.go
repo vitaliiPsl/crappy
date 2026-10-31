@@ -27,6 +27,7 @@ func (*Contributor) Contribute(ctx context.Context, build agent.BuildContext) (a
 	}
 
 	return agent.Contribution{
+		Source:       "Session Instructions",
 		Instructions: []string{instructions},
 	}, nil
 }

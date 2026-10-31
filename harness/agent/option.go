@@ -7,6 +7,14 @@ import (
 
 type Option func(*Factory)
 
+func WithInstructions(text ...string) Option {
+	return WithAgentOptions(adkagent.WithInstructions(text...))
+}
+
+func WithInstructionsSource(source string, text ...string) Option {
+	return WithAgentOptions(adkagent.WithInstructionsSource(source, text...))
+}
+
 func WithTools(tools ...kit.Tool) Option {
 	return func(factory *Factory) {
 		factory.tools = append(factory.tools, tools...)

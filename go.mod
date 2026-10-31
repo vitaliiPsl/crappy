@@ -2,6 +2,8 @@ module github.com/vitaliipsl/crappy
 
 go 1.26.2
 
+replace github.com/vitaliiPsl/crappy-adk => ../crappy-adk
+
 require (
 	charm.land/bubbles/v2 v2.1.0
 	charm.land/bubbletea/v2 v2.0.6

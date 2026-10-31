@@ -68,7 +68,7 @@ func (f *Factory) Build(ctx context.Context, request BuildRequest) (kit.Agent, e
 		}
 
 		if len(contribution.Instructions) > 0 {
-			options = append(options, adkagent.WithInstructions(contribution.Instructions...))
+			options = append(options, adkagent.WithInstructionsSource(contribution.Source, contribution.Instructions...))
 		}
 
 		tools = append(tools, contribution.Tools...)
@@ -80,20 +80,21 @@ func (f *Factory) Build(ctx context.Context, request BuildRequest) (kit.Agent, e
 		return nil, err
 	}
 
-	return adkagent.New(
+	built, err := adkagent.New(
 		build.Model,
 		request.Memory,
 		adktool.NewSet(tools...),
 		options...,
 	)
+	if err != nil {
+		return nil, err
+	}
+
+	return built, nil
 }
 
 func agentOptions(config kit.AgentConfig) []adkagent.Option {
-	options := make([]adkagent.Option, 0, 5)
-
-	if config.Instructions != "" {
-		options = append(options, adkagent.WithInstructions(config.Instructions))
-	}
+	options := make([]adkagent.Option, 0, 4)
 
 	if config.Temperature != nil {
 		options = append(options, adkagent.WithTemperature(*config.Temperature))

@@ -51,6 +51,10 @@ func TestContributorBindsToolsToSessionAndExecution(t *testing.T) {
 			t.Fatalf("instructions = %v, want workdir %q", contribution.Instructions, test.workdir)
 		}
 
+		if contribution.Source != "Environment" || strings.HasPrefix(contribution.Instructions[0], "# Environment") {
+			t.Fatalf("environment framing is not delegated to ADK: %+v", contribution)
+		}
+
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 

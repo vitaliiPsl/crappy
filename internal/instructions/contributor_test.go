@@ -45,6 +45,10 @@ func TestContributorLoadsAncestorsInOrder(t *testing.T) {
 	}
 
 	instructions := contribution.Instructions[0]
+	if contribution.Source != "Session Instructions" || strings.HasPrefix(instructions, "# Session Instructions") {
+		t.Fatalf("instruction framing is not delegated to ADK: %+v", contribution)
+	}
+
 	previous := -1
 
 	for _, file := range files {

@@ -100,6 +100,7 @@ func newHarness(ctx context.Context, settings settings.Settings, config config.C
 		harness.WithModel(modelResolver),
 		harness.WithExecutor(compactionexec.ExecutorName, compactionExecutor),
 		harness.WithAgentConfig(config.AgentConfig(),
+			agent.WithInstructions(config.Instructions),
 			agent.WithToolMiddleware(tools.Timeout(settings.Tools)),
 			agent.WithContributors(
 				local.NewContributor(),

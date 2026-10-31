@@ -35,7 +35,6 @@ type Compaction struct {
 
 func (c Config) AgentConfig() kit.AgentConfig {
 	configured := kit.AgentConfig{
-		Instructions:    c.Instructions,
 		Temperature:     c.Generation.Temperature,
 		MaxOutputTokens: c.Generation.MaxOutputTokens,
 	}

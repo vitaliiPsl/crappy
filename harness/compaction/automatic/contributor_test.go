@@ -633,8 +633,9 @@ func TestCompactionRebuildsRequestContributions(t *testing.T) {
 				store := entry.NewMemoryStore()
 				events := event.NewBus("session", store)
 				constructions := 0
-				factory := harnessagent.New(kit.AgentConfig{Instructions: "static"}, staticModelResolver{model},
-					harnessagent.WithAgentOptions(adkagent.WithOnModelRequest(func(_ *kit.RunContext, request kit.ModelRequest) (kit.ModelRequest, error) {
+				factory := harnessagent.New(kit.AgentConfig{}, staticModelResolver{model},
+					harnessagent.WithInstructions("static"),
+					harnessagent.WithAgentOptions(adkagent.WithOnContext(func(_ context.Context, request kit.AgentContext) (kit.AgentContext, error) {
 						constructions++
 
 						if scenario.rewrite {
@@ -647,13 +648,13 @@ func TestCompactionRebuildsRequestContributions(t *testing.T) {
 						}
 
 						request.Messages = append([]kit.Message{prefix}, request.Messages...)
-						request.Instructions += " dynamic"
+						request.Instructions[0].Text += " dynamic"
 
 						return request, nil
 					})),
 					harnessagent.WithContributors(New(compactionexec.New(compactor)), harnessagent.ContributorFunc(func(context.Context, harnessagent.BuildContext) (harnessagent.Contribution, error) {
 						return harnessagent.Contribution{Options: []adkagent.Option{
-							adkagent.WithOnModelRequest(func(_ *kit.RunContext, request kit.ModelRequest) (kit.ModelRequest, error) {
+							adkagent.WithOnContext(func(_ context.Context, request kit.AgentContext) (kit.AgentContext, error) {
 								request.Messages = append(request.Messages, suffix)
 
 								return request, nil

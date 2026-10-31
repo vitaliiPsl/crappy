@@ -35,7 +35,7 @@ func TestBuiltInAgentIsDefaultAndUsesConfiguration(t *testing.T) {
 	}})
 	tool := kittest.NewTool(t, "search", "Search")
 	h := New(newTestStore(),
-		WithAgentConfig(kit.AgentConfig{Instructions: "Be concise."}, agent.WithTools(tool)),
+		WithAgentConfig(kit.AgentConfig{}, agent.WithInstructions("Be concise."), agent.WithTools(tool)),
 		WithExecutor("cleanup", execution.Func(func(context.Context, execution.ExecuteParams) (any, error) { return nil, nil })),
 		WithModel(testModelResolver{model}),
 	)

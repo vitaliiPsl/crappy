@@ -18,9 +18,7 @@ import (
 
 var _ agent.Contributor = (*Contributor)(nil)
 
-const instructionsTemplate = `# Environment
-
-- Working directory: %q
+const instructionsTemplate = `- Working directory: %q
 - Platform: %s
 - Shell: %q
 - Timezone: %s`
@@ -42,6 +40,7 @@ func (*Contributor) Contribute(ctx context.Context, build agent.BuildContext) (a
 	instructions := fmt.Sprintf(instructionsTemplate, directory, runtime.GOOS, shell, timezone)
 
 	return agent.Contribution{
+		Source:       "Environment",
 		Instructions: []string{instructions},
 		Tools: append(
 			[]kit.Tool{bash.New(directory, shell)},

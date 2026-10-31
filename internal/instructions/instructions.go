@@ -12,9 +12,7 @@ const (
 	maxInstructionFileBytes  = 64 * 1024
 	maxInstructionTotalBytes = 256 * 1024
 
-	instructionFilesHeader = `# Session Instructions
-
-The files below provide local guidance for this session. Each applies to its directory and descendants; deeper instructions take precedence over ancestor instructions. Explicit user instructions take precedence over this guidance.
+	instructionFilesPreamble = `The files below provide local guidance for this session. Each applies to its directory and descendants; deeper instructions take precedence over ancestor instructions. Explicit user instructions take precedence over this guidance.
 
 Before working in a subdirectory, check for additional AGENTS.md or CLAUDE.md files.
 `
@@ -34,7 +32,7 @@ func instructionFiles(workdir string) string {
 	}
 
 	var output strings.Builder
-	output.WriteString(instructionFilesHeader)
+	output.WriteString(instructionFilesPreamble)
 
 	for _, file := range files {
 		fmt.Fprintf(&output, "\n\n## %s\n\n%s", file.path, file.content)
