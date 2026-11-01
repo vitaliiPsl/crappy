@@ -28,10 +28,11 @@ func TestInspectorLoadsAndRefreshesWithoutExecuting(t *testing.T) {
 	}
 
 	model := kittest.NewModel(t)
-	h := harness.New(storage, harness.WithModel(inspectorModelResolver{model}))
+	agents := agent.New(kit.AgentConfig{}, inspectorModelResolver{model})
+	h := harness.New(storage, harness.WithExecutor(agent.ExecutorName, agent.NewExecutor(agents)))
 	t.Cleanup(func() { _ = h.Shutdown(ctx) })
 
-	app := assistant.New(h, storage.SessionStore(), token.NewCharacterEstimator())
+	app := assistant.New(h, storage, agents, token.NewCharacterEstimator())
 
 	opened, err := app.Session(ctx, "")
 	if err != nil {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"sync"
 
-	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
@@ -19,7 +18,6 @@ type Session struct {
 	entries   entry.Store
 	events    *event.Bus
 	executors execution.Resolver
-	contexts  *agent.ContextResolver
 
 	current *Execution
 
@@ -33,7 +31,6 @@ func New(
 	state state.State,
 	entries entry.Store,
 	executors execution.Resolver,
-	contexts *agent.ContextResolver,
 ) (*Session, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -46,7 +43,6 @@ func New(
 		entries:   entries,
 		events:    event.NewBus(id, entries),
 		executors: executors,
-		contexts:  contexts,
 	}
 
 	if err := s.restore(ctx); err != nil {

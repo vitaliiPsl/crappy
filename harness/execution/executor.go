@@ -9,8 +9,6 @@ import (
 	"github.com/vitaliipsl/crappy/harness/session/state"
 )
 
-const DefaultName = "agent"
-
 type ExecuteParams struct {
 	SessionID   string
 	ExecutionID string

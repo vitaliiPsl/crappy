@@ -40,18 +40,16 @@ func (e *Executor) Execute(ctx context.Context, params execution.ExecuteParams) 
 		return nil, fmt.Errorf("decode agent input: %w", err)
 	}
 
-	memory := NewMemory(params.SessionID, params.ExecutionID, params.Entries, params.Events)
-	if err := e.completeToolResults(ctx, memory, params); err != nil {
+	history := NewHistory(params.SessionID, params.ExecutionID, params.Entries, params.Events)
+	if err := e.completeToolResults(ctx, history, params); err != nil {
 		return nil, err
 	}
 
 	built, err := e.factory.Build(ctx, BuildRequest{
 		SessionID:   params.SessionID,
 		ExecutionID: params.ExecutionID,
-		Memory:      memory,
 		State:       params.State,
-		Entries:     params.Entries,
-		Events:      params.Events,
+		History:     history,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build agent: %w", err)
@@ -74,7 +72,7 @@ func (e *Executor) Execute(ctx context.Context, params execution.ExecuteParams) 
 	}
 
 	if runErr != nil {
-		runErr = errors.Join(runErr, e.completeToolResults(context.WithoutCancel(ctx), memory, params))
+		runErr = errors.Join(runErr, e.completeToolResults(context.WithoutCancel(ctx), history, params))
 	}
 
 	if err := params.Events.Commit(context.WithoutCancel(ctx), params.ExecutionID, FinishedEntryType,
@@ -89,10 +87,10 @@ func (e *Executor) Execute(ctx context.Context, params execution.ExecuteParams) 
 	return response, runErr
 }
 
-func (*Executor) completeToolResults(ctx context.Context, memory kit.Memory, params execution.ExecuteParams) error {
-	messages, err := memory.Context(ctx)
+func (*Executor) completeToolResults(ctx context.Context, history *History, params execution.ExecuteParams) error {
+	messages, err := history.Messages(ctx)
 	if err != nil {
-		return fmt.Errorf("read context: %w", err)
+		return fmt.Errorf("read history: %w", err)
 	}
 
 	calls := unresolvedToolCalls(messages)

@@ -9,9 +9,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/vitaliiPsl/crappy-adk/kit"
-
-	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/session"
@@ -31,37 +28,17 @@ type Store interface {
 type Option func(*config)
 
 type config struct {
-	models       agent.ModelResolver
-	agentConfig  kit.AgentConfig
-	agentOptions []agent.Option
-	executors    *execution.Registry
-	contexts     *agent.ContextResolver
-}
-
-func WithModel(models agent.ModelResolver) Option {
-	return func(c *config) { c.models = models }
-}
-
-func WithAgentConfig(configured kit.AgentConfig, options ...agent.Option) Option {
-	return func(c *config) {
-		c.agentConfig = configured
-		c.agentOptions = append(c.agentOptions, options...)
-	}
+	executors *execution.Registry
 }
 
 func WithExecutor(name string, executor execution.Executor) Option {
 	return func(c *config) { c.executors.Register(name, executor) }
 }
 
-func WithContextResolver(resolver *agent.ContextResolver) Option {
-	return func(c *config) { c.contexts = resolver }
-}
-
 type Harness struct {
 	sessions  state.Store
 	entries   entry.Store
 	executors execution.Resolver
-	contexts  *agent.ContextResolver
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -87,24 +64,12 @@ func New(store Store, options ...Option) *Harness {
 		option(&c)
 	}
 
-	if c.models != nil {
-		if _, err := c.executors.Resolve(agent.ExecutorName); err != nil {
-			factory := agent.New(c.agentConfig, c.models, c.agentOptions...)
-			c.executors.Register(agent.ExecutorName, agent.NewExecutor(factory))
-
-			if c.contexts == nil {
-				c.contexts = agent.NewContextResolver(factory)
-			}
-		}
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Harness{
 		sessions:  store.SessionStore(),
 		entries:   store.EntryStore(),
 		executors: c.executors,
-		contexts:  c.contexts,
 
 		ctx:     ctx,
 		cancel:  cancel,
@@ -244,7 +209,7 @@ func (h *Harness) openSession(ctx context.Context, sessionID string) (*session.S
 func (h *Harness) constructSession(sessionID string, pending *sessionOpening) {
 	defer h.opening.Done()
 
-	opened, err := session.New(h.ctx, sessionID, state.New(h.sessions, sessionID), h.entries, h.executors, h.contexts)
+	opened, err := session.New(h.ctx, sessionID, state.New(h.sessions, sessionID), h.entries, h.executors)
 	if err != nil {
 		err = fmt.Errorf("open session %s: %w", sessionID, err)
 	}

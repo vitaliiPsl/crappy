@@ -119,7 +119,8 @@ func (c *Client) Run(ctx context.Context) error {
 			}
 
 			submitted, err := opened.Execute(ctx, execution.Request{
-				Input: kit.NewUserMessage(kit.NewTextContent(text)),
+				Executor: agent.ExecutorName,
+				Input:    kit.NewUserMessage(kit.NewTextContent(text)),
 			})
 			if err != nil {
 				return fmt.Errorf("execute: %w", err)

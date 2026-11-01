@@ -3,9 +3,7 @@ package executor
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 
@@ -14,6 +12,7 @@ import (
 
 	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/compaction"
+	"github.com/vitaliipsl/crappy/harness/compaction/automatic"
 	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
@@ -30,17 +29,19 @@ func TestExecutorPersistsCompactionAndReceipt(t *testing.T) {
 		FinishReason: kit.FinishReasonStop, Usage: usage,
 	}})
 	store := entry.NewMemoryStore()
-	opened := newTestSession(t, model, store)
 
-	original := []kit.Message{
+	registry := execution.NewRegistry()
+	registry.Register(ExecutorName, New(newCompactor(t, model)))
+	opened := newTestSession(t, store, registry)
+
+	if err := opened.Commit(context.Background(), "previous", agent.MessageEntryType,
 		kit.NewUserMessage(kit.NewTextContent("older work")),
 		kit.NewModelMessage(kit.NewTextContent("recent reply")),
-	}
-	if err := opened.Commit(context.Background(), "previous", agent.MessageEntryType, original[0], original[1]); err != nil {
+	); err != nil {
 		t.Fatal(err)
 	}
 
-	current, finished := executeCompaction(t, opened)
+	current, finished := execute(t, opened, execution.Request{Executor: ExecutorName})
 	if finished.Outcome != execution.Completed {
 		t.Fatalf("manual compaction = %+v", finished)
 	}
@@ -88,36 +89,19 @@ func TestExecutorPersistsCompactionAndReceipt(t *testing.T) {
 		t.Fatalf("executor = %q", started.Executor)
 	}
 
-	memory := agent.NewMemory(opened.ID(), "next", store, event.NewBus(opened.ID(), store))
-
-	history, err := memory.History(context.Background())
-	if err != nil || !reflect.DeepEqual(history, original) {
-		t.Fatalf("manual compaction changed original messages: %+v, err = %v", history, err)
-	}
-
-	messages, err := memory.Context(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	want := []kit.Message{compaction.Compaction{Summary: compaction.Summary{Objective: "saved context"}}.Message(), original[1]}
-	if !reflect.DeepEqual(messages, want) {
-		t.Fatalf("model context = %+v", messages)
-	}
-
-	reopened, err := session.New(context.Background(), opened.ID(), opened.State(), store, execution.NewRegistry(), nil)
+	reopened, err := session.New(context.Background(), opened.ID(), opened.State(), store, execution.NewRegistry())
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	t.Cleanup(reopened.Close)
 
-	loaded, err := reopened.Execution(context.Background(), current.ID())
+	reloaded, err := reopened.Execution(context.Background(), current.ID())
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	restored, err := loaded.Wait(context.Background())
+	restored, err := reloaded.Wait(context.Background())
 	if err != nil || !reflect.DeepEqual(restored, finished) {
 		t.Fatalf("restored execution = %+v, err = %v", restored, err)
 	}
@@ -125,177 +109,135 @@ func TestExecutorPersistsCompactionAndReceipt(t *testing.T) {
 	model.AssertCallCount(t, 1)
 }
 
-func TestExecutorSkipsEmptyConversation(t *testing.T) {
+func TestExecutorReportsUsageOnFailure(t *testing.T) {
 	t.Parallel()
 
-	model := kittest.NewModel(t)
+	usage := kit.Usage{InputTokens: 7, OutputTokens: 3}
+	model := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
+		Message: kit.NewModelMessage(kit.NewTextContent("invalid json")), FinishReason: kit.FinishReasonStop, Usage: usage,
+	}})
 	store := entry.NewMemoryStore()
-	opened := newTestSession(t, model, store)
+	bus := event.NewBus("session", store)
 
-	_, finished := executeCompaction(t, opened)
-	if finished.Outcome != execution.Completed {
-		t.Fatalf("empty compaction = %+v", finished)
-	}
-
-	var receipt Result
-	if err := json.Unmarshal(finished.Output, &receipt); err != nil {
+	if err := bus.Commit(context.Background(), "previous", agent.MessageEntryType, kit.NewUserMessage(kit.NewTextContent("original work"))); err != nil {
 		t.Fatal(err)
 	}
 
-	if receipt != (Result{}) {
-		t.Fatalf("empty compaction receipt = %+v", receipt)
+	params := execution.ExecuteParams{SessionID: "session", ExecutionID: "execution", Entries: store, Events: bus}
+
+	output, err := New(newCompactor(t, model)).Execute(context.Background(), params)
+	if err == nil {
+		t.Fatal("Execute() error = nil, want generation failure")
 	}
 
-	stored, err := store.List(context.Background(), opened.ID(), 0)
-	if err != nil || len(stored) != 2 || stored[0].Type != execution.StartedEntryType || stored[1].Type != execution.FinishedEntryType {
-		t.Fatalf("empty compaction journal = %+v, err = %v", stored, err)
-	}
-
-	model.AssertCallCount(t, 0)
-}
-
-func TestExecutorPreservesContextAndUsageOnFailure(t *testing.T) {
-	t.Parallel()
-
-	for _, failCommit := range []bool{false, true} {
-		name, output := "generation", "invalid json"
-		if failCommit {
-			name, output = "commit", `{"objective":"saved context"}`
-		}
-
-		t.Run(name, func(t *testing.T) {
-			usage := kit.Usage{InputTokens: 7, OutputTokens: 3}
-			model := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
-				Message: kit.NewModelMessage(kit.NewTextContent(output)), FinishReason: kit.FinishReasonStop, Usage: usage,
-			}})
-
-			var store entry.Store = entry.NewMemoryStore()
-
-			if failCommit {
-				store = newFailingStore(store, errors.New("cannot save compaction"))
-			}
-
-			opened := newTestSession(t, model, store)
-
-			original := kit.NewUserMessage(kit.NewTextContent("original work"))
-			if err := opened.Commit(context.Background(), "previous", agent.MessageEntryType, original); err != nil {
-				t.Fatal(err)
-			}
-
-			_, finished := executeCompaction(t, opened)
-			if finished.Outcome != execution.Failed || finished.Error == "" {
-				t.Fatalf("failed compaction = %+v", finished)
-			}
-
-			var receipt Result
-			if err := json.Unmarshal(finished.Output, &receipt); err != nil {
-				t.Fatal(err)
-			}
-
-			if receipt.Compacted || receipt.Usage != usage {
-				t.Fatalf("failure receipt = %+v", receipt)
-			}
-
-			if _, found, err := store.Latest(context.Background(), opened.ID(), compaction.EntryType); err != nil || found {
-				t.Fatalf("failed compaction changed active context: found = %v, err = %v", found, err)
-			}
-
-			memory := agent.NewMemory(opened.ID(), "next", store, event.NewBus(opened.ID(), store))
-
-			messages, err := memory.Context(context.Background())
-			if err != nil || !reflect.DeepEqual(messages, []kit.Message{original}) {
-				t.Fatalf("context after failure = %+v, err = %v", messages, err)
-			}
-		})
+	if receipt := output.(Result); receipt.Compacted || receipt.Usage != usage {
+		t.Fatalf("failure receipt = %+v", receipt)
 	}
 }
 
-func TestExecutorCancellationAndSessionOrdering(t *testing.T) {
+func TestManualAndAutomaticCompactionRecordToTheirExecutions(t *testing.T) {
 	t.Parallel()
 
-	model := newBlockingModel()
+	model := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
+		Message:      kit.NewModelMessage(kit.NewTextContent("done")),
+		FinishReason: kit.FinishReasonStop,
+		Usage:        kit.Usage{InputTokens: 4, OutputTokens: 1},
+	}})
+	compactionModel := kittest.NewModel(t,
+		kittest.ModelResult{Response: kit.ModelResponse{
+			Message:      kit.NewModelMessage(kit.NewTextContent(`{"objective":"saved context"}`)),
+			FinishReason: kit.FinishReasonStop,
+			Usage:        kit.Usage{InputTokens: 10, OutputTokens: 2},
+		}},
+		kittest.ModelResult{Response: kit.ModelResponse{
+			Message:      kit.NewModelMessage(kit.NewTextContent(`{"objective":"manual compaction"}`)),
+			FinishReason: kit.FinishReasonStop,
+			Usage:        kit.Usage{InputTokens: 5, OutputTokens: 1},
+		}},
+	)
+	compactor := newCompactor(t, compactionModel)
 	store := entry.NewMemoryStore()
-
-	opened := newTestSession(t, model, store)
-	if err := opened.Commit(context.Background(), "previous", agent.MessageEntryType, kit.NewUserMessage(kit.NewTextContent("work"))); err != nil {
-		t.Fatal(err)
-	}
-
-	current, err := opened.Execute(context.Background(), execution.Request{Executor: ExecutorName})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	select {
-	case <-model.started:
-	case <-time.After(3 * time.Second):
-		t.Fatal("compaction model did not start")
-	}
-
-	if _, err := opened.Execute(context.Background(), execution.Request{Executor: ExecutorName}); !errors.Is(err, session.ErrBusy) {
-		t.Fatalf("concurrent compaction error = %v", err)
-	}
-
-	if err := opened.Cancel(context.Background(), current.ID()); err != nil {
-		t.Fatal(err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-
-	finished, err := current.Wait(ctx)
-	if err != nil || finished.Outcome != execution.Cancelled {
-		t.Fatalf("cancelled compaction = %+v, err = %v", finished, err)
-	}
-
-	var receipt Result
-	if err := json.Unmarshal(finished.Output, &receipt); err != nil {
-		t.Fatal(err)
-	}
-
-	if receipt.Compacted || receipt.Usage != (kit.Usage{InputTokens: 5}) {
-		t.Fatalf("cancelled receipt = %+v", receipt)
-	}
-
-	if _, found, err := store.Latest(context.Background(), opened.ID(), compaction.EntryType); err != nil || found {
-		t.Fatalf("cancelled compaction was committed: found = %v, err = %v", found, err)
-	}
-}
-
-func TestLoadCompactionContextRejectsMalformedRecords(t *testing.T) {
-	t.Parallel()
-
-	for _, kind := range []string{compaction.EntryType, agent.MessageEntryType} {
-		t.Run(kind, func(t *testing.T) {
-			store := entry.NewMemoryStore()
-			if _, err := store.Append(context.Background(), "session", entry.Entry{Type: kind, Payload: json.RawMessage(`"invalid"`)}); err != nil {
-				t.Fatal(err)
-			}
-
-			if _, _, err := loadCompactionContext(context.Background(), "session", store); err == nil || !strings.Contains(err.Error(), "entry 1") {
-				t.Fatalf("loadCompactionContext() error = %v", err)
-			}
-		})
-	}
-}
-
-func newTestSession(t *testing.T, model kit.Model, store entry.Store) *session.Session {
-	t.Helper()
-
-	compactor, err := compaction.NewCompactor(compaction.Config{}, newModelResolver(model))
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	registry := execution.NewRegistry()
 	registry.Register(ExecutorName, New(compactor))
+	registry.Register(agent.ExecutorName, agent.NewExecutor(agent.New(kit.AgentConfig{}, staticModelResolver{model},
+		agent.WithContributors(automatic.New(compactor, automatic.WithTrigger(automatic.WhenInputExceedsTokens(1)))),
+	)))
+	opened := newTestSession(t, store, registry)
+
+	agentExecution, finished := execute(t, opened, execution.Request{
+		Executor: agent.ExecutorName,
+		Input:    kit.NewUserMessage(kit.NewTextContent("input longer than one token")),
+	})
+	if finished.Outcome != execution.Completed {
+		t.Fatalf("execution with compactions = %+v", finished)
+	}
+
+	compactionModel.AssertCallCount(t, 1)
+
+	if got, want := model.CallAt(0).Messages[0].TextContent().Text, compactionMessage("saved context"); got != want {
+		t.Fatalf("agent request message = %q, want %q", got, want)
+	}
+
+	manualExecution, finished := execute(t, opened, execution.Request{Executor: ExecutorName})
+	if finished.Outcome != execution.Completed {
+		t.Fatalf("manual compaction = %+v", finished)
+	}
+
+	var receipt Result
+	if err := json.Unmarshal(finished.Output, &receipt); err != nil {
+		t.Fatal(err)
+	}
+
+	if !receipt.Compacted || receipt.Usage != (kit.Usage{InputTokens: 5, OutputTokens: 1}) {
+		t.Fatalf("manual receipt = %+v", receipt)
+	}
+
+	model.AssertCallCount(t, 1)
+	compactionModel.AssertCallCount(t, 2)
+
+	stored, err := store.List(context.Background(), opened.ID(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var startedIDs, finishedIDs, compactionIDs []string
+
+	for _, value := range stored {
+		switch value.Type {
+		case execution.StartedEntryType:
+			startedIDs = append(startedIDs, value.ExecutionID)
+		case execution.FinishedEntryType:
+			finishedIDs = append(finishedIDs, value.ExecutionID)
+		case compaction.EntryType:
+			compactionIDs = append(compactionIDs, value.ExecutionID)
+		case agent.FinishedEntryType:
+			var result agent.Finished
+			if err := json.Unmarshal(value.Payload, &result); err != nil {
+				t.Fatal(err)
+			}
+
+			if result.Usage != (kit.Usage{InputTokens: 14, OutputTokens: 3}) {
+				t.Fatalf("agent usage = %+v, want model and compaction usage", result.Usage)
+			}
+		}
+	}
+
+	want := []string{agentExecution.ID(), manualExecution.ID()}
+	if !reflect.DeepEqual(startedIDs, want) || !reflect.DeepEqual(finishedIDs, want) || !reflect.DeepEqual(compactionIDs, want) {
+		t.Fatalf("execution attribution: starts=%v, finishes=%v, compactions=%v", startedIDs, finishedIDs, compactionIDs)
+	}
+}
+
+func newTestSession(t *testing.T, store entry.Store, executors execution.Resolver) *session.Session {
+	t.Helper()
 
 	sessions := state.NewMemoryStore()
 	if err := sessions.Save(context.Background(), state.Record{ID: "session"}); err != nil {
 		t.Fatal(err)
 	}
 
-	opened, err := session.New(context.Background(), "session", state.New(sessions, "session"), store, registry, nil)
+	opened, err := session.New(context.Background(), "session", state.New(sessions, "session"), store, executors)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,10 +247,10 @@ func newTestSession(t *testing.T, model kit.Model, store entry.Store) *session.S
 	return opened
 }
 
-func executeCompaction(t *testing.T, opened *session.Session) (*session.Execution, execution.Result) {
+func execute(t *testing.T, opened *session.Session, request execution.Request) (*session.Execution, execution.Result) {
 	t.Helper()
 
-	current, err := opened.Execute(context.Background(), execution.Request{Executor: ExecutorName})
+	current, err := opened.Execute(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -324,56 +266,25 @@ func executeCompaction(t *testing.T, opened *session.Session) (*session.Executio
 	return current, finished
 }
 
-type modelResolver struct {
+func newCompactor(t *testing.T, model kit.Model) *compaction.Compactor {
+	t.Helper()
+
+	compactor, err := compaction.NewCompactor(compaction.Config{}, staticModelResolver{model})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return compactor
+}
+
+func compactionMessage(objective string) string {
+	return compaction.Compaction{Summary: compaction.Summary{Objective: objective}}.Message().TextContent().Text
+}
+
+type staticModelResolver struct {
 	model kit.Model
 }
 
-func newModelResolver(model kit.Model) *modelResolver {
-	return &modelResolver{model: model}
-}
-
-func (r *modelResolver) Resolve(context.Context) (kit.Model, error) {
+func (r staticModelResolver) Resolve(context.Context) (kit.Model, error) {
 	return r.model, nil
-}
-
-type failingStore struct {
-	entry.Store
-	failure error
-}
-
-func newFailingStore(store entry.Store, failure error) *failingStore {
-	return &failingStore{Store: store, failure: failure}
-}
-
-func (s *failingStore) Append(ctx context.Context, sessionID string, values ...entry.Entry) ([]entry.Entry, error) {
-	for _, value := range values {
-		if value.Type == compaction.EntryType {
-			return nil, s.failure
-		}
-	}
-
-	return s.Store.Append(ctx, sessionID, values...)
-}
-
-type blockingModel struct {
-	started chan struct{}
-}
-
-func newBlockingModel() *blockingModel {
-	return &blockingModel{started: make(chan struct{})}
-}
-
-func (*blockingModel) Config() kit.ModelConfig {
-	return kit.ModelConfig{ID: "blocking"}
-}
-
-func (m *blockingModel) Generate(ctx context.Context, _ kit.ModelRequest) (kit.ModelResponse, error) {
-	close(m.started)
-	<-ctx.Done()
-
-	return kit.ModelResponse{Usage: kit.Usage{InputTokens: 5}}, ctx.Err()
-}
-
-func (m *blockingModel) Stream(ctx context.Context, request kit.ModelRequest) *kit.Stream[kit.ModelEvent, kit.ModelResponse] {
-	return kit.StreamFromGenerate(ctx, request, m.Generate)
 }

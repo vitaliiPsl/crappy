@@ -127,7 +127,7 @@ func TestCompactCommandUsesNormalExecutionLifecycle(t *testing.T) {
 	))
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 
-	app := assistant.New(h, storage.SessionStore(), token.NewCharacterEstimator())
+	app := assistant.New(h, storage, nil, token.NewCharacterEstimator())
 
 	screen := New(ctx, app, config.Config{}, "")
 	defer screen.Close()

@@ -5,6 +5,7 @@ import (
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
+	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/token"
 )
 
@@ -72,7 +73,16 @@ func (a *Assistant) Context(ctx context.Context, sessionID string) (ContextRepor
 		return ContextReport{}, err
 	}
 
-	resolved, err := opened.Context(ctx)
+	built, err := a.agents.Build(ctx, agent.BuildRequest{
+		SessionID: opened.ID(),
+		State:     opened.State(),
+		History:   agent.NewHistory(opened.ID(), "", a.entries, opened),
+	})
+	if err != nil {
+		return ContextReport{}, err
+	}
+
+	resolved, err := built.Context(ctx)
 	if err != nil {
 		return ContextReport{}, err
 	}

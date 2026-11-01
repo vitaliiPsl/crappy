@@ -5,6 +5,7 @@ import (
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
+	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/session"
@@ -129,7 +130,7 @@ func (m *Model) execute(input kit.Message) tea.Cmd {
 			return executeResultMsg{target: m, err: err}
 		}
 
-		current, err := opened.Execute(m.ctx, execution.Request{Input: input})
+		current, err := opened.Execute(m.ctx, execution.Request{Executor: agent.ExecutorName, Input: input})
 
 		return executeResultMsg{target: m, execution: current, err: err}
 	}

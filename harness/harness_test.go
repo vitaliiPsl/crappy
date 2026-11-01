@@ -2,22 +2,13 @@ package harness
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/vitaliiPsl/crappy-adk/kit"
-	"github.com/vitaliiPsl/crappy-adk/kittest"
-
-	"github.com/vitaliipsl/crappy/harness/agent"
-	"github.com/vitaliipsl/crappy/harness/compaction"
-	"github.com/vitaliipsl/crappy/harness/compaction/automatic"
-	compactionexec "github.com/vitaliipsl/crappy/harness/compaction/executor"
 	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
@@ -26,360 +17,11 @@ import (
 	"github.com/vitaliipsl/crappy/internal/storage/jsonl"
 )
 
-func TestBuiltInAgentIsDefaultAndUsesConfiguration(t *testing.T) {
-	t.Parallel()
-
-	model := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
-		Message:      kit.NewModelMessage(kit.NewTextContent("done")),
-		FinishReason: kit.FinishReasonStop,
-	}})
-	tool := kittest.NewTool(t, "search", "Search")
-	h := New(newTestStore(),
-		WithAgentConfig(kit.AgentConfig{}, agent.WithInstructions("Be concise."), agent.WithTools(tool)),
-		WithExecutor("cleanup", execution.Func(func(context.Context, execution.ExecuteParams) (any, error) { return nil, nil })),
-		WithModel(testModelResolver{model}),
-	)
-	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
-
-	opened, err := h.Session(context.Background(), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	resolved, err := opened.Context(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if resolved.InstructionsText() != "Be concise." || len(resolved.Tools) != 1 || resolved.Tools[0] != tool {
-		t.Fatalf("session context configuration was lost: %+v", resolved)
-	}
-
-	model.AssertNeverCalled(t)
-
-	current, err := opened.Execute(context.Background(), execution.Request{
-		Input: kit.NewUserMessage(kit.NewTextContent("hello")),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if finished := waitFinished(t, opened, current.ID()); finished.Outcome != execution.Completed {
-		t.Fatalf("default execution = %+v", finished)
-	}
-
-	request := model.CallAt(0)
-	if request.Instructions != "Be concise." || len(request.Tools) != 1 || request.Tools[0] != tool {
-		t.Fatalf("agent configuration was lost: %+v", request)
-	}
-
-	entries, err := opened.Entries(context.Background(), 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	var started execution.Started
-	if err := json.Unmarshal(entries[0].Payload, &started); err != nil {
-		t.Fatal(err)
-	}
-
-	if started.Executor != agent.ExecutorName {
-		t.Fatalf("recorded executor = %q", started.Executor)
-	}
-
-	current, err = opened.Execute(context.Background(), execution.Request{Executor: "cleanup"})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if finished := waitFinished(t, opened, current.ID()); finished.Outcome != execution.Completed {
-		t.Fatalf("custom executor alongside default agent = %+v", finished)
-	}
-
-	model.AssertCallCount(t, 1)
-}
-
-func TestSessionContextUsesConfiguredResolver(t *testing.T) {
-	t.Parallel()
-
-	model := kittest.NewModel(t)
-	replacement := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
-		Message: kit.NewModelMessage(kit.NewTextContent("done")), FinishReason: kit.FinishReasonStop,
-	}})
-	factory := agent.New(kit.AgentConfig{}, testModelResolver{replacement}, agent.WithInstructions("Replacement guidance."))
-	h := New(newTestStore(),
-		WithContextResolver(agent.NewContextResolver(factory)),
-		WithModel(testModelResolver{model}),
-		WithAgentConfig(kit.AgentConfig{}, agent.WithInstructions("Original guidance.")),
-		WithExecutor(agent.ExecutorName, agent.NewExecutor(factory)),
-	)
-	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
-
-	opened, err := h.Session(context.Background(), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	resolved, err := opened.Context(context.Background())
-	if err != nil || resolved.InstructionsText() != "Replacement guidance." {
-		t.Fatalf("session context = %+v, error = %v", resolved, err)
-	}
-
-	replacement.AssertNeverCalled(t)
-
-	current, err := opened.Execute(context.Background(), execution.Request{
-		Input: kit.NewUserMessage(kit.NewTextContent("hello")),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if finished := waitFinished(t, opened, current.ID()); finished.Outcome != execution.Completed {
-		t.Fatalf("replacement execution = %+v", finished)
-	}
-
-	if request := replacement.CallAt(0); request.Instructions != resolved.InstructionsText() {
-		t.Fatalf("execution instructions = %q, want %q", request.Instructions, resolved.InstructionsText())
-	}
-
-	model.AssertNeverCalled(t)
-	replacement.AssertCallCount(t, 1)
-}
-
-func TestSessionContextDoesNotRequireRegisteredExecutor(t *testing.T) {
-	t.Parallel()
-
-	model := kittest.NewModel(t)
-	factory := agent.New(kit.AgentConfig{}, testModelResolver{model}, agent.WithInstructions("Preview guidance."))
-	h := New(newTestStore(), WithContextResolver(agent.NewContextResolver(factory)))
-	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
-
-	opened, err := h.Session(context.Background(), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	resolved, err := opened.Context(context.Background())
-	if err != nil || resolved.InstructionsText() != "Preview guidance." {
-		t.Fatalf("standalone context = %+v, error = %v", resolved, err)
-	}
-
-	if _, err := opened.Execute(context.Background(), execution.Request{}); err == nil {
-		t.Fatal("context resolution registered an executor")
-	}
-
-	entries, err := opened.Entries(context.Background(), 0)
-	if err != nil || len(entries) != 0 {
-		t.Fatalf("context resolution recorded work: %+v, %v", entries, err)
-	}
-
-	model.AssertNeverCalled(t)
-}
-
-func TestManualAndAutomaticCompactionShareExecutor(t *testing.T) {
-	t.Parallel()
-
-	model := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
-		Message:      kit.NewModelMessage(kit.NewTextContent("done")),
-		FinishReason: kit.FinishReasonStop,
-		Usage:        kit.Usage{InputTokens: 4, OutputTokens: 1},
-	}})
-	compactionModel := kittest.NewModel(t,
-		kittest.ModelResult{Response: kit.ModelResponse{
-			Message:      kit.NewModelMessage(kit.NewTextContent(`{"objective":"saved context"}`)),
-			FinishReason: kit.FinishReasonStop,
-			Usage:        kit.Usage{InputTokens: 10, OutputTokens: 2},
-		}},
-		kittest.ModelResult{Response: kit.ModelResponse{
-			Message:      kit.NewModelMessage(kit.NewTextContent(`{"objective":"manual compaction"}`)),
-			FinishReason: kit.FinishReasonStop,
-			Usage:        kit.Usage{InputTokens: 5, OutputTokens: 1},
-		}},
-	)
-
-	compactor, err := compaction.NewCompactor(compaction.Config{}, testModelResolver{compactionModel})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	compactionExecutor := compactionexec.New(compactor)
-	h := New(newTestStore(),
-		WithExecutor(compactionexec.ExecutorName, compactionExecutor),
-		WithAgentConfig(kit.AgentConfig{}, agent.WithContributors(automatic.New(compactionExecutor,
-			automatic.WithTrigger(automatic.WhenInputExceedsTokens(1)),
-		))),
-		WithModel(testModelResolver{model}),
-	)
-	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
-
-	opened, err := h.Session(context.Background(), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	current, err := opened.Execute(context.Background(), execution.Request{
-		Input: kit.NewUserMessage(kit.NewTextContent("input longer than one token")),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if finished := waitFinished(t, opened, current.ID()); finished.Outcome != execution.Completed {
-		t.Fatalf("execution with compactions = %+v", finished)
-	}
-
-	compactionModel.AssertCallCount(t, 1)
-
-	if got := model.CallAt(0).Messages[0].TextContent().Text; got != (compaction.Compaction{
-		Summary: compaction.Summary{Objective: "saved context"},
-	}).Message().TextContent().Text {
-		t.Fatalf("agent did not receive compaction: %q", got)
-	}
-
-	agentExecutionID := current.ID()
-
-	current, err = opened.Execute(context.Background(), execution.Request{Executor: compactionexec.ExecutorName})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	finished := waitFinished(t, opened, current.ID())
-	if finished.Outcome != execution.Completed {
-		t.Fatalf("manual compaction = %+v", finished)
-	}
-
-	var receipt compactionexec.Result
-	if err := json.Unmarshal(finished.Output, &receipt); err != nil {
-		t.Fatal(err)
-	}
-
-	if !receipt.Compacted || receipt.Usage != (kit.Usage{InputTokens: 5, OutputTokens: 1}) {
-		t.Fatalf("manual receipt = %+v", receipt)
-	}
-
-	model.AssertCallCount(t, 1)
-	compactionModel.AssertCallCount(t, 2)
-
-	stored, err := opened.Entries(context.Background(), 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	var startedIDs, finishedIDs, compactionIDs []string
-
-	for _, value := range stored {
-		switch value.Type {
-		case execution.StartedEntryType:
-			startedIDs = append(startedIDs, value.ExecutionID)
-		case execution.FinishedEntryType:
-			finishedIDs = append(finishedIDs, value.ExecutionID)
-		case compaction.EntryType:
-			compactionIDs = append(compactionIDs, value.ExecutionID)
-		case agent.FinishedEntryType:
-			var result agent.Finished
-			if err := json.Unmarshal(value.Payload, &result); err != nil {
-				t.Fatal(err)
-			}
-
-			if result.Usage != (kit.Usage{InputTokens: 14, OutputTokens: 3}) {
-				t.Fatalf("agent usage = %+v", result.Usage)
-			}
-		}
-	}
-
-	want := []string{agentExecutionID, current.ID()}
-	if !reflect.DeepEqual(startedIDs, want) || !reflect.DeepEqual(finishedIDs, want) || !reflect.DeepEqual(compactionIDs, want) {
-		t.Fatalf("execution attribution: starts=%v, finishes=%v, compactions=%v", startedIDs, finishedIDs, compactionIDs)
-	}
-}
-
-func TestCustomAgentOverridesBuiltInRegardlessOfOptionOrder(t *testing.T) {
-	t.Parallel()
-
-	for _, modelFirst := range []bool{true, false} {
-		t.Run(fmt.Sprint(modelFirst), func(t *testing.T) {
-			model := kittest.NewModel(t)
-
-			var calls atomic.Int32
-
-			options := []Option{
-				WithModel(testModelResolver{model}),
-				WithExecutor(agent.ExecutorName, execution.Func(func(context.Context, execution.ExecuteParams) (any, error) {
-					calls.Add(1)
-
-					return nil, nil
-				})),
-			}
-			if !modelFirst {
-				options[0], options[1] = options[1], options[0]
-			}
-
-			h := New(newTestStore(), options...)
-			t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
-
-			opened, err := h.Session(context.Background(), "")
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			current, err := opened.Execute(context.Background(), execution.Request{})
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			if finished := waitFinished(t, opened, current.ID()); finished.Outcome != execution.Completed || calls.Load() != 1 {
-				t.Fatalf("custom agent = %+v, calls = %d", finished, calls.Load())
-			}
-
-			model.AssertNeverCalled(t)
-		})
-	}
-}
-
-func TestFunctionOnlyHarnessRejectsMissingExecutorsBeforeRecording(t *testing.T) {
-	t.Parallel()
-
-	h := New(newTestStore(), WithExecutor("cleanup", execution.Func(func(ctx context.Context, params execution.ExecuteParams) (any, error) {
-		return nil, params.Events.Commit(ctx, params.ExecutionID, "cleanup.output", params.Input)
-	})))
-	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
-
-	opened, err := h.Session(context.Background(), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	for _, name := range []string{"", "missing"} {
-		if _, err := opened.Execute(context.Background(), execution.Request{Executor: name}); err == nil {
-			t.Fatalf("missing executor %q was accepted", name)
-		}
-	}
-
-	entries, err := opened.Entries(context.Background(), 0)
-	if err != nil || len(entries) != 0 {
-		t.Fatalf("missing executor recorded work: %+v, %v", entries, err)
-	}
-
-	current, err := opened.Execute(context.Background(), execution.Request{Executor: "cleanup", Input: "work"})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if finished := waitFinished(t, opened, current.ID()); finished.Outcome != execution.Completed {
-		t.Fatalf("functional execution = %+v", finished)
-	}
-
-	entries, err = opened.Entries(context.Background(), 0)
-	if err != nil || len(entries) != 3 || string(entries[1].Payload) != `"work"` {
-		t.Fatalf("functional execution journal = %+v, %v", entries, err)
-	}
-}
-
 func TestSessionCreatesStateAndSharesInstance(t *testing.T) {
 	t.Parallel()
 
 	store := newTestStore()
-	h := newTestHarness(t, store, kittest.NewModel(t))
+	h := newTestHarness(t, store)
 
 	created, err := h.Session(context.Background(), "")
 	if err != nil {
@@ -426,7 +68,7 @@ func TestSessionCreatesStateAndSharesInstance(t *testing.T) {
 func TestSessionCreatesDistinctSessionsForEmptyID(t *testing.T) {
 	t.Parallel()
 
-	h := newTestHarness(t, newTestStore(), kittest.NewModel(t))
+	h := newTestHarness(t, newTestStore())
 
 	first, err := h.Session(context.Background(), "")
 	if err != nil {
@@ -447,7 +89,7 @@ func TestSessionReturnsNotFoundForMissingID(t *testing.T) {
 	t.Parallel()
 
 	store := newTestStore()
-	h := newTestHarness(t, store, kittest.NewModel(t))
+	h := newTestHarness(t, store)
 
 	if _, err := h.Session(context.Background(), "missing"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("Session() error = %v", err)
@@ -473,7 +115,7 @@ func TestSessionLoadsPersistedState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := newTestHarness(t, store, kittest.NewModel(t))
+	h := newTestHarness(t, store)
 
 	opened, err := h.Session(context.Background(), record.ID)
 	if err != nil {
@@ -505,7 +147,7 @@ func TestConcurrentSessionLookupInitializesOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := newTestHarness(t, testStore{sessions, entries}, kittest.NewModel(t))
+	h := newTestHarness(t, testStore{sessions, entries})
 
 	const clients = 20
 
@@ -551,8 +193,8 @@ func TestConcurrentSessionLookupInitializesOnce(t *testing.T) {
 func TestLookupContextDoesNotOwnExecution(t *testing.T) {
 	t.Parallel()
 
-	model := &lifetimeModel{started: make(chan struct{}), release: make(chan struct{})}
-	h := newTestHarness(t, newTestStore(), model)
+	executor := newBlockingExecutor()
+	h := newTestHarness(t, newTestStore(), WithExecutor("work", executor))
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -561,19 +203,19 @@ func TestLookupContextDoesNotOwnExecution(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	current, err := opened.Execute(context.Background(), execution.Request{Executor: agent.ExecutorName, Input: kit.NewUserMessage(kit.NewTextContent("work"))})
+	current, err := opened.Execute(context.Background(), execution.Request{Executor: "work"})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	waitSignal(t, model.started)
+	waitSignal(t, executor.started)
 	cancel()
 
 	if err := h.ctx.Err(); err != nil {
 		t.Fatalf("lookup cancellation reached harness: %v", err)
 	}
 
-	close(model.release)
+	close(executor.release)
 
 	finished := waitFinished(t, opened, current.ID())
 	if finished.Outcome != execution.Completed {
@@ -584,8 +226,8 @@ func TestLookupContextDoesNotOwnExecution(t *testing.T) {
 func TestShutdownOwnsSessionsAndRejectsFurtherOpens(t *testing.T) {
 	t.Parallel()
 
-	model := &lifetimeModel{started: make(chan struct{}), release: make(chan struct{})}
-	h := newTestHarness(t, newTestStore(), model)
+	executor := newBlockingExecutor()
+	h := newTestHarness(t, newTestStore(), WithExecutor("work", executor))
 
 	opened, err := h.Session(context.Background(), "")
 	if err != nil {
@@ -597,12 +239,12 @@ func TestShutdownOwnsSessionsAndRejectsFurtherOpens(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	current, err := opened.Execute(context.Background(), execution.Request{Executor: agent.ExecutorName, Input: kit.NewUserMessage(kit.NewTextContent("work"))})
+	current, err := opened.Execute(context.Background(), execution.Request{Executor: "work"})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	waitSignal(t, model.started)
+	waitSignal(t, executor.started)
 
 	if err := h.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
@@ -622,7 +264,7 @@ func TestShutdownOwnsSessionsAndRejectsFurtherOpens(t *testing.T) {
 		t.Fatalf("Session after shutdown error = %v", err)
 	}
 
-	if _, err := opened.Execute(context.Background(), execution.Request{Executor: agent.ExecutorName, Input: kit.Message{}}); !errors.Is(err, session.ErrClosed) {
+	if _, err := opened.Execute(context.Background(), execution.Request{Executor: "work"}); !errors.Is(err, session.ErrClosed) {
 		t.Fatalf("execution after shutdown error = %v", err)
 	}
 
@@ -634,24 +276,21 @@ func TestShutdownOwnsSessionsAndRejectsFurtherOpens(t *testing.T) {
 func TestShutdownDeadlineDoesNotAbandonCleanup(t *testing.T) {
 	t.Parallel()
 
-	model := &lifetimeModel{
-		started:      make(chan struct{}),
-		release:      make(chan struct{}),
-		ignoreCancel: true,
-	}
-	h := newTestHarness(t, newTestStore(), model)
+	executor := newBlockingExecutor()
+	executor.ignoreCancel = true
+	h := newTestHarness(t, newTestStore(), WithExecutor("work", executor))
 
 	opened, err := h.Session(context.Background(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := opened.Execute(context.Background(), execution.Request{Executor: agent.ExecutorName, Input: kit.NewUserMessage(kit.NewTextContent("work"))}); err != nil {
+	if _, err := opened.Execute(context.Background(), execution.Request{Executor: "work"}); err != nil {
 		t.Fatal(err)
 	}
 
-	waitSignal(t, model.started)
-	defer close(model.release)
+	waitSignal(t, executor.started)
+	defer close(executor.release)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
@@ -670,7 +309,7 @@ func TestShutdownDeadlineDoesNotAbandonCleanup(t *testing.T) {
 func TestRunCancellationShutsDownHost(t *testing.T) {
 	t.Parallel()
 
-	h := newTestHarness(t, newTestStore(), kittest.NewModel(t))
+	h := newTestHarness(t, newTestStore())
 	ctx, cancel := context.WithCancel(context.Background())
 
 	result := make(chan error, 1)
@@ -698,7 +337,7 @@ func TestRunCancellationShutsDownHost(t *testing.T) {
 func TestShutdownReleasesRun(t *testing.T) {
 	t.Parallel()
 
-	h := newTestHarness(t, newTestStore(), kittest.NewModel(t))
+	h := newTestHarness(t, newTestStore())
 
 	result := make(chan error, 1)
 	go func() { result <- h.Run(context.Background()) }()
@@ -724,25 +363,23 @@ func TestSessionsRemainPersistentAcrossHosts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	model := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
-		Message:      kit.NewModelMessage(kit.NewTextContent("saved response")),
-		FinishReason: kit.FinishReasonStop,
-	}})
-	first := newTestHarness(t, store, model)
+	first := newTestHarness(t, store, WithExecutor("work", execution.Func(func(context.Context, execution.ExecuteParams) (any, error) {
+		return "saved output", nil
+	})))
 
 	opened, err := first.Session(context.Background(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	current, err := opened.Execute(context.Background(), execution.Request{Executor: agent.ExecutorName, Input: kit.NewUserMessage(kit.NewTextContent("saved input"))})
+	current, err := opened.Execute(context.Background(), execution.Request{Executor: "work"})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	original, err := current.Wait(context.Background())
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || string(original.Output) != `"saved output"` {
+		t.Fatalf("original execution = %+v, %v", original, err)
 	}
 
 	if err := first.Shutdown(context.Background()); err != nil {
@@ -754,7 +391,7 @@ func TestSessionsRemainPersistentAcrossHosts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	second := newTestHarness(t, reopenedStore, kittest.NewModel(t))
+	second := newTestHarness(t, reopenedStore)
 
 	reopened, err := second.Session(context.Background(), opened.ID())
 	if err != nil {
@@ -775,22 +412,13 @@ func TestSessionsRemainPersistentAcrossHosts(t *testing.T) {
 		t.Fatalf("restored execution = %+v, %v", restored, err)
 	}
 
-	var response kit.AgentResponse
-	if err := json.Unmarshal(restored.Output, &response); err != nil {
-		t.Fatal(err)
-	}
-
-	if response.Output == nil || response.Output.Text != "saved response" {
-		t.Fatalf("restored agent output = %+v", response)
-	}
-
 	sessions, err := store.SessionStore().Get(context.Background(), opened.ID())
 	if err != nil || sessions.ID != opened.ID() {
 		t.Fatalf("restored sessions = %+v, error = %v", sessions, err)
 	}
 }
 
-func TestSessionStatePersistsAndReachesExecutorsAndContributors(t *testing.T) {
+func TestSessionStatePersistsAndReachesExecutors(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -801,30 +429,18 @@ func TestSessionStatePersistsAndReachesExecutorsAndContributors(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	response := kittest.ModelResult{Response: kit.ModelResponse{
-		Message:      kit.NewModelMessage(kit.NewTextContent("done")),
-		FinishReason: kit.FinishReasonStop,
-	}}
-	model := kittest.NewModel(t, response, response)
-	contributor := agent.ContributorFunc(func(ctx context.Context, build agent.BuildContext) (agent.Contribution, error) {
+	h := New(storage, WithExecutor("inspect", execution.Func(func(ctx context.Context, params execution.ExecuteParams) (any, error) {
 		var workdir string
-		if _, err := build.Request.State.Get(ctx, "assistant.workdir", &workdir); err != nil {
-			return agent.Contribution{}, err
+		if _, err := params.State.Get(ctx, "workdir", &workdir); err != nil {
+			return nil, err
 		}
 
-		if err := build.Request.State.Set(ctx, "contributor.workdir", workdir); err != nil {
-			return agent.Contribution{}, err
+		if err := params.State.Set(ctx, "executor.workdir", workdir); err != nil {
+			return nil, err
 		}
 
-		return agent.Contribution{Instructions: []string{workdir}}, nil
-	})
-	h := New(storage,
-		WithModel(testModelResolver{model}),
-		WithAgentConfig(kit.AgentConfig{}, agent.WithContributors(contributor)),
-		WithExecutor("inspect", execution.Func(func(ctx context.Context, params execution.ExecuteParams) (any, error) {
-			return nil, params.State.Set(ctx, "executor.session", params.SessionID)
-		})),
-	)
+		return nil, params.State.Set(ctx, "executor.session", params.SessionID)
+	})))
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 
 	workdirs := []string{"/first", "/second"}
@@ -837,27 +453,18 @@ func TestSessionStatePersistsAndReachesExecutorsAndContributors(t *testing.T) {
 		}
 
 		ids = append(ids, opened.ID())
-		if err := opened.State().Set(ctx, "assistant.workdir", workdir); err != nil {
+		if err := opened.State().Set(ctx, "workdir", workdir); err != nil {
 			t.Fatal(err)
 		}
 
-		for _, request := range []execution.Request{
-			{Executor: "inspect"},
-			{Input: kit.NewUserMessage(kit.NewTextContent("hello"))},
-		} {
-			current, err := opened.Execute(ctx, request)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			if result, err := current.Wait(ctx); err != nil || result.Outcome != execution.Completed {
-				t.Fatalf("execution result = %+v, error = %v", result, err)
-			}
+		current, err := opened.Execute(ctx, execution.Request{Executor: "inspect"})
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
 
-	if model.CallAt(0).Instructions != "/first" || model.CallAt(1).Instructions != "/second" {
-		t.Fatal("contributors did not receive their session's state")
+		if result, err := current.Wait(ctx); err != nil || result.Outcome != execution.Completed {
+			t.Fatalf("execution result = %+v, error = %v", result, err)
+		}
 	}
 
 	if err := h.Shutdown(ctx); err != nil {
@@ -879,9 +486,9 @@ func TestSessionStatePersistsAndReachesExecutorsAndContributors(t *testing.T) {
 		}
 
 		for key, want := range map[string]string{
-			"assistant.workdir":   workdirs[index],
-			"contributor.workdir": workdirs[index],
-			"executor.session":    id,
+			"workdir":          workdirs[index],
+			"executor.workdir": workdirs[index],
+			"executor.session": id,
 		} {
 			var value string
 			if found, err := opened.State().Get(ctx, key, &value); err != nil || !found || value != want {
@@ -953,20 +560,9 @@ func TestSessionAttachmentPreservesActiveExecution(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	started := make(chan struct{})
-	release := make(chan struct{})
-	finish := sync.OnceFunc(func() { close(release) })
-	h := New(newTestStore(), WithExecutor("work", execution.Func(func(ctx context.Context, _ execution.ExecuteParams) (any, error) {
-		close(started)
-
-		select {
-		case <-release:
-			return "done", nil
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-	})))
-	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
+	executor := newBlockingExecutor()
+	finish := sync.OnceFunc(func() { close(executor.release) })
+	h := newTestHarness(t, newTestStore(), WithExecutor("work", executor))
 	t.Cleanup(finish)
 
 	opened, err := h.Session(ctx, "")
@@ -979,7 +575,7 @@ func TestSessionAttachmentPreservesActiveExecution(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	waitSignal(t, started)
+	waitSignal(t, executor.started)
 
 	for range 3 {
 		attached, err := h.Session(ctx, opened.ID())
@@ -1019,7 +615,7 @@ func TestSessionOpeningRetriesFailedInitialization(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := newTestHarness(t, testStore{sessions, entries}, kittest.NewModel(t))
+	h := newTestHarness(t, testStore{sessions, entries})
 	for range 2 {
 		opened, err := h.Session(ctx, "persisted")
 		if opened != nil || !errors.Is(err, failure) {
@@ -1112,7 +708,7 @@ func TestSessionAttachmentDoesNotReloadExecutionState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := newTestHarness(t, testStore{sessions, entries}, kittest.NewModel(t))
+	h := newTestHarness(t, testStore{sessions, entries})
 
 	opened, err := h.Session(ctx, "persisted")
 	if err != nil {
@@ -1138,7 +734,7 @@ func TestSessionAttachmentDoesNotReloadExecutionState(t *testing.T) {
 func TestSessionAttachmentReturnsExistingClosedSession(t *testing.T) {
 	t.Parallel()
 
-	h := newTestHarness(t, newTestStore(), kittest.NewModel(t))
+	h := newTestHarness(t, newTestStore())
 
 	opened, err := h.Session(context.Background(), "")
 	if err != nil {
@@ -1170,7 +766,7 @@ func TestSessionOpeningReturnsInitializationReadFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := newTestHarness(t, testStore{sessions, entries}, kittest.NewModel(t))
+	h := newTestHarness(t, testStore{sessions, entries})
 
 	opened, err := h.Session(ctx, "persisted")
 	if opened != nil || !errors.Is(err, failure) {
@@ -1200,7 +796,7 @@ func TestSessionInitializationDoesNotBlockOtherSessions(t *testing.T) {
 		}
 	}
 
-	h := newTestHarness(t, testStore{sessions, entries}, kittest.NewModel(t))
+	h := newTestHarness(t, testStore{sessions, entries})
 	release := sync.OnceFunc(func() { close(entries.release) })
 	t.Cleanup(release)
 
@@ -1237,7 +833,7 @@ func TestShutdownCancelsSessionInitialization(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := newTestHarness(t, testStore{sessions, entries}, kittest.NewModel(t))
+	h := newTestHarness(t, testStore{sessions, entries})
 	t.Cleanup(sync.OnceFunc(func() { close(entries.release) }))
 
 	result := make(chan error, 1)
@@ -1270,7 +866,7 @@ func TestSessionOpeningWaitsForInitialization(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := newTestHarness(t, testStore{sessions, entries}, kittest.NewModel(t))
+	h := newTestHarness(t, testStore{sessions, entries})
 	release := sync.OnceFunc(func() { close(entries.release) })
 	t.Cleanup(release)
 
@@ -1324,7 +920,7 @@ func TestCancelledSessionOpeningCanBeRetried(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := newTestHarness(t, testStore{sessions, entries}, kittest.NewModel(t))
+	h := newTestHarness(t, testStore{sessions, entries})
 	release := sync.OnceFunc(func() { close(entries.release) })
 	t.Cleanup(release)
 
@@ -1369,7 +965,7 @@ func TestWaitingClientCancellationPreservesSessionConstruction(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := newTestHarness(t, testStore{sessions, entries}, kittest.NewModel(t))
+	h := newTestHarness(t, testStore{sessions, entries})
 	release := sync.OnceFunc(func() { close(entries.release) })
 	t.Cleanup(release)
 
@@ -1401,10 +997,10 @@ func TestWaitingClientCancellationPreservesSessionConstruction(t *testing.T) {
 	}
 }
 
-func newTestHarness(t *testing.T, store Store, model kit.Model) *Harness {
+func newTestHarness(t *testing.T, store Store, options ...Option) *Harness {
 	t.Helper()
 
-	h := New(store, WithModel(testModelResolver{model}))
+	h := New(store, options...)
 
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -1417,10 +1013,6 @@ func newTestHarness(t *testing.T, store Store, model kit.Model) *Harness {
 
 	return h
 }
-
-type testModelResolver struct{ model kit.Model }
-
-func (r testModelResolver) Resolve(context.Context) (kit.Model, error) { return r.model, nil }
 
 type testStore struct {
 	sessions state.Store
@@ -1435,35 +1027,31 @@ func (s testStore) SessionStore() state.Store { return s.sessions }
 
 func (s testStore) EntryStore() entry.Store { return s.entries }
 
-type lifetimeModel struct {
+type blockingExecutor struct {
 	started      chan struct{}
 	release      chan struct{}
 	ignoreCancel bool
 }
 
-func (*lifetimeModel) Config() kit.ModelConfig { return kit.ModelConfig{ID: "lifetime"} }
-
-func (m *lifetimeModel) Generate(ctx context.Context, _ kit.ModelRequest) (kit.ModelResponse, error) {
-	close(m.started)
-
-	if m.ignoreCancel {
-		<-m.release
-	} else {
-		select {
-		case <-m.release:
-		case <-ctx.Done():
-			return kit.ModelResponse{}, ctx.Err()
-		}
-	}
-
-	return kit.ModelResponse{
-		Message:      kit.NewModelMessage(kit.NewTextContent("done")),
-		FinishReason: kit.FinishReasonStop,
-	}, nil
+func newBlockingExecutor() *blockingExecutor {
+	return &blockingExecutor{started: make(chan struct{}), release: make(chan struct{})}
 }
 
-func (m *lifetimeModel) Stream(ctx context.Context, request kit.ModelRequest) *kit.Stream[kit.ModelEvent, kit.ModelResponse] {
-	return kit.StreamFromGenerate(ctx, request, m.Generate)
+func (e *blockingExecutor) Execute(ctx context.Context, _ execution.ExecuteParams) (any, error) {
+	close(e.started)
+
+	if e.ignoreCancel {
+		<-e.release
+
+		return nil, nil
+	}
+
+	select {
+	case <-e.release:
+		return nil, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func waitSignal(t *testing.T, signal <-chan struct{}) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
@@ -14,7 +15,7 @@ import (
 	"github.com/vitaliipsl/crappy/harness/execution"
 )
 
-func TestAgentCompletesMissingToolResults(t *testing.T) {
+func TestExecutorCompletesMissingToolResults(t *testing.T) {
 	t.Parallel()
 
 	firstCall := kit.NewToolCall("call-1", "first", nil)
@@ -63,9 +64,9 @@ func TestAgentCompletesMissingToolResults(t *testing.T) {
 	}
 
 	params := execution.ExecuteParams{SessionID: "session-1", ExecutionID: "execution-1", Entries: store, Events: event.NewBus("session-1", store)}
+	history := NewHistory(params.SessionID, params.ExecutionID, params.Entries, params.Events)
 
-	memory := NewMemory(params.SessionID, params.ExecutionID, params.Entries, params.Events)
-	if err := (NewExecutor(nil)).completeToolResults(context.Background(), memory, params); err != nil {
+	if err := (NewExecutor(nil)).completeToolResults(context.Background(), history, params); err != nil {
 		t.Fatalf("completeToolResults() error = %v", err)
 	}
 
@@ -158,10 +159,10 @@ func TestUnresolvedToolCalls(t *testing.T) {
 	}
 }
 
-func TestAgentRepairsToolHistoryBeforeBuilding(t *testing.T) {
+func TestExecutorRepairsToolHistoryBeforeBuilding(t *testing.T) {
 	t.Parallel()
 
-	store := &messageFailingStore{Store: entry.NewMemoryStore(), failure: errors.New("storage unavailable"), failing: true}
+	store := &failingStore{Store: entry.NewMemoryStore(), failingType: MessageEntryType, failure: errors.New("storage unavailable")}
 	bus := event.NewBus("session-1", store)
 	call := kit.NewToolCall("call-1", "write", nil)
 
@@ -198,7 +199,7 @@ func TestAgentRepairsToolHistoryBeforeBuilding(t *testing.T) {
 		t.Fatal("agent was built before its history was usable")
 	}
 
-	store.failing = false
+	store.failingType = ""
 
 	if _, err := configured.Execute(context.Background(), params); err != nil {
 		t.Fatal(err)
@@ -229,15 +230,122 @@ func TestAgentRepairsToolHistoryBeforeBuilding(t *testing.T) {
 	}
 }
 
-type messageFailingStore struct {
-	entry.Store
-	failure error
-	failing bool
+func TestExecutorContinuesConversationAcrossExecutions(t *testing.T) {
+	t.Parallel()
+
+	usages := []kit.Usage{{InputTokens: 10, OutputTokens: 2}, {InputTokens: 20, OutputTokens: 4}}
+	model := kittest.NewModel(t,
+		kittest.ModelResult{Response: kit.ModelResponse{
+			Message: kit.NewModelMessage(kit.NewTextContent("first response")), FinishReason: kit.FinishReasonStop, Usage: usages[0],
+		}},
+		kittest.ModelResult{Response: kit.ModelResponse{
+			Message: kit.NewModelMessage(kit.NewTextContent("second response")), FinishReason: kit.FinishReasonStop, Usage: usages[1],
+		}},
+	)
+	store := entry.NewMemoryStore()
+	bus := event.NewBus("session-1", store)
+	executor := NewExecutor(New(kit.AgentConfig{}, staticModelResolver{model}))
+
+	executionIDs := []string{"execution-1", "execution-2"}
+	for i, input := range []string{"first input", "second input"} {
+		params := execution.ExecuteParams{SessionID: "session-1", ExecutionID: executionIDs[i], Input: agentInput(t, input), Entries: store, Events: bus}
+		if _, err := executor.Execute(context.Background(), params); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var sent []string
+	for _, message := range model.CallAt(1).Messages {
+		sent = append(sent, message.TextContent().Text)
+	}
+
+	if !slices.Equal(sent, []string{"first input", "first response", "second input"}) {
+		t.Fatalf("second request messages = %q", sent)
+	}
+
+	entries, err := store.List(context.Background(), "session-1", 0)
+	if err != nil || len(entries) != 6 {
+		t.Fatalf("entries = %+v, error = %v, want three per execution", entries, err)
+	}
+
+	for i, value := range entries {
+		wantType := MessageEntryType
+		if i%3 == 2 {
+			wantType = FinishedEntryType
+		}
+
+		if value.Type != wantType || value.ExecutionID != executionIDs[i/3] {
+			t.Fatalf("entry %d = %+v, want %s from %s", i, value, wantType, executionIDs[i/3])
+		}
+	}
+
+	for i, value := range []entry.Entry{entries[2], entries[5]} {
+		var finished Finished
+		if err := json.Unmarshal(value.Payload, &finished); err != nil {
+			t.Fatal(err)
+		}
+
+		if finished.Usage != usages[i] {
+			t.Fatalf("%s usage = %+v, want %+v", executionIDs[i], finished.Usage, usages[i])
+		}
+	}
 }
 
-func (s *messageFailingStore) Append(ctx context.Context, sessionID string, values ...entry.Entry) ([]entry.Entry, error) {
+func TestExecutorPublishesAgentEvents(t *testing.T) {
+	t.Parallel()
+
+	model := kittest.NewModel(t, kittest.ModelResult{
+		Events: []kit.ModelEvent{kit.NewModelContentDeltaEvent(kit.NewTextContent("hello"))},
+		Response: kit.ModelResponse{
+			Message:      kit.NewModelMessage(kit.NewTextContent("hello")),
+			FinishReason: kit.FinishReasonStop,
+		},
+	})
+	store := entry.NewMemoryStore()
+	bus := event.NewBus("session-1", store)
+
+	subscription, err := bus.Subscribe(context.Background(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(subscription.Close)
+
+	params := execution.ExecuteParams{SessionID: "session-1", ExecutionID: "execution-1", Input: agentInput(t, "hi"), Entries: store, Events: bus}
+	if _, err := NewExecutor(New(kit.AgentConfig{}, staticModelResolver{model})).Execute(context.Background(), params); err != nil {
+		t.Fatal(err)
+	}
+
+	for i, wantType := range []string{MessageEntryType, EventType, MessageEntryType, EventType, FinishedEntryType} {
+		received := receiveEvent(t, subscription)
+		if received.Type != wantType || received.ExecutionID != "execution-1" {
+			t.Fatalf("event %d = %+v, want %s from execution-1", i, received, wantType)
+		}
+
+		if i != 1 {
+			continue
+		}
+
+		var delta kit.AgentEvent
+		if err := json.Unmarshal(received.Payload, &delta); err != nil {
+			t.Fatal(err)
+		}
+
+		if delta.Content == nil || delta.Content.Text == nil || delta.Content.Text.Text != "hello" {
+			t.Fatalf("content delta = %+v, want hello", delta)
+		}
+	}
+}
+
+type failingStore struct {
+	entry.Store
+	failingType string
+	failure     error
+}
+
+func (s *failingStore) Append(ctx context.Context, sessionID string, values ...entry.Entry) ([]entry.Entry, error) {
 	for _, value := range values {
-		if s.failing && value.Type == MessageEntryType {
+		if value.Type == s.failingType {
 			return nil, s.failure
 		}
 	}

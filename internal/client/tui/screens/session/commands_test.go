@@ -12,6 +12,7 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
 	"github.com/vitaliipsl/crappy/harness"
+	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
@@ -43,7 +44,7 @@ func TestExecuteReportsTerminalPersistenceFailure(t *testing.T) {
 				sessions: storage.SessionStore(),
 				entries:  finishFailureStore{Store: storage.EntryStore(), err: failure},
 			}
-			h := harness.New(store, harness.WithExecutor(execution.DefaultName,
+			h := harness.New(store, harness.WithExecutor(agent.ExecutorName,
 				execution.Func(func(context.Context, execution.ExecuteParams) (any, error) {
 					return "done", nil
 				}),
@@ -55,7 +56,7 @@ func TestExecuteReportsTerminalPersistenceFailure(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			screen := New(ctx, assistant.New(h, storage.SessionStore(), token.NewCharacterEstimator()), config.Config{}, opened.ID())
+			screen := New(ctx, assistant.New(h, storage, nil, token.NewCharacterEstimator()), config.Config{}, opened.ID())
 			defer screen.Close()
 
 			screen.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
@@ -114,7 +115,7 @@ func TestWaitForExecutionStopsWhenScreenCloses(t *testing.T) {
 	}
 
 	release := make(chan struct{})
-	h := harness.New(storage, harness.WithExecutor(execution.DefaultName,
+	h := harness.New(storage, harness.WithExecutor(agent.ExecutorName,
 		execution.Func(func(ctx context.Context, _ execution.ExecuteParams) (any, error) {
 			select {
 			case <-release:
@@ -133,7 +134,7 @@ func TestWaitForExecutionStopsWhenScreenCloses(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	screen := New(ctx, assistant.New(h, storage.SessionStore(), token.NewCharacterEstimator()), config.Config{}, opened.ID())
+	screen := New(ctx, assistant.New(h, storage, nil, token.NewCharacterEstimator()), config.Config{}, opened.ID())
 	defer screen.Close()
 
 	accepted := screen.execute(kit.NewUserMessage(kit.NewTextContent("hello")))().(executeResultMsg)
@@ -165,7 +166,7 @@ func TestFirstSubmitCreatesSession(t *testing.T) {
 	h := harness.New(storage)
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 
-	screen := New(context.Background(), assistant.New(h, storage.SessionStore(), token.NewCharacterEstimator()), config.Config{}, "")
+	screen := New(context.Background(), assistant.New(h, storage, nil, token.NewCharacterEstimator()), config.Config{}, "")
 	defer screen.Close()
 
 	created := screen.submit("fix the compaction")().(createdMsg)

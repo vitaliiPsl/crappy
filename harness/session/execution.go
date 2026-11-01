@@ -80,10 +80,6 @@ func (s *Session) Execute(ctx context.Context, request execution.Request) (*Exec
 		return nil, ErrBusy
 	}
 
-	if request.Executor == "" {
-		request.Executor = execution.DefaultName
-	}
-
 	executor, err := s.executors.Resolve(request.Executor)
 	if err != nil {
 		return nil, err

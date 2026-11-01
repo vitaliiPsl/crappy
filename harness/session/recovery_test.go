@@ -44,7 +44,7 @@ func TestNewSettlesAbandonedExecutionBeforeReturning(t *testing.T) {
 	store.failing.Store(true)
 
 	for range 2 {
-		opened, err := New(context.Background(), "session-1", newSessionState(t, "session-1"), store, execution.NewRegistry(), nil)
+		opened, err := New(context.Background(), "session-1", newSessionState(t, "session-1"), store, execution.NewRegistry())
 		if opened != nil || !errors.Is(err, store.err) {
 			t.Fatalf("failed construction = %v, error = %v", opened, err)
 		}

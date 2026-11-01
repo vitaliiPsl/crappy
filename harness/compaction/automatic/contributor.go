@@ -8,8 +8,7 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
 	"github.com/vitaliipsl/crappy/harness/agent"
-	compactionexec "github.com/vitaliipsl/crappy/harness/compaction/executor"
-	"github.com/vitaliipsl/crappy/harness/execution"
+	"github.com/vitaliipsl/crappy/harness/compaction"
 	"github.com/vitaliipsl/crappy/harness/token"
 )
 
@@ -28,16 +27,16 @@ func WithEstimator(estimator token.Estimator) ContributorOption {
 }
 
 type Contributor struct {
-	executor  *compactionexec.Executor
+	compactor *compaction.Compactor
 	trigger   Trigger
 	estimator token.Estimator
 }
 
 var _ agent.Contributor = (*Contributor)(nil)
 
-func New(executor *compactionexec.Executor, options ...ContributorOption) *Contributor {
+func New(compactor *compaction.Compactor, options ...ContributorOption) *Contributor {
 	contributor := &Contributor{
-		executor:  executor,
+		compactor: compactor,
 		trigger:   WhenInputExceedsRatio(DefaultThresholdRatio),
 		estimator: token.NewCharacterEstimator(),
 	}
@@ -58,17 +57,17 @@ func (c *Contributor) Contribute(
 	return agent.Contribution{
 		Options: []adkagent.Option{
 			adkagent.WithOnModelRequestReady(
-				c.beforeModelRequest(build.Request, inputLimit),
+				c.beforeModelRequest(build.Request.History, inputLimit),
 			),
 			adkagent.WithOnModelError(
-				c.onModelError(build.Request),
+				c.onModelError(build.Request.History),
 			),
 		},
 	}, nil
 }
 
 func (c *Contributor) beforeModelRequest(
-	build agent.BuildRequest,
+	history *agent.History,
 	inputLimit int,
 ) kit.OnModelRequestReady {
 	return func(
@@ -82,12 +81,12 @@ func (c *Contributor) beforeModelRequest(
 			return false, nil
 		}
 
-		return c.compact(run, build)
+		return c.compact(run, history)
 	}
 }
 
 func (c *Contributor) onModelError(
-	build agent.BuildRequest,
+	history *agent.History,
 ) kit.OnModelError {
 	return func(
 		run *kit.RunContext,
@@ -98,7 +97,7 @@ func (c *Contributor) onModelError(
 			return err
 		}
 
-		compacted, compactErr := c.compact(run, build)
+		compacted, compactErr := c.compact(run, history)
 		if compactErr != nil {
 			return compactErr
 		}
@@ -111,18 +110,11 @@ func (c *Contributor) onModelError(
 	}
 }
 
-func (c *Contributor) compact(run *kit.RunContext, build agent.BuildRequest) (bool, error) {
-	output, err := c.executor.Execute(run.Context, execution.ExecuteParams{
-		SessionID:   build.SessionID,
-		ExecutionID: build.ExecutionID,
-		State:       build.State,
-		Entries:     build.Entries,
-		Events:      build.Events,
-	})
-	result := output.(compactionexec.Result)
-	run.Usage.Add(result.Usage)
+func (c *Contributor) compact(run *kit.RunContext, history *agent.History) (bool, error) {
+	generated, compacted, err := history.Compact(run.Context, c.compactor)
+	run.Usage.Add(generated.Usage)
 
-	return result.Compacted, err
+	return compacted, err
 }
 
 func (c *Contributor) inputTokens(

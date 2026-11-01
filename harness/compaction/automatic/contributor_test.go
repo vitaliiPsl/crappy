@@ -10,13 +10,11 @@ import (
 	"testing"
 	"time"
 
-	adkagent "github.com/vitaliiPsl/crappy-adk/agent"
 	"github.com/vitaliiPsl/crappy-adk/kit"
 	"github.com/vitaliiPsl/crappy-adk/kittest"
 
 	harnessagent "github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/compaction"
-	compactionexec "github.com/vitaliipsl/crappy/harness/compaction/executor"
 	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
@@ -174,12 +172,12 @@ func TestContributorUsesPreviousCompaction(t *testing.T) {
 			}
 
 			factory := harnessagent.New(kit.AgentConfig{}, staticModelResolver{model},
-				harnessagent.WithContributors(New(compactionexec.New(compactor), WithTrigger(WhenInputExceedsTokens(threshold)))),
+				harnessagent.WithContributors(New(compactor, WithTrigger(WhenInputExceedsTokens(threshold)))),
 			)
-			memory := harnessagent.NewMemory("session", "current", store, events)
 
 			built, err := factory.Build(ctx, harnessagent.BuildRequest{
-				SessionID: "session", ExecutionID: "current", Memory: memory, Entries: store, Events: events,
+				SessionID: "session", ExecutionID: "current",
+				History: harnessagent.NewHistory("session", "current", store, events),
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -224,9 +222,8 @@ func TestContributorUsesPreviousCompaction(t *testing.T) {
 				t.Fatalf("request did not use the new compaction: %+v", request.Messages)
 			}
 
-			history, err := memory.History(ctx)
-			if err != nil || len(history) != 4 {
-				t.Fatalf("original history changed: %+v, err = %v", history, err)
+			if history := storedMessages(t, store, "session"); len(history) != 4 {
+				t.Fatalf("original history changed: %+v", history)
 			}
 		})
 	}
@@ -234,6 +231,7 @@ func TestContributorUsesPreviousCompaction(t *testing.T) {
 
 func TestContributorCompactsPreviousCompactionAgainOnOverflow(t *testing.T) {
 	t.Parallel()
+
 	model := kittest.NewModel(t,
 		kittest.ModelResult{Error: kit.ErrContextLength},
 		kittest.ModelResult{Response: kit.ModelResponse{
@@ -260,12 +258,12 @@ func TestContributorCompactsPreviousCompactionAgainOnOverflow(t *testing.T) {
 	}
 
 	factory := harnessagent.New(kit.AgentConfig{}, staticModelResolver{model},
-		harnessagent.WithContributors(New(compactionexec.New(compactor), WithTrigger(WhenInputExceedsTokens(1)))),
+		harnessagent.WithContributors(New(compactor, WithTrigger(WhenInputExceedsTokens(1)))),
 	)
 
 	built, err := factory.Build(context.Background(), harnessagent.BuildRequest{
-		SessionID: "session", ExecutionID: "execution", Entries: store, Events: events,
-		Memory: harnessagent.NewMemory("session", "execution", store, events),
+		SessionID: "session", ExecutionID: "execution",
+		History: harnessagent.NewHistory("session", "execution", store, events),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -294,36 +292,6 @@ func TestContributorCompactsPreviousCompactionAgainOnOverflow(t *testing.T) {
 	}
 }
 
-func buildAgent(t *testing.T, model, compactionModel kit.Model, options ...ContributorOption) kit.Agent {
-	t.Helper()
-
-	compactor, err := compaction.NewCompactor(compaction.Config{}, staticModelResolver{compactionModel})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	store := entry.NewMemoryStore()
-	bus := event.NewBus("session-1", store)
-	factory := harnessagent.New(
-		kit.AgentConfig{},
-		staticModelResolver{model},
-		harnessagent.WithContributors(New(compactionexec.New(compactor), options...)),
-	)
-
-	built, err := factory.Build(context.Background(), harnessagent.BuildRequest{
-		SessionID:   "session-1",
-		ExecutionID: "execution-1",
-		Memory:      harnessagent.NewMemory("session-1", "execution-1", store, bus),
-		Entries:     store,
-		Events:      bus,
-	})
-	if err != nil {
-		t.Fatalf("Build() error = %v", err)
-	}
-
-	return built
-}
-
 func TestContributorUsesLastModelUsage(t *testing.T) {
 	t.Parallel()
 
@@ -341,21 +309,7 @@ func TestContributorUsesLastModelUsage(t *testing.T) {
 	}
 }
 
-type fixedEstimator int
-
-func (e fixedEstimator) Estimate(string) int {
-	return int(e)
-}
-
-type staticModelResolver struct {
-	model kit.Model
-}
-
-func (r staticModelResolver) Resolve(context.Context) (kit.Model, error) {
-	return r.model, nil
-}
-
-func TestAutomaticCompactionDuringExecution(t *testing.T) {
+func TestContributorCompactsDuringAgentExecution(t *testing.T) {
 	t.Parallel()
 
 	agentModel := kittest.NewModelWithConfig(
@@ -382,7 +336,7 @@ func TestAutomaticCompactionDuringExecution(t *testing.T) {
 	store := entry.NewMemoryStore()
 	bus := event.NewBus("session-1", store)
 	executor := harnessagent.NewExecutor(harnessagent.New(
-		kit.AgentConfig{}, staticModelResolver{agentModel}, harnessagent.WithContributors(New(compactionexec.New(compactor))),
+		kit.AgentConfig{}, staticModelResolver{agentModel}, harnessagent.WithContributors(New(compactor)),
 	))
 
 	subscription, err := bus.Subscribe(context.Background(), 0)
@@ -448,7 +402,7 @@ func TestAutomaticCompactionDuringExecution(t *testing.T) {
 	}
 }
 
-func TestAutomaticCompactionRetainsCurrentInput(t *testing.T) {
+func TestContributorRetainsCurrentInput(t *testing.T) {
 	t.Parallel()
 
 	agentModel := kittest.NewModelWithConfig(
@@ -475,11 +429,11 @@ func TestAutomaticCompactionRetainsCurrentInput(t *testing.T) {
 		kit.NewUserMessage(kit.NewTextContent("earlier")),
 		kit.NewModelMessage(kit.NewTextContent("earlier response")),
 	); err != nil {
-		t.Fatalf("Record() error = %v", err)
+		t.Fatalf("Commit() error = %v", err)
 	}
 
 	executor := harnessagent.NewExecutor(harnessagent.New(
-		kit.AgentConfig{}, staticModelResolver{agentModel}, harnessagent.WithContributors(New(compactionexec.New(compactor))),
+		kit.AgentConfig{}, staticModelResolver{agentModel}, harnessagent.WithContributors(New(compactor)),
 	))
 	if _, err := executor.Execute(context.Background(), execution.ExecuteParams{
 		SessionID: "session-1", ExecutionID: "execution-1", Input: agentInput(t, "current"), Entries: store, Events: event.NewBus("session-1", store),
@@ -499,6 +453,78 @@ func TestAutomaticCompactionRetainsCurrentInput(t *testing.T) {
 			t.Fatalf("request message %d = %q, want %q", i, got, text)
 		}
 	}
+}
+
+func TestContributorCommitFailureStopsRunAndKeepsUsage(t *testing.T) {
+	t.Parallel()
+
+	failure := errors.New("cannot save compaction")
+	store := &compactionFailingStore{Store: entry.NewMemoryStore(), failure: failure}
+	bus := event.NewBus("session", store)
+	mainModel := kittest.NewModelWithConfig(t, kit.ModelConfig{InputLimit: 1})
+	summaryModel := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
+		Message:      kit.NewModelMessage(kit.NewTextContent(`{"objective":"summary"}`)),
+		FinishReason: kit.FinishReasonStop, Usage: kit.Usage{InputTokens: 10, OutputTokens: 2},
+	}})
+
+	compactor, err := compaction.NewCompactor(compaction.Config{}, staticModelResolver{summaryModel})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	factory := harnessagent.New(kit.AgentConfig{}, staticModelResolver{mainModel}, harnessagent.WithContributors(New(compactor)))
+
+	built, err := factory.Build(context.Background(), harnessagent.BuildRequest{
+		SessionID: "session", ExecutionID: "execution",
+		History: harnessagent.NewHistory("session", "execution", store, bus),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	response, err := built.Run(context.Background(), kit.NewUserMessage(kit.NewTextContent("original")))
+	if !errors.Is(err, failure) {
+		t.Fatalf("Run() error = %v, want commit failure", err)
+	}
+
+	if response.Usage != (kit.Usage{InputTokens: 10, OutputTokens: 2}) {
+		t.Fatalf("usage lost: %+v", response.Usage)
+	}
+
+	mainModel.AssertCallCount(t, 0)
+
+	messages, err := harnessagent.NewHistory("session", "execution", store, bus).Messages(context.Background())
+	if err != nil || len(messages) != 1 || messages[0].TextContent().Text != "original" {
+		t.Fatalf("failed compaction changed history: %+v, error = %v", messages, err)
+	}
+}
+
+func buildAgent(t *testing.T, model, compactionModel kit.Model, options ...ContributorOption) kit.Agent {
+	t.Helper()
+
+	compactor, err := compaction.NewCompactor(compaction.Config{}, staticModelResolver{compactionModel})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store := entry.NewMemoryStore()
+	bus := event.NewBus("session-1", store)
+	factory := harnessagent.New(
+		kit.AgentConfig{},
+		staticModelResolver{model},
+		harnessagent.WithContributors(New(compactor, options...)),
+	)
+
+	built, err := factory.Build(context.Background(), harnessagent.BuildRequest{
+		SessionID:   "session-1",
+		ExecutionID: "execution-1",
+		History:     harnessagent.NewHistory("session-1", "execution-1", store, bus),
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	return built
 }
 
 func compactionMessage(objective string) string {
@@ -533,45 +559,44 @@ func agentInput(t *testing.T, text string) json.RawMessage {
 	return encoded
 }
 
-func TestCompactionCommitFailurePreservesContextAndUsage(t *testing.T) {
-	t.Parallel()
+func storedMessages(t *testing.T, store entry.Store, sessionID string) []kit.Message {
+	t.Helper()
 
-	failure := errors.New("cannot save compaction")
-	store := &compactionFailingStore{Store: entry.NewMemoryStore(), failure: failure}
-	bus := event.NewBus("session", store)
-	mainModel := kittest.NewModelWithConfig(t, kit.ModelConfig{InputLimit: 1})
-	summaryModel := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
-		Message:      kit.NewModelMessage(kit.NewTextContent(`{"objective":"summary"}`)),
-		FinishReason: kit.FinishReasonStop, Usage: kit.Usage{InputTokens: 10, OutputTokens: 2},
-	}})
-
-	compactor, err := compaction.NewCompactor(compaction.Config{}, staticModelResolver{summaryModel})
+	stored, err := store.List(context.Background(), sessionID, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	factory := harnessagent.New(kit.AgentConfig{}, staticModelResolver{mainModel}, harnessagent.WithContributors(New(compactionexec.New(compactor))))
+	var messages []kit.Message
 
-	built, err := factory.Build(context.Background(), harnessagent.BuildRequest{SessionID: "session", ExecutionID: "execution", Memory: harnessagent.NewMemory("session", "execution", store, bus), Entries: store, Events: bus})
-	if err != nil {
-		t.Fatal(err)
+	for _, value := range stored {
+		if value.Type != harnessagent.MessageEntryType {
+			continue
+		}
+
+		var message kit.Message
+		if err := json.Unmarshal(value.Payload, &message); err != nil {
+			t.Fatal(err)
+		}
+
+		messages = append(messages, message)
 	}
 
-	response, err := built.Run(context.Background(), kit.NewUserMessage(kit.NewTextContent("original")))
-	if !errors.Is(err, failure) {
-		t.Fatalf("Run() error=%v", err)
-	}
+	return messages
+}
 
-	if response.Usage != (kit.Usage{InputTokens: 10, OutputTokens: 2}) {
-		t.Fatalf("usage lost: %+v", response.Usage)
-	}
+type fixedEstimator int
 
-	mainModel.AssertCallCount(t, 0)
+func (e fixedEstimator) Estimate(string) int {
+	return int(e)
+}
 
-	messages, err := harnessagent.NewMemory("session", "execution", store, bus).Context(context.Background())
-	if err != nil || len(messages) != 1 || messages[0].TextContent().Text != "original" {
-		t.Fatalf("failed compaction changed context: %+v, err=%v", messages, err)
-	}
+type staticModelResolver struct {
+	model kit.Model
+}
+
+func (r staticModelResolver) Resolve(context.Context) (kit.Model, error) {
+	return r.model, nil
 }
 
 type compactionFailingStore struct {
@@ -587,116 +612,4 @@ func (s *compactionFailingStore) Append(ctx context.Context, sessionID string, v
 	}
 
 	return s.Store.Append(ctx, sessionID, values...)
-}
-
-func TestCompactionRebuildsRequestContributions(t *testing.T) {
-	t.Parallel()
-
-	scenarios := []struct {
-		name    string
-		prefix  string
-		rewrite bool
-	}{
-		{name: "distinct contributions", prefix: "transient prefix"},
-		{name: "identical transient prefix", prefix: "original"},
-		{name: "rewritten conversation", prefix: "transient prefix", rewrite: true},
-	}
-	for _, scenario := range scenarios {
-		for _, overflow := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/overflow=%v", scenario.name, overflow), func(t *testing.T) {
-				prefix := kit.NewUserMessage(kit.NewTextContent(scenario.prefix))
-				suffix := kit.NewUserMessage(kit.NewTextContent("transient suffix"))
-				results := []kittest.ModelResult{{Response: kit.ModelResponse{Message: kit.NewModelMessage(kit.NewTextContent("done")), FinishReason: kit.FinishReasonStop}}}
-
-				inputLimit := 1
-				if overflow {
-					inputLimit = 100000
-
-					results = append([]kittest.ModelResult{{Error: kit.ErrContextLength}}, results...)
-				}
-
-				model := kittest.NewModelWithConfig(t, kit.ModelConfig{InputLimit: inputLimit}, results...)
-				summaryModel := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{Message: kit.NewModelMessage(kit.NewTextContent(`{"objective":"summary"}`)), FinishReason: kit.FinishReasonStop}})
-
-				compactor, err := compaction.NewCompactor(compaction.Config{}, staticModelResolver{summaryModel})
-				if err != nil {
-					t.Fatal(err)
-				}
-
-				store := entry.NewMemoryStore()
-				events := event.NewBus("session", store)
-				constructions := 0
-				factory := harnessagent.New(kit.AgentConfig{}, staticModelResolver{model},
-					harnessagent.WithInstructions("static"),
-					harnessagent.WithAgentOptions(adkagent.WithOnContext(func(_ context.Context, request kit.AgentContext) (kit.AgentContext, error) {
-						constructions++
-
-						if scenario.rewrite {
-							rewritten := make([]kit.Message, len(request.Messages))
-							for i, message := range request.Messages {
-								rewritten[i] = kit.NewUserMessage(kit.NewTextContent("wrapped: " + message.TextContent().Text))
-							}
-
-							request.Messages = rewritten
-						}
-
-						request.Messages = append([]kit.Message{prefix}, request.Messages...)
-						request.Instructions[0].Text += " dynamic"
-
-						return request, nil
-					})),
-					harnessagent.WithContributors(New(compactionexec.New(compactor)), harnessagent.ContributorFunc(func(context.Context, harnessagent.BuildContext) (harnessagent.Contribution, error) {
-						return harnessagent.Contribution{Options: []adkagent.Option{
-							adkagent.WithOnContext(func(_ context.Context, request kit.AgentContext) (kit.AgentContext, error) {
-								request.Messages = append(request.Messages, suffix)
-
-								return request, nil
-							}),
-						}}, nil
-					})),
-				)
-
-				built, err := factory.Build(context.Background(), harnessagent.BuildRequest{SessionID: "session", ExecutionID: "execution", Memory: harnessagent.NewMemory("session", "execution", store, events), Entries: store, Events: events})
-				if err != nil {
-					t.Fatal(err)
-				}
-
-				if _, err := built.Run(context.Background(), kit.NewUserMessage(kit.NewTextContent("original"))); err != nil {
-					t.Fatal(err)
-				}
-
-				call := 0
-				if overflow {
-					call = 1
-				}
-
-				request := model.CallAt(call)
-
-				summary := compactionMessage("summary")
-				if scenario.rewrite {
-					summary = "wrapped: " + summary
-				}
-
-				if len(request.Messages) != 3 || request.Messages[0].TextContent().Text != scenario.prefix || request.Messages[1].TextContent().Text != summary || request.Messages[2].TextContent().Text != "transient suffix" {
-					t.Fatalf("request contributions lost or duplicated: %+v", request.Messages)
-				}
-
-				if request.Instructions != "static dynamic" || constructions != 2 {
-					t.Fatalf("instructions=%q, constructions=%d", request.Instructions, constructions)
-				}
-
-				summaryModel.AssertCallCount(t, 1)
-
-				summaryInput := summaryModel.CallAt(0).Messages[0].TextContent().Text
-				if strings.Contains(summaryInput, "transient") || strings.Contains(summaryInput, "wrapped:") {
-					t.Fatalf("transient contributions leaked into compaction: %q", summaryInput)
-				}
-
-				original, err := harnessagent.NewMemory("session", "execution", store, events).History(context.Background())
-				if err != nil || len(original) != 2 || original[0].TextContent().Text != "original" {
-					t.Fatalf("transient messages leaked into history: %+v, err=%v", original, err)
-				}
-			})
-		}
-	}
 }

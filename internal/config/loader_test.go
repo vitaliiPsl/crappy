@@ -104,6 +104,10 @@ compaction:
 	}
 
 	agentConfig := loaded.AgentConfig()
+	if got, want := agentConfig.Instructions, "Be concise."; got != want {
+		t.Fatalf("agent instructions = %q, want %q", got, want)
+	}
+
 	if agentConfig.Thinking == nil || *agentConfig.Thinking != kit.ThinkingLevelHigh {
 		t.Fatalf("agent thinking = %v, want %q", agentConfig.Thinking, kit.ThinkingLevelHigh)
 	}

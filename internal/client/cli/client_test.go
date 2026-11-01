@@ -10,6 +10,7 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kittest"
 
 	"github.com/vitaliipsl/crappy/harness"
+	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/token"
 	"github.com/vitaliipsl/crappy/internal/assistant"
 	"github.com/vitaliipsl/crappy/internal/storage/jsonl"
@@ -38,13 +39,14 @@ func TestClientRunsSession(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			h := harness.New(storage, harness.WithModel(staticModelResolver{model}))
+			h := harness.New(storage, harness.WithExecutor(agent.ExecutorName,
+				agent.NewExecutor(agent.New(kit.AgentConfig{}, staticModelResolver{model}))))
 			t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 
 			var output bytes.Buffer
 
 			err = New(
-				assistant.New(h, storage.SessionStore(), token.NewCharacterEstimator()),
+				assistant.New(h, storage, nil, token.NewCharacterEstimator()),
 				"",
 				strings.NewReader("hi\n"),
 				&output,

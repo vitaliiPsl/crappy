@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"errors"
-	"fmt"
 	"reflect"
 	"slices"
 	"testing"
@@ -31,13 +30,13 @@ func TestFactoryBuild(t *testing.T) {
 	thinking := kit.ThinkingLevelHigh
 	factory := New(
 		kit.AgentConfig{
+			Instructions:    "Be concise.",
 			Temperature:     &temperature,
 			MaxOutputTokens: &maxOutputTokens,
 			Thinking:        &thinking,
 		},
 		staticModelResolver{model},
-		WithInstructions("Be concise."),
-		WithTools(baseTool),
+		WithContributors(contribute(Contribution{Tools: []kit.Tool{baseTool}})),
 	)
 
 	built, err := factory.Build(context.Background(), testBuildRequest())
@@ -93,163 +92,109 @@ func TestFactoryBuildsFreshAgents(t *testing.T) {
 	}
 }
 
-func TestFactoryBuildExposesCurrentContext(t *testing.T) {
+func TestFactoryBuildsAgentThatInspectsWithoutRunning(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	model := kittest.NewModel(t)
 	base := kittest.NewTool(t, "base", "Base capability")
 	contributed := kittest.NewTool(t, "contributed", "Contributed capability")
-	build := testBuildRequest()
+	store := entry.NewMemoryStore()
+	build := testBuildRequestOn(store)
 
-	prior := kit.NewUserMessage(kit.NewTextContent("prior work"))
-	if err := build.Memory.Record(ctx, prior); err != nil {
+	prior := kit.NewModelMessage(kit.NewToolCallContent(kit.NewToolCall("call-1", "base", nil)))
+	if err := build.History.Append(ctx, prior); err != nil {
+		t.Fatal(err)
+	}
+
+	before, err := store.List(ctx, build.SessionID, 0)
+	if err != nil {
 		t.Fatal(err)
 	}
 
 	contributions, wraps := 0, 0
-	factory := New(kit.AgentConfig{}, staticModelResolver{model},
-		WithInstructions("base instructions"),
-		WithTools(base),
+	factory := New(kit.AgentConfig{Instructions: "base instructions"}, staticModelResolver{model},
 		WithToolMiddleware(func(_ BuildContext, tool kit.Tool) (kit.Tool, error) {
 			wraps++
 
 			return tool, nil
 		}),
-		WithContributors(ContributorFunc(func(context.Context, BuildContext) (Contribution, error) {
-			contributions++
-
-			return Contribution{
-				Source:       "workspace",
-				Instructions: []string{"workspace guidance"},
-				Tools:        []kit.Tool{contributed},
-				Options: []adkagent.Option{
-					adkagent.WithOnContext(func(_ context.Context, current kit.AgentContext) (kit.AgentContext, error) {
-						current.Instructions = append(current.Instructions, kit.Instruction{
-							Source: "task",
-							Text:   fmt.Sprintf("%d conversation messages", len(current.Messages)),
-						})
-
-						return current, nil
-					}),
-					adkagent.WithOnModelRequestReady(func(*kit.RunContext, kit.ModelRequest) (bool, error) {
-						t.Fatal("inspection ran a readiness hook")
-
-						return false, nil
-					}),
-				},
-			}, nil
-		})),
-	)
-
-	built, err := factory.Build(ctx, build)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	resolved, err := built.Context(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if resolved.InstructionsText() != "base instructions\n\n# workspace\n\nworkspace guidance\n\n# task\n\n1 conversation messages" ||
-		resolved.Instructions[0].Source != "" || resolved.Instructions[1].Source != "workspace" ||
-		!reflect.DeepEqual(resolved.Tools, []kit.Tool{base, contributed}) ||
-		!reflect.DeepEqual(resolved.Messages, []kit.Message{prior}) {
-		t.Fatalf("resolved context = %+v", resolved)
-	}
-
-	if err := build.Memory.Record(ctx, kit.NewModelMessage(kit.NewTextContent("new response"))); err != nil {
-		t.Fatal(err)
-	}
-
-	updated, err := built.Context(ctx)
-	if err != nil || len(updated.Messages) != 2 || updated.Instructions[2].Text != "2 conversation messages" {
-		t.Fatalf("updated context = %+v, error=%v", updated, err)
-	}
-
-	if contributions != 1 || wraps != 2 {
-		t.Fatalf("inspection repeated execution preparation: contributions=%d, wraps=%d", contributions, wraps)
-	}
-
-	history, err := build.Memory.History(ctx)
-	if err != nil || len(history) != 2 {
-		t.Fatalf("inspection wrote conversation history: %+v, error=%v", history, err)
-	}
-
-	model.AssertCallCount(t, 0)
-	base.AssertNeverCalled(t)
-	contributed.AssertNeverCalled(t)
-}
-
-func TestFactoryPreservesInstructionContributionOrder(t *testing.T) {
-	t.Parallel()
-
-	model := kittest.NewModel(t)
-	dynamic := "second"
-	contributions := 0
-	factory := New(kit.AgentConfig{}, staticModelResolver{model},
-		WithInstructionsSource("policy", "base"),
 		WithContributors(
-			ContributorFunc(func(context.Context, BuildContext) (Contribution, error) {
+			contribute(Contribution{Tools: []kit.Tool{base}}),
+			ContributorFunc(func(_ context.Context, received BuildContext) (Contribution, error) {
 				contributions++
 
+				if !reflect.DeepEqual(received.Request, build) || received.Model != model {
+					t.Fatalf("contributor received %+v, want the supplied request and model", received)
+				}
+
 				return Contribution{
-					Source:       "first contributor",
-					Instructions: []string{" first "},
+					Source:       "workspace",
+					Instructions: []string{"workspace guidance"},
+					Tools:        []kit.Tool{contributed},
 					Options: []adkagent.Option{
-						adkagent.WithOnContext(func(_ context.Context, current kit.AgentContext) (kit.AgentContext, error) {
-							if current.InstructionsText() != "# policy\n\nbase\n\n# first contributor\n\nfirst" {
-								t.Fatalf("later instructions were resolved early: %+v", current.Instructions)
-							}
+						adkagent.WithOnModelRequestReady(func(*kit.RunContext, kit.ModelRequest) (bool, error) {
+							t.Fatal("inspection ran a readiness hook")
 
-							current.Instructions = append(current.Instructions, kit.Instruction{Source: "task", Text: dynamic})
-
-							return current, nil
+							return false, nil
 						}),
 					},
 				}, nil
 			}),
-			ContributorFunc(func(context.Context, BuildContext) (Contribution, error) {
-				contributions++
-
-				return Contribution{Source: "last contributor", Instructions: []string{"third"}}, nil
-			}),
 		),
 	)
 
-	built, err := factory.Build(context.Background(), testBuildRequest())
-	if err != nil {
-		t.Fatal(err)
+	loaded := inspect(t, factory, build)
+
+	if loaded.InstructionsText() != "base instructions\n\n# workspace\n\nworkspace guidance" ||
+		loaded.Instructions[0].Source != "" || loaded.Instructions[1].Source != "workspace" ||
+		!reflect.DeepEqual(loaded.Tools, []kit.Tool{base, contributed}) ||
+		!reflect.DeepEqual(loaded.Messages, []kit.Message{prior}) {
+		t.Fatalf("inspected context = %+v", loaded)
 	}
 
-	for _, text := range []string{"second", "updated second"} {
-		dynamic = text
-
-		current, err := built.Context(context.Background())
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		if current.InstructionsText() != "# policy\n\nbase\n\n# first contributor\n\nfirst\n\n# task\n\n"+text+"\n\n# last contributor\n\nthird" {
-			t.Fatalf("instruction order = %+v", current.Instructions)
-		}
-
-		var sources []string
-		for _, section := range current.Instructions {
-			sources = append(sources, section.Source)
-		}
-
-		if !slices.Equal(sources, []string{"policy", "first contributor", "task", "last contributor"}) {
-			t.Fatalf("instruction sources = %v", sources)
-		}
+	after, err := store.List(ctx, build.SessionID, 0)
+	if err != nil || !reflect.DeepEqual(before, after) {
+		t.Fatalf("inspection changed the session log: %+v, %v", after, err)
 	}
 
-	if contributions != 2 {
-		t.Fatalf("contributors ran %d times, want once each", contributions)
+	if contributions != 1 || wraps != 2 {
+		t.Fatalf("contributions=%d, wraps=%d, want 1/2", contributions, wraps)
 	}
 
-	model.AssertCallCount(t, 0)
+	model.AssertNeverCalled(t)
+	base.AssertNeverCalled(t)
+	contributed.AssertNeverCalled(t)
+}
+
+func TestFactoryPutsConfiguredInstructionsBeforeContributionsInOrder(t *testing.T) {
+	t.Parallel()
+
+	model := kittest.NewModel(t)
+	factory := New(kit.AgentConfig{Instructions: "persona"}, staticModelResolver{model},
+		WithContributors(
+			contribute(Contribution{Source: "policy", Instructions: []string{"base"}}),
+			contribute(Contribution{Source: "first contributor", Instructions: []string{" first ", ""}}),
+			contribute(Contribution{Source: "last contributor", Instructions: []string{"second"}}),
+		),
+	)
+
+	loaded := inspect(t, factory, testBuildRequest())
+
+	if loaded.InstructionsText() != "persona\n\n# policy\n\nbase\n\n# first contributor\n\nfirst\n\n# last contributor\n\nsecond" {
+		t.Fatalf("instruction order = %+v", loaded.Instructions)
+	}
+
+	var sources []string
+	for _, section := range loaded.Instructions {
+		sources = append(sources, section.Source)
+	}
+
+	if !slices.Equal(sources, []string{"", "policy", "first contributor", "last contributor"}) {
+		t.Fatalf("instruction sources = %v", sources)
+	}
+
+	model.AssertNeverCalled(t)
 }
 
 func TestFactoryBuildAppliesContributions(t *testing.T) {
@@ -261,7 +206,8 @@ func TestFactoryBuildAppliesContributions(t *testing.T) {
 			FinishReason: kit.FinishReasonStop,
 		},
 	})
-	buildRequest := testBuildRequest()
+	store := entry.NewMemoryStore()
+	buildRequest := testBuildRequestOn(store)
 	contributedTool := kittest.NewTool(t, "search", "Search for information")
 
 	type contextKey struct{}
@@ -275,8 +221,8 @@ func TestFactoryBuildAppliesContributions(t *testing.T) {
 			t.Fatalf("context value = %v, want %v", got, want)
 		}
 
-		if build.Request.Memory != buildRequest.Memory || build.Request.Entries != buildRequest.Entries || build.Request.Events != buildRequest.Events {
-			t.Fatal("BuildContext does not contain the supplied history capabilities")
+		if build.Request.History != buildRequest.History {
+			t.Fatal("BuildContext does not contain the supplied history")
 		}
 
 		if got, want := build.Request.SessionID, "session-1"; got != want {
@@ -295,22 +241,12 @@ func TestFactoryBuildAppliesContributions(t *testing.T) {
 			Source:       "contributor",
 			Instructions: []string{"Use tools when useful."},
 			Tools:        []kit.Tool{contributedTool},
-			Options: []adkagent.Option{
-				adkagent.WithTemperature(0.5),
-				adkagent.WithOnTurnStart(func(run *kit.RunContext) error {
-					if run.Memory != build.Request.Memory {
-						t.Fatal("agent did not use the supplied memory")
-					}
-
-					return nil
-				}),
-			},
+			Options:      []adkagent.Option{adkagent.WithTemperature(0.5)},
 		}, nil
 	})
 	factory := New(
 		kit.AgentConfig{},
 		staticModelResolver{model},
-		WithInstructions("Be concise."),
 		WithContributors(contributor),
 	)
 
@@ -325,7 +261,7 @@ func TestFactoryBuildAppliesContributions(t *testing.T) {
 	}
 
 	request := model.CallAt(0)
-	if got, want := request.Instructions, "Be concise.\n\n# contributor\n\nUse tools when useful."; got != want {
+	if got, want := request.Instructions, "# contributor\n\nUse tools when useful."; got != want {
 		t.Fatalf("Instructions = %q, want %q", got, want)
 	}
 
@@ -335,6 +271,17 @@ func TestFactoryBuildAppliesContributions(t *testing.T) {
 
 	if request.Config.Temperature == nil || *request.Config.Temperature != 0.5 {
 		t.Fatalf("Temperature = %v, want 0.5", request.Config.Temperature)
+	}
+
+	recorded, err := store.List(context.Background(), buildRequest.SessionID, 0)
+	if err != nil || len(recorded) != 2 {
+		t.Fatalf("recorded entries = %+v, error = %v, want input and response", recorded, err)
+	}
+
+	for _, value := range recorded {
+		if value.Type != MessageEntryType || value.ExecutionID != buildRequest.ExecutionID {
+			t.Fatalf("agent did not append to the session history: %+v", value)
+		}
 	}
 }
 
@@ -352,8 +299,7 @@ func TestFactoryBuildReturnsContributorError(t *testing.T) {
 		),
 	)
 
-	_, err := factory.Build(context.Background(), testBuildRequest())
-	if !errors.Is(err, wantErr) {
+	if _, err := factory.Build(context.Background(), testBuildRequest()); !errors.Is(err, wantErr) {
 		t.Fatalf("Build() error = %v, want %v", err, wantErr)
 	}
 }
@@ -369,13 +315,10 @@ func TestFactoryAppliesToolMiddleware(t *testing.T) {
 	factory := New(
 		kit.AgentConfig{},
 		staticModelResolver{kittest.NewModel(t)},
-		WithTools(base),
-		WithContributors(ContributorFunc(func(
-			context.Context,
-			BuildContext,
-		) (Contribution, error) {
-			return Contribution{Tools: []kit.Tool{contributed}}, nil
-		})),
+		WithContributors(
+			contribute(Contribution{Tools: []kit.Tool{base}}),
+			contribute(Contribution{Tools: []kit.Tool{contributed}}),
+		),
 		WithToolMiddleware(func(_ BuildContext, tool kit.Tool) (kit.Tool, error) {
 			wrapped = append(wrapped, tool.Definition().Name)
 
@@ -393,7 +336,7 @@ func TestFactoryAppliesToolMiddleware(t *testing.T) {
 	}
 }
 
-func TestFactoryContextHooksInspectPreparedTools(t *testing.T) {
+func TestFactoryUsesPreparedTools(t *testing.T) {
 	t.Parallel()
 
 	call := kit.NewToolCall("call-1", "selected", nil)
@@ -405,11 +348,10 @@ func TestFactoryContextHooksInspectPreparedTools(t *testing.T) {
 			Message: kit.NewModelMessage(kit.NewTextContent("done")), FinishReason: kit.FinishReasonStop,
 		}},
 	)
-	base := kittest.NewTool(t, "base", "Base tool")
 	selected := kittest.NewTool(t, "selected", "Selected tool")
 	prepared := kittest.NewTool(t, "selected", "Prepared tool", kittest.ToolResult{Result: "prepared output"})
 	factory := New(kit.AgentConfig{}, staticModelResolver{model},
-		WithTools(selected),
+		WithContributors(contribute(Contribution{Tools: []kit.Tool{selected}})),
 		WithToolMiddleware(func(build BuildContext, tool kit.Tool) (kit.Tool, error) {
 			if build.Request.ExecutionID != "execution-1" || tool != selected {
 				t.Fatalf("unexpected preparation: execution=%q, tool=%v", build.Request.ExecutionID, tool)
@@ -417,29 +359,17 @@ func TestFactoryContextHooksInspectPreparedTools(t *testing.T) {
 
 			return prepared, nil
 		}),
-		WithAgentOptions(adkagent.WithOnContext(func(_ context.Context, current kit.AgentContext) (kit.AgentContext, error) {
-			if len(current.Tools) != 1 || current.Tools[0] != prepared {
-				t.Fatalf("context hook tools = %v, want prepared tool", current.Tools)
-			}
-
-			current.Tools[0] = base
-
-			return current, nil
-		})),
 	)
+
+	preview := inspect(t, factory, testBuildRequest())
+
+	if len(preview.Tools) != 1 || preview.Tools[0] != prepared {
+		t.Fatalf("preview tools = %v, want prepared tool", preview.Tools)
+	}
 
 	built, err := factory.Build(context.Background(), testBuildRequest())
 	if err != nil {
 		t.Fatal(err)
-	}
-
-	preview, err := built.Context(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if len(preview.Tools) != 1 || preview.Tools[0] != prepared {
-		t.Fatalf("preview tools = %v, want prepared tool", preview.Tools)
 	}
 
 	if _, err := built.Run(context.Background(), kit.NewUserMessage(kit.NewTextContent("use selected"))); err != nil {
@@ -452,7 +382,6 @@ func TestFactoryContextHooksInspectPreparedTools(t *testing.T) {
 
 	prepared.AssertCallCount(t, 1)
 	selected.AssertNeverCalled(t)
-	base.AssertNeverCalled(t)
 }
 
 func TestFactoryToolMiddlewareFailureStopsBuild(t *testing.T) {
@@ -461,7 +390,7 @@ func TestFactoryToolMiddlewareFailureStopsBuild(t *testing.T) {
 	failure := errors.New("cannot prepare tool")
 	model := kittest.NewModel(t)
 	factory := New(kit.AgentConfig{}, staticModelResolver{model},
-		WithTools(kittest.NewTool(t, "lookup", "")),
+		WithContributors(contribute(Contribution{Tools: []kit.Tool{kittest.NewTool(t, "lookup", "")}})),
 		WithToolMiddleware(func(BuildContext, kit.Tool) (kit.Tool, error) {
 			return nil, failure
 		}),
@@ -474,6 +403,28 @@ func TestFactoryToolMiddlewareFailureStopsBuild(t *testing.T) {
 	model.AssertNeverCalled(t)
 }
 
+func contribute(contribution Contribution) Contributor {
+	return ContributorFunc(func(context.Context, BuildContext) (Contribution, error) {
+		return contribution, nil
+	})
+}
+
+func inspect(t *testing.T, factory *Factory, request BuildRequest) kit.AgentContext {
+	t.Helper()
+
+	built, err := factory.Build(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	inspected, err := built.Context(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return inspected
+}
+
 type staticModelResolver struct {
 	model kit.Model
 }
@@ -483,14 +434,13 @@ func (r staticModelResolver) Resolve(context.Context) (kit.Model, error) {
 }
 
 func testBuildRequest() BuildRequest {
-	store := entry.NewMemoryStore()
-	events := event.NewBus("session-1", store)
+	return testBuildRequestOn(entry.NewMemoryStore())
+}
 
+func testBuildRequestOn(store entry.Store) BuildRequest {
 	return BuildRequest{
 		SessionID:   "session-1",
 		ExecutionID: "execution-1",
-		Memory:      NewMemory("session-1", "execution-1", store, events),
-		Entries:     store,
-		Events:      events,
+		History:     NewHistory("session-1", "execution-1", store, event.NewBus("session-1", store)),
 	}
 }

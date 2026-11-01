@@ -32,31 +32,31 @@ func TestContextInspectsEffectiveInputsWithoutExecution(t *testing.T) {
 
 	model := kittest.NewModel(t)
 	tool := kittest.NewTool(t, "lookup", "Search for information")
-	h := harness.New(storage,
-		harness.WithModel(contextModelResolver{model}),
-		harness.WithAgentConfig(kit.AgentConfig{},
-			agent.WithInstructions("Be concise."),
-			agent.WithTools(tool),
-			agent.WithToolMiddleware(tools.Timeout(tools.Config{Timeout: time.Second, MaxTimeout: time.Minute})),
-			agent.WithContributors(agent.ContributorFunc(func(_ context.Context, build agent.BuildContext) (agent.Contribution, error) {
-				if build.Request.ExecutionID != "" {
-					t.Fatalf("inspection created an execution ID: %q", build.Request.ExecutionID)
-				}
+	agents := agent.New(kit.AgentConfig{Instructions: "Be concise."}, contextModelResolver{model},
+		agent.WithToolMiddleware(tools.Timeout(tools.Config{Timeout: time.Second, MaxTimeout: time.Minute})),
+		agent.WithContributors(agent.ContributorFunc(func(_ context.Context, build agent.BuildContext) (agent.Contribution, error) {
+			if build.Request.ExecutionID != "" {
+				t.Fatalf("inspection created an execution ID: %q", build.Request.ExecutionID)
+			}
 
-				return agent.Contribution{
-					Source: "Session Instructions", Instructions: []string{"Follow local guidance."},
-					Options: []adkagent.Option{adkagent.WithOnModelRequestReady(func(*kit.RunContext, kit.ModelRequest) (bool, error) {
+			return agent.Contribution{
+				Source:       "Session Instructions",
+				Instructions: []string{"Follow local guidance."},
+				Tools:        []kit.Tool{tool},
+				Options: []adkagent.Option{
+					adkagent.WithOnModelRequestReady(func(*kit.RunContext, kit.ModelRequest) (bool, error) {
 						t.Fatal("inspection ran automatic compaction hooks")
 
 						return false, nil
-					})},
-				}, nil
-			})),
-		),
+					}),
+				},
+			}, nil
+		})),
 	)
+	h := harness.New(storage, harness.WithExecutor(agent.ExecutorName, agent.NewExecutor(agents)))
 	t.Cleanup(func() { _ = h.Shutdown(ctx) })
 
-	app := New(h, storage.SessionStore(), fixedEstimator(23))
+	app := New(h, storage, agents, fixedEstimator(23))
 	if _, err := app.Context(ctx, ""); !errors.Is(err, ErrSessionRequired) {
 		t.Fatalf("Context without a session: %v", err)
 	}
