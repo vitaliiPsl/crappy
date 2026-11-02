@@ -53,6 +53,9 @@ func TestHistoryMessagesProjectsLatestCompaction(t *testing.T) {
 	summary := compaction.Compaction{Summary: compaction.Summary{Objective: "summary"}}.Message()
 	newSummary := compaction.Compaction{Summary: compaction.Summary{Objective: "new summary"}}.Message()
 	later := kit.NewUserMessage(kit.NewTextContent("later"))
+	unmeasured := kit.NewModelMessage(kit.NewTextContent("measured"))
+	measured := unmeasured
+	measured.Usage = kit.Usage{InputTokens: 40, OutputTokens: 4}
 
 	tests := []struct {
 		name    string
@@ -63,6 +66,7 @@ func TestHistoryMessagesProjectsLatestCompaction(t *testing.T) {
 		{"summary and retained tail", []entry.Entry{messageEntry(t, first), messageEntry(t, retained), compactionEntry(t, "summary", retained), messageEntry(t, later)}, []kit.Message{summary, retained, later}},
 		{"latest compaction", []entry.Entry{messageEntry(t, first), compactionEntry(t, "summary"), messageEntry(t, later), compactionEntry(t, "new summary", later)}, []kit.Message{newSummary, later}},
 		{"no retained messages", []entry.Entry{messageEntry(t, first), compactionEntry(t, "summary"), messageEntry(t, later)}, []kit.Message{summary, later}},
+		{"retained usage dropped", []entry.Entry{messageEntry(t, measured), compactionEntry(t, "summary", measured), messageEntry(t, measured)}, []kit.Message{summary, unmeasured, measured}},
 		{"metadata has no effect", []entry.Entry{messageEntry(t, first), {Type: "execution.finished", Payload: json.RawMessage(`{}`)}}, []kit.Message{first}},
 	}
 	for _, test := range tests {
@@ -206,15 +210,22 @@ func TestHistoryCompactCommitsCompactionForExecution(t *testing.T) {
 	}})
 	history := NewHistory("session", "execution", store, bus)
 
-	generated, compacted, err := history.Compact(ctx, newCompactor(t, model))
-	if err != nil || !compacted || generated.Usage != usage {
-		t.Fatalf("Compact() = %+v, %v, error = %v", generated, compacted, err)
+	if compacted, err := history.Compact(ctx, newCompactor(t, model)); err != nil || !compacted {
+		t.Fatalf("Compact() = %v, error = %v", compacted, err)
 	}
 
 	for _, want := range []string{compaction.StartedEventType, compaction.EntryType} {
-		if received := receiveEvent(t, subscription); received.Type != want || received.ExecutionID != "execution" {
+		received := receiveEvent(t, subscription)
+		if received.Type != want || received.ExecutionID != "execution" {
 			t.Fatalf("event = %+v, want %s from execution", received, want)
 		}
+	}
+
+	var generated compaction.Compaction
+
+	stored, found, err := store.Latest(ctx, "session", compaction.EntryType)
+	if err != nil || !found || json.Unmarshal(stored.Payload, &generated) != nil || generated.Usage != usage {
+		t.Fatalf("compaction entry = %+v, found = %v, error = %v, want usage %+v", stored, found, err, usage)
 	}
 
 	messages, err := history.Messages(ctx)
@@ -235,9 +246,9 @@ func TestHistoryCompactSkipsEmptyHistory(t *testing.T) {
 	model := kittest.NewModel(t)
 	store := entry.NewMemoryStore()
 
-	generated, compacted, err := NewHistory("session", "execution", store, event.NewBus("session", store)).Compact(ctx, newCompactor(t, model))
-	if err != nil || compacted || !reflect.DeepEqual(generated, compaction.Compaction{}) {
-		t.Fatalf("Compact() = %+v, %v, error = %v", generated, compacted, err)
+	compacted, err := NewHistory("session", "execution", store, event.NewBus("session", store)).Compact(ctx, newCompactor(t, model))
+	if err != nil || compacted {
+		t.Fatalf("Compact() = %v, error = %v", compacted, err)
 	}
 
 	if stored, err := store.List(ctx, "session", 0); err != nil || len(stored) != 0 {
@@ -247,7 +258,7 @@ func TestHistoryCompactSkipsEmptyHistory(t *testing.T) {
 	model.AssertNeverCalled(t)
 }
 
-func TestHistoryCompactKeepsHistoryAndUsageOnFailure(t *testing.T) {
+func TestHistoryCompactKeepsHistoryOnFailure(t *testing.T) {
 	t.Parallel()
 
 	for _, failCommit := range []bool{false, true} {
@@ -277,9 +288,8 @@ func TestHistoryCompactKeepsHistoryAndUsageOnFailure(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			generated, compacted, err := history.Compact(ctx, newCompactor(t, model))
-			if err == nil || compacted || generated.Usage != usage {
-				t.Fatalf("Compact() = %+v, %v, error = %v", generated, compacted, err)
+			if compacted, err := history.Compact(ctx, newCompactor(t, model)); err == nil || compacted {
+				t.Fatalf("Compact() = %v, error = %v", compacted, err)
 			}
 
 			if _, found, err := store.Latest(ctx, "session", compaction.EntryType); err != nil || found {

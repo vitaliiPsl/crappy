@@ -191,7 +191,7 @@ func TestExecutorRepairsToolHistoryBeforeBuilding(t *testing.T) {
 	)))
 
 	params := execution.ExecuteParams{SessionID: "session-1", ExecutionID: "next", Input: agentInput(t, "continue"), Entries: store, Events: bus}
-	if _, err := configured.Execute(context.Background(), params); !errors.Is(err, store.failure) {
+	if err := configured.Execute(context.Background(), params); !errors.Is(err, store.failure) {
 		t.Fatalf("failed history repair = %v", err)
 	}
 
@@ -201,7 +201,7 @@ func TestExecutorRepairsToolHistoryBeforeBuilding(t *testing.T) {
 
 	store.failingType = ""
 
-	if _, err := configured.Execute(context.Background(), params); err != nil {
+	if err := configured.Execute(context.Background(), params); err != nil {
 		t.Fatal(err)
 	}
 
@@ -249,7 +249,7 @@ func TestExecutorContinuesConversationAcrossExecutions(t *testing.T) {
 	executionIDs := []string{"execution-1", "execution-2"}
 	for i, input := range []string{"first input", "second input"} {
 		params := execution.ExecuteParams{SessionID: "session-1", ExecutionID: executionIDs[i], Input: agentInput(t, input), Entries: store, Events: bus}
-		if _, err := executor.Execute(context.Background(), params); err != nil {
+		if err := executor.Execute(context.Background(), params); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -264,29 +264,20 @@ func TestExecutorContinuesConversationAcrossExecutions(t *testing.T) {
 	}
 
 	entries, err := store.List(context.Background(), "session-1", 0)
-	if err != nil || len(entries) != 6 {
-		t.Fatalf("entries = %+v, error = %v, want three per execution", entries, err)
+	if err != nil || len(entries) != 4 {
+		t.Fatalf("entries = %+v, error = %v, want input and response per execution", entries, err)
 	}
 
 	for i, value := range entries {
-		wantType := MessageEntryType
-		if i%3 == 2 {
-			wantType = FinishedEntryType
-		}
-
-		if value.Type != wantType || value.ExecutionID != executionIDs[i/3] {
-			t.Fatalf("entry %d = %+v, want %s from %s", i, value, wantType, executionIDs[i/3])
+		if value.Type != MessageEntryType || value.ExecutionID != executionIDs[i/2] {
+			t.Fatalf("entry %d = %+v, want message from %s", i, value, executionIDs[i/2])
 		}
 	}
 
-	for i, value := range []entry.Entry{entries[2], entries[5]} {
-		var finished Finished
-		if err := json.Unmarshal(value.Payload, &finished); err != nil {
-			t.Fatal(err)
-		}
-
-		if finished.Usage != usages[i] {
-			t.Fatalf("%s usage = %+v, want %+v", executionIDs[i], finished.Usage, usages[i])
+	for i, value := range []entry.Entry{entries[1], entries[3]} {
+		var response kit.Message
+		if err := json.Unmarshal(value.Payload, &response); err != nil || response.Usage != usages[i] {
+			t.Fatalf("%s response = %s, error = %v, want usage %+v", executionIDs[i], value.Payload, err, usages[i])
 		}
 	}
 }
@@ -312,11 +303,11 @@ func TestExecutorPublishesAgentEvents(t *testing.T) {
 	t.Cleanup(subscription.Close)
 
 	params := execution.ExecuteParams{SessionID: "session-1", ExecutionID: "execution-1", Input: agentInput(t, "hi"), Entries: store, Events: bus}
-	if _, err := NewExecutor(New(kit.AgentConfig{}, staticModelResolver{model})).Execute(context.Background(), params); err != nil {
+	if err := NewExecutor(New(kit.AgentConfig{}, staticModelResolver{model})).Execute(context.Background(), params); err != nil {
 		t.Fatal(err)
 	}
 
-	for i, wantType := range []string{MessageEntryType, EventType, MessageEntryType, EventType, FinishedEntryType} {
+	for i, wantType := range []string{MessageEntryType, EventType, MessageEntryType, EventType} {
 		received := receiveEvent(t, subscription)
 		if received.Type != wantType || received.ExecutionID != "execution-1" {
 			t.Fatalf("event %d = %+v, want %s from execution-1", i, received, wantType)

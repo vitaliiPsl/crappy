@@ -19,8 +19,8 @@ import (
 func TestExecuteRecordsEachExecutionSeparately(t *testing.T) {
 	t.Parallel()
 
-	executor := execution.Func(func(ctx context.Context, params execution.ExecuteParams) (any, error) {
-		return nil, params.Events.Commit(ctx, params.ExecutionID, "work.output", params.Input)
+	executor := execution.Func(func(ctx context.Context, params execution.ExecuteParams) error {
+		return params.Events.Commit(ctx, params.ExecutionID, "work.output", params.Input)
 	})
 	session := newExecutorSession(context.Background(), t, "session-1", entry.NewMemoryStore(), "work", executor)
 
@@ -87,8 +87,8 @@ func TestExecuteRecordsFailure(t *testing.T) {
 	t.Parallel()
 
 	wantErr := errors.New("work failed")
-	executor := execution.Func(func(context.Context, execution.ExecuteParams) (any, error) {
-		return nil, wantErr
+	executor := execution.Func(func(context.Context, execution.ExecuteParams) error {
+		return wantErr
 	})
 	session := newExecutorSession(context.Background(), t, "session-1", entry.NewMemoryStore(), "work", executor)
 
@@ -109,13 +109,13 @@ func TestExecuteRecordsFailure(t *testing.T) {
 		t.Fatalf("last entry = %#v, want finished execution %q", last, current.ID())
 	}
 
-	var finished execution.Result
+	var finished execution.Finished
 	if err := json.Unmarshal(last.Payload, &finished); err != nil {
 		t.Fatalf("decode finished execution: %v", err)
 	}
 
-	if got, want := finished.Outcome, execution.Failed; got != want {
-		t.Fatalf("execution outcome = %q, want %q", got, want)
+	if got, want := finished.Status, execution.Failed; got != want {
+		t.Fatalf("execution status = %q, want %q", got, want)
 	}
 
 	if got, want := finished.Error, wantErr.Error(); got != want {
@@ -151,13 +151,13 @@ func TestCancelActiveExecution(t *testing.T) {
 		t.Fatalf("Entries() error = %v", err)
 	}
 
-	var finished execution.Result
+	var finished execution.Finished
 	if err := json.Unmarshal(entries[len(entries)-1].Payload, &finished); err != nil {
 		t.Fatalf("decode finished execution: %v", err)
 	}
 
-	if got, want := finished.Outcome, execution.Cancelled; got != want {
-		t.Fatalf("execution outcome = %q, want %q", got, want)
+	if got, want := finished.Status, execution.Cancelled; got != want {
+		t.Fatalf("execution status = %q, want %q", got, want)
 	}
 
 	if err := session.Cancel(context.Background(), current.ID()); !errors.Is(err, ErrExecutionNotActive) {
@@ -186,13 +186,13 @@ func TestSessionLifetimeCancelsActiveExecution(t *testing.T) {
 		t.Fatalf("Entries() error = %v", err)
 	}
 
-	var finished execution.Result
+	var finished execution.Finished
 	if err := json.Unmarshal(entries[len(entries)-1].Payload, &finished); err != nil {
 		t.Fatalf("decode finished execution: %v", err)
 	}
 
-	if finished.Outcome != execution.Cancelled {
-		t.Fatalf("execution outcome = %q, want %q", finished.Outcome, execution.Cancelled)
+	if finished.Status != execution.Cancelled {
+		t.Fatalf("execution status = %q, want %q", finished.Status, execution.Cancelled)
 	}
 }
 
@@ -203,12 +203,12 @@ func TestFunctionExecutionUsesSessionLifetimeAndDetachedInput(t *testing.T) {
 	release := make(chan struct{})
 	store := entry.NewMemoryStore()
 
-	executor := execution.Func(func(ctx context.Context, params execution.ExecuteParams) (any, error) {
+	executor := execution.Func(func(ctx context.Context, params execution.ExecuteParams) error {
 		started <- params
 
 		<-release
 
-		return nil, params.Events.Commit(ctx, params.ExecutionID, "function.output", params.Input)
+		return params.Events.Commit(ctx, params.ExecutionID, "function.output", params.Input)
 	})
 
 	session := newExecutorSession(context.Background(), t, "session-1", store, "function", executor)
@@ -256,12 +256,12 @@ func TestFunctionExecutionUsesSessionLifetimeAndDetachedInput(t *testing.T) {
 		t.Fatalf("mutated request = %+v", startedEntry)
 	}
 
-	var finished execution.Result
+	var finished execution.Finished
 	if err := json.Unmarshal(entries[2].Payload, &finished); err != nil {
 		t.Fatal(err)
 	}
 
-	if finished.Outcome != execution.Completed {
+	if finished.Status != execution.Completed {
 		t.Fatalf("client cancellation affected invocation: %+v", finished)
 	}
 }
@@ -269,10 +269,10 @@ func TestFunctionExecutionUsesSessionLifetimeAndDetachedInput(t *testing.T) {
 func TestExecuteValidatesBeforeRecording(t *testing.T) {
 	t.Parallel()
 
-	executor := execution.Func(func(context.Context, execution.ExecuteParams) (any, error) {
+	executor := execution.Func(func(context.Context, execution.ExecuteParams) error {
 		t.Error("invalid request reached executor")
 
-		return nil, nil
+		return nil
 	})
 
 	session := newExecutorSession(context.Background(), t, "session-1", entry.NewMemoryStore(), "work", executor)
@@ -301,19 +301,19 @@ func TestExecuteValidatesBeforeRecording(t *testing.T) {
 	}
 }
 
-func TestExecutionWaitReturnsDurableOutputToIndependentClients(t *testing.T) {
+func TestExecutionWaitReturnsDurableFinishToIndependentClients(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	release := make(chan struct{})
-	executor := execution.Func(func(ctx context.Context, _ execution.ExecuteParams) (any, error) {
+	executor := execution.Func(func(ctx context.Context, _ execution.ExecuteParams) error {
 		select {
 		case <-release:
-			return map[string]int{"value": 42}, nil
+			return nil
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return ctx.Err()
 		}
 	})
 
@@ -346,23 +346,18 @@ func TestExecutionWaitReturnsDurableOutputToIndependentClients(t *testing.T) {
 	var clients sync.WaitGroup
 	for range 16 {
 		clients.Go(func() {
-			result, err := attached.Wait(ctx)
-			if err != nil || result.Outcome != execution.Completed || string(result.Output) != `{"value":42}` {
-				t.Errorf("client result = %+v, %v", result, err)
-
-				return
+			if finished, err := attached.Wait(ctx); err != nil || finished.Status != execution.Completed {
+				t.Errorf("client finish = %+v, %v", finished, err)
 			}
-
-			result.Output[0] = 'x'
 		})
 	}
 
 	close(release)
 	clients.Wait()
 
-	result, err := current.Wait(ctx)
-	if err != nil || string(result.Output) != `{"value":42}` || result.EndedAt.IsZero() {
-		t.Fatalf("result was changed by a client: %+v, %v", result, err)
+	finished, err := current.Wait(ctx)
+	if err != nil || finished.EndedAt.IsZero() {
+		t.Fatalf("finish = %+v, %v", finished, err)
 	}
 
 	entries, err := session.Entries(ctx, 0)
@@ -370,37 +365,35 @@ func TestExecutionWaitReturnsDurableOutputToIndependentClients(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var stored execution.Result
+	var stored execution.Finished
 	if err := json.Unmarshal(entries[len(entries)-1].Payload, &stored); err != nil {
 		t.Fatal(err)
 	}
 
-	if stored.Outcome != result.Outcome || string(stored.Output) != string(result.Output) || !stored.EndedAt.Equal(result.EndedAt) {
-		t.Fatalf("returned result differs from persisted result: %+v, %+v", result, stored)
+	if stored.Status != finished.Status || !stored.EndedAt.Equal(finished.EndedAt) {
+		t.Fatalf("returned finish differs from persisted finish: %+v, %+v", finished, stored)
 	}
 }
 
-func TestExecutionResultSeparatesWorkFailuresFromWaitErrors(t *testing.T) {
+func TestExecutionFinishSeparatesWorkFailuresFromWaitErrors(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
 		name    string
-		output  any
 		err     error
-		outcome execution.Status
+		status  execution.Status
 		failure string
 	}{
-		{name: "completed", output: "done", outcome: execution.Completed},
-		{name: "failed with output", output: "partial", err: errors.New("work failed"), outcome: execution.Failed, failure: "work failed"},
-		{name: "cancelled", err: context.Canceled, outcome: execution.Cancelled},
-		{name: "invalid output", output: make(chan int), outcome: execution.Failed, failure: "encode execution output"},
+		{name: "completed", status: execution.Completed},
+		{name: "failed", err: errors.New("work failed"), status: execution.Failed, failure: "work failed"},
+		{name: "cancelled", err: context.Canceled, status: execution.Cancelled},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			executor := execution.Func(func(context.Context, execution.ExecuteParams) (any, error) {
-				return test.output, test.err
+			executor := execution.Func(func(context.Context, execution.ExecuteParams) error {
+				return test.err
 			})
 
 			session := newExecutorSession(ctx, t, "session-1", entry.NewMemoryStore(), "work", executor)
@@ -411,16 +404,9 @@ func TestExecutionResultSeparatesWorkFailuresFromWaitErrors(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			result, err := current.Wait(ctx)
-			if err != nil || result.Outcome != test.outcome || !strings.Contains(result.Error, test.failure) {
-				t.Fatalf("execution result = %+v, wait error = %v", result, err)
-			}
-
-			if output, ok := test.output.(string); ok {
-				var actual string
-				if err := json.Unmarshal(result.Output, &actual); err != nil || actual != output {
-					t.Fatalf("execution output = %s, %v", result.Output, err)
-				}
+			finished, err := current.Wait(ctx)
+			if err != nil || finished.Status != test.status || !strings.Contains(finished.Error, test.failure) {
+				t.Fatalf("execution finish = %+v, wait error = %v", finished, err)
 			}
 		})
 	}
@@ -437,10 +423,10 @@ func TestExecutionLookupDoesNotRetryPersistence(t *testing.T) {
 
 	var calls atomic.Int32
 
-	executor := execution.Func(func(context.Context, execution.ExecuteParams) (any, error) {
+	executor := execution.Func(func(context.Context, execution.ExecuteParams) error {
 		calls.Add(1)
 
-		return map[string]int{"value": 42}, errors.New("work failed")
+		return errors.New("work failed")
 	})
 
 	session := newExecutorSession(ctx, t, "session-1", store, "work", executor)
@@ -497,8 +483,8 @@ func TestExecutionDoneWaitsForPersistence(t *testing.T) {
 	}
 	release := sync.OnceFunc(func() { close(store.release) })
 
-	executor := execution.Func(func(context.Context, execution.ExecuteParams) (any, error) {
-		return "done", nil
+	executor := execution.Func(func(context.Context, execution.ExecuteParams) error {
+		return nil
 	})
 
 	session := newExecutorSession(ctx, t, "session-1", store, "work", executor)
@@ -531,7 +517,7 @@ func TestExecutionDoneWaitsForPersistence(t *testing.T) {
 
 	release()
 
-	if result, err := current.Wait(ctx); err != nil || result.Outcome != execution.Completed {
+	if result, err := current.Wait(ctx); err != nil || result.Status != execution.Completed {
 		t.Fatalf("durable completion = %+v, %v", result, err)
 	}
 }
@@ -547,7 +533,7 @@ func TestExecutionLookupLeavesUnfinishedHistoryUntouched(t *testing.T) {
 
 	if _, err := store.Append(ctx, "session-1",
 		entry.Entry{ExecutionID: "old", Type: execution.StartedEntryType, Payload: json.RawMessage(`{}`)},
-		entry.Entry{ExecutionID: "old", Type: execution.FinishedEntryType, Payload: json.RawMessage(`{"outcome":"completed"}`)},
+		entry.Entry{ExecutionID: "old", Type: execution.FinishedEntryType, Payload: json.RawMessage(`{"status":"completed"}`)},
 		entry.Entry{ExecutionID: "unfinished", Type: execution.StartedEntryType, Payload: json.RawMessage(`{}`)},
 	); err != nil {
 		t.Fatal(err)
@@ -567,9 +553,9 @@ func TestExecutionLookupLeavesUnfinishedHistoryUntouched(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		result, err := old.Wait(ctx)
-		if err != nil || result.Outcome != execution.Completed || len(result.Output) != 0 {
-			t.Fatalf("legacy result = %+v, %v", result, err)
+		finished, err := old.Wait(ctx)
+		if err != nil || finished.Status != execution.Completed {
+			t.Fatalf("old execution finish = %+v, %v", finished, err)
 		}
 
 		entries, err := session.Entries(ctx, 0)
@@ -592,10 +578,10 @@ func TestExecuteRejectsAfterTerminalPersistenceFailure(t *testing.T) {
 
 			var calls atomic.Int32
 
-			executor := execution.Func(func(context.Context, execution.ExecuteParams) (any, error) {
+			executor := execution.Func(func(context.Context, execution.ExecuteParams) error {
 				calls.Add(1)
 
-				return nil, runErr
+				return runErr
 			})
 
 			session := newExecutorSession(context.Background(), t, "session-1", store, "work", executor)
@@ -646,7 +632,7 @@ func TestExecuteDoesNotReloadExecutionState(t *testing.T) {
 	store := newFinishFailingStore(nil)
 
 	session := newExecutorSession(ctx, t, "session-1", store, "work", execution.Func(
-		func(context.Context, execution.ExecuteParams) (any, error) { return nil, nil },
+		func(context.Context, execution.ExecuteParams) error { return nil },
 	))
 	defer session.Close()
 
@@ -671,7 +657,7 @@ func TestExecuteDoesNotReloadExecutionState(t *testing.T) {
 	}
 }
 
-func TestExecutionRetainsResultWhenFinishCannotBeCommitted(t *testing.T) {
+func TestExecutionRetainsFinishWhenItCannotBeCommitted(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -679,10 +665,10 @@ func TestExecutionRetainsResultWhenFinishCannotBeCommitted(t *testing.T) {
 	opened := newSession(ctx, t, "session", entry.NewMemoryStore(), registry)
 
 	workErr := errors.New("work failed")
-	registry.Register("work", execution.Func(func(context.Context, execution.ExecuteParams) (any, error) {
+	registry.Register("work", execution.Func(func(context.Context, execution.ExecuteParams) error {
 		opened.events.Close()
 
-		return map[string]int{"value": 42}, workErr
+		return workErr
 	}))
 
 	current, err := opened.Execute(ctx, execution.Request{Executor: "work"})
@@ -694,9 +680,7 @@ func TestExecutionRetainsResultWhenFinishCannotBeCommitted(t *testing.T) {
 		t.Fatalf("finish error = %v", err)
 	}
 
-	current.mu.RLock()
-	original := *current.result
-	current.mu.RUnlock()
+	original := current.finished
 
 	for range 3 {
 		if _, err := opened.Execution(ctx, current.ID()); !errors.Is(err, ErrExecutionUnfinished) {
@@ -708,13 +692,9 @@ func TestExecutionRetainsResultWhenFinishCannotBeCommitted(t *testing.T) {
 		}
 	}
 
-	current.mu.RLock()
-	retained := *current.result
-	current.mu.RUnlock()
-
-	if retained.Outcome != execution.Failed || retained.Error != workErr.Error() ||
-		!retained.EndedAt.Equal(original.EndedAt) || string(retained.Output) != `{"value":42}` {
-		t.Fatalf("execution result changed after failed commit: %+v", retained)
+	if retained := current.finished; retained.Status != execution.Failed || retained.Error != workErr.Error() ||
+		!retained.EndedAt.Equal(original.EndedAt) {
+		t.Fatalf("execution finish changed after failed commit: %+v", retained)
 	}
 }
 
@@ -737,14 +717,14 @@ func newBlockingExecutor() *blockingExecutor {
 	return &blockingExecutor{started: make(chan struct{}), release: make(chan struct{})}
 }
 
-func (e *blockingExecutor) Execute(ctx context.Context, _ execution.ExecuteParams) (any, error) {
+func (e *blockingExecutor) Execute(ctx context.Context, _ execution.ExecuteParams) error {
 	close(e.started)
 
 	select {
 	case <-e.release:
-		return nil, nil
+		return nil
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return ctx.Err()
 	}
 }
 

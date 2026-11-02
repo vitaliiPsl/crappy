@@ -55,30 +55,30 @@ func (h *History) Append(ctx context.Context, messages ...kit.Message) error {
 }
 
 // Compact reports false, without calling the compactor, when there is nothing to compact.
-func (h *History) Compact(ctx context.Context, compactor *compaction.Compactor) (compaction.Compaction, bool, error) {
+func (h *History) Compact(ctx context.Context, compactor *compaction.Compactor) (bool, error) {
 	previous, messages, err := h.uncompacted(ctx)
 	if err != nil {
-		return compaction.Compaction{}, false, fmt.Errorf("read history: %w", err)
+		return false, fmt.Errorf("read history: %w", err)
 	}
 
 	if previous == nil && len(messages) == 0 {
-		return compaction.Compaction{}, false, nil
+		return false, nil
 	}
 
 	if err := h.events.Emit(ctx, h.executionID, compaction.StartedEventType, nil); err != nil {
-		return compaction.Compaction{}, false, fmt.Errorf("start compaction: %w", err)
+		return false, fmt.Errorf("start compaction: %w", err)
 	}
 
 	generated, err := compactor.Compact(ctx, previous, messages)
 	if err != nil {
-		return generated, false, err
+		return false, err
 	}
 
 	if err := h.events.Commit(ctx, h.executionID, compaction.EntryType, generated); err != nil {
-		return generated, false, fmt.Errorf("commit compaction: %w", err)
+		return false, fmt.Errorf("commit compaction: %w", err)
 	}
 
-	return generated, true, nil
+	return true, nil
 }
 
 func (h *History) uncompacted(ctx context.Context) (*compaction.Compaction, []kit.Message, error) {
@@ -99,7 +99,12 @@ func (h *History) uncompacted(ctx context.Context) (*compaction.Compaction, []ki
 			return nil, nil, fmt.Errorf("decode compaction entry %d: %w", latest.ID, err)
 		}
 
-		messages = append(messages, previous.Retained...)
+		// Retained usage measured the context that this compaction replaced.
+		for _, message := range previous.Retained {
+			message.Usage = kit.Usage{}
+			messages = append(messages, message)
+		}
+
 		afterID = latest.ID
 	}
 

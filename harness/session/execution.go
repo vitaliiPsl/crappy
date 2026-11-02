@@ -1,12 +1,10 @@
 package session
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,9 +25,8 @@ type Execution struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 
-	mu     sync.RWMutex
-	result *execution.Result
-	err    error
+	finished execution.Finished
+	err      error
 }
 
 func (e *Execution) ID() string {
@@ -40,28 +37,22 @@ func (e *Execution) Done() <-chan struct{} {
 	return e.done
 }
 
-func (e *Execution) Wait(ctx context.Context) (execution.Result, error) {
+func (e *Execution) Wait(ctx context.Context) (execution.Finished, error) {
 	if err := ctx.Err(); err != nil {
-		return execution.Result{}, err
+		return execution.Finished{}, err
 	}
 
 	select {
 	case <-ctx.Done():
-		return execution.Result{}, ctx.Err()
+		return execution.Finished{}, ctx.Err()
 	case <-e.done:
 	}
 
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-
 	if e.err != nil {
-		return execution.Result{}, e.err
+		return execution.Finished{}, e.err
 	}
 
-	result := *e.result
-	result.Output = bytes.Clone(result.Output)
-
-	return result, nil
+	return e.finished, nil
 }
 
 func (s *Session) Execute(ctx context.Context, request execution.Request) (*Execution, error) {
@@ -91,13 +82,11 @@ func (s *Session) Execute(ctx context.Context, request execution.Request) (*Exec
 	}
 
 	id := uuid.NewString()
-	now := time.Now().UTC()
 
 	if err := s.Commit(ctx, id, execution.StartedEntryType, execution.Started{
 		Executor:  request.Executor,
 		Input:     input,
-		CreatedAt: now,
-		StartedAt: now,
+		StartedAt: time.Now().UTC(),
 	}); err != nil {
 		return nil, fmt.Errorf("start execution: %w", err)
 	}
@@ -147,12 +136,12 @@ func (s *Session) Execution(ctx context.Context, id string) (*Execution, error) 
 			continue
 		}
 
-		var result execution.Result
-		if err := json.Unmarshal(value.Payload, &result); err != nil {
-			return nil, fmt.Errorf("decode execution %s result: %w", id, err)
+		var finished execution.Finished
+		if err := json.Unmarshal(value.Payload, &finished); err != nil {
+			return nil, fmt.Errorf("decode execution %s finish: %w", id, err)
 		}
 
-		loaded := &Execution{id: id, done: make(chan struct{}), result: &result}
+		loaded := &Execution{id: id, done: make(chan struct{}), finished: finished}
 		close(loaded.done)
 
 		return loaded, nil
@@ -189,7 +178,7 @@ func (s *Session) Cancel(ctx context.Context, executionID string) error {
 func (s *Session) runExecution(ctx context.Context, executor execution.Executor, current *Execution, input json.RawMessage) {
 	defer current.cancel()
 
-	output, runErr := executor.Execute(ctx, execution.ExecuteParams{
+	runErr := executor.Execute(ctx, execution.ExecuteParams{
 		SessionID:   s.id,
 		ExecutionID: current.id,
 		Input:       input,
@@ -198,46 +187,33 @@ func (s *Session) runExecution(ctx context.Context, executor execution.Executor,
 		Events:      s.events,
 	})
 
-	result := execution.Result{Outcome: execution.Completed}
-
-	if output != nil {
-		var err error
-
-		result.Output, err = json.Marshal(output)
-		if err != nil {
-			runErr = errors.Join(runErr, fmt.Errorf("encode execution output: %w", err))
-		}
-	}
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	runErr = errors.Join(runErr, ctx.Err())
-	result.EndedAt = time.Now().UTC()
+	finished := execution.Finished{Status: execution.Completed, EndedAt: time.Now().UTC()}
 
 	switch {
 	case errors.Is(runErr, context.Canceled):
-		result.Outcome = execution.Cancelled
+		finished.Status = execution.Cancelled
 	case runErr != nil:
-		result.Outcome = execution.Failed
-		result.Error = runErr.Error()
+		finished.Status = execution.Failed
+		finished.Error = runErr.Error()
 	}
 
-	s.finishExecution(context.WithoutCancel(ctx), result)
+	s.finishExecution(context.WithoutCancel(ctx), finished)
 }
 
-func (s *Session) finishExecution(ctx context.Context, result execution.Result) {
+func (s *Session) finishExecution(ctx context.Context, finished execution.Finished) {
 	current := s.current
 
-	err := s.Commit(ctx, current.id, execution.FinishedEntryType, result)
+	err := s.Commit(ctx, current.id, execution.FinishedEntryType, finished)
 	if err != nil {
 		err = fmt.Errorf("finish execution %s: %w", current.id, err)
 	}
 
-	current.mu.Lock()
-	current.result = &result
+	current.finished = finished
 	current.err = err
-	current.mu.Unlock()
 
 	s.current = nil
 	if err != nil {

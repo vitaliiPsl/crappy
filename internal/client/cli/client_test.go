@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -11,6 +12,7 @@ import (
 
 	"github.com/vitaliipsl/crappy/harness"
 	"github.com/vitaliipsl/crappy/harness/agent"
+	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/token"
 	"github.com/vitaliipsl/crappy/internal/assistant"
 	"github.com/vitaliipsl/crappy/internal/storage/jsonl"
@@ -59,6 +61,37 @@ func TestClientRunsSession(t *testing.T) {
 				t.Fatalf("output = %q, want exactly one complete agent response", got)
 			}
 		})
+	}
+}
+
+func TestClientReportsFailedExecution(t *testing.T) {
+	t.Parallel()
+
+	storage, err := jsonl.Open(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	h := harness.New(storage, harness.WithExecutor(agent.ExecutorName,
+		execution.Func(func(context.Context, execution.ExecuteParams) error {
+			return errors.New("model unavailable")
+		})))
+	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
+
+	var output bytes.Buffer
+
+	err = New(
+		assistant.New(h, storage, nil, token.NewCharacterEstimator()),
+		"",
+		strings.NewReader("hi\n"),
+		&output,
+	).Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if got := output.String(); !strings.Contains(got, "error: model unavailable\n") {
+		t.Fatalf("output = %q, want execution error", got)
 	}
 }
 

@@ -7,7 +7,6 @@ import (
 
 	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/compaction"
-	compactionexec "github.com/vitaliipsl/crappy/harness/compaction/executor"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
 )
@@ -23,6 +22,7 @@ func (m *Model) applyEvent(value event.Event) {
 		}
 
 		m.transcript.Append(value.ExecutionID, message)
+		m.sessionUsage.Add(message.Usage)
 	case agent.EventType:
 		var agentEvent kit.AgentEvent
 		if err := json.Unmarshal(value.Payload, &agentEvent); err != nil {
@@ -32,15 +32,6 @@ func (m *Model) applyEvent(value event.Event) {
 		}
 
 		m.transcript.Apply(value.ExecutionID, agentEvent)
-	case agent.FinishedEntryType:
-		var finished agent.Finished
-		if err := json.Unmarshal(value.Payload, &finished); err != nil {
-			m.notice = errorNotice(err)
-
-			return
-		}
-
-		m.sessionUsage.Add(finished.Usage)
 	case compaction.StartedEventType:
 		m.transcript.StartCompaction(value.ExecutionID)
 	case compaction.EntryType:
@@ -52,15 +43,8 @@ func (m *Model) applyEvent(value event.Event) {
 		}
 
 		m.transcript.AppendCompaction(value.ExecutionID, generated)
+		m.sessionUsage.Add(generated.Usage)
 	case execution.StartedEntryType:
-		var started execution.Started
-		if err := json.Unmarshal(value.Payload, &started); err != nil {
-			m.notice = errorNotice(err)
-
-			return
-		}
-
-		m.executor = started.Executor
 		if m.terminalErr == nil {
 			m.executionID = value.ExecutionID
 			m.notice = notice{}
@@ -68,7 +52,7 @@ func (m *Model) applyEvent(value event.Event) {
 
 		m.transcript.Start(value.ExecutionID)
 	case execution.FinishedEntryType:
-		var finished execution.Result
+		var finished execution.Finished
 		if err := json.Unmarshal(value.Payload, &finished); err != nil {
 			m.notice = errorNotice(err)
 
@@ -81,16 +65,5 @@ func (m *Model) applyEvent(value event.Event) {
 
 		m.transcript.Finish(value.ExecutionID)
 		m.notice = executionNotice(finished)
-
-		if m.executor == compactionexec.ExecutorName && len(finished.Output) != 0 {
-			var compacted compactionexec.Result
-			if err := json.Unmarshal(finished.Output, &compacted); err != nil {
-				m.notice = errorNotice(err)
-
-				return
-			}
-
-			m.sessionUsage.Add(compacted.Usage)
-		}
 	}
 }

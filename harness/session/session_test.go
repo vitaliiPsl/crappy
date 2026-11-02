@@ -141,12 +141,12 @@ func TestEmitReachesEverySubscriber(t *testing.T) {
 func TestExecutePublishesEntriesAndEvents(t *testing.T) {
 	t.Parallel()
 
-	executor := execution.Func(func(ctx context.Context, params execution.ExecuteParams) (any, error) {
+	executor := execution.Func(func(ctx context.Context, params execution.ExecuteParams) error {
 		if err := params.Events.Emit(ctx, params.ExecutionID, "work.progress", "halfway"); err != nil {
-			return nil, err
+			return err
 		}
 
-		return nil, params.Events.Commit(ctx, params.ExecutionID, "work.output", "done")
+		return params.Events.Commit(ctx, params.ExecutionID, "work.output", "done")
 	})
 	session := newExecutorSession(context.Background(), t, "session-1", entry.NewMemoryStore(), "work", executor)
 
@@ -223,10 +223,10 @@ func TestNewUsesContextForConstructionAndLifetime(t *testing.T) {
 func TestCloseRejectsExecution(t *testing.T) {
 	t.Parallel()
 
-	executor := execution.Func(func(context.Context, execution.ExecuteParams) (any, error) {
+	executor := execution.Func(func(context.Context, execution.ExecuteParams) error {
 		t.Error("closed session ran work")
 
-		return nil, nil
+		return nil
 	})
 	session := newExecutorSession(context.Background(), t, "session-1", entry.NewMemoryStore(), "work", executor)
 
@@ -278,13 +278,13 @@ func TestCloseCancelsActiveExecution(t *testing.T) {
 		t.Fatalf("last entry = %#v, want finished execution %q", last, current.ID())
 	}
 
-	var finished execution.Result
+	var finished execution.Finished
 	if err := json.Unmarshal(last.Payload, &finished); err != nil {
 		t.Fatalf("decode finished execution: %v", err)
 	}
 
-	if finished.Outcome != execution.Cancelled {
-		t.Fatalf("execution outcome = %q, want %q", finished.Outcome, execution.Cancelled)
+	if finished.Status != execution.Cancelled {
+		t.Fatalf("execution status = %q, want %q", finished.Status, execution.Cancelled)
 	}
 }
 

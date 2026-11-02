@@ -21,15 +21,15 @@ type ExecuteParams struct {
 }
 
 type Executor interface {
-	Execute(context.Context, ExecuteParams) (any, error)
+	Execute(context.Context, ExecuteParams) error
 }
 
 type Resolver interface {
 	Resolve(name string) (Executor, error)
 }
 
-type Func func(context.Context, ExecuteParams) (any, error)
+type Func func(context.Context, ExecuteParams) error
 
-func (f Func) Execute(ctx context.Context, params ExecuteParams) (any, error) {
+func (f Func) Execute(ctx context.Context, params ExecuteParams) error {
 	return f(ctx, params)
 }

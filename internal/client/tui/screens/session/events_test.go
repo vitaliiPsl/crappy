@@ -2,7 +2,6 @@ package session
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -36,11 +35,11 @@ func TestUsageRebuildsFromJournal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	manualUsage := kit.Usage{InputTokens: 300, OutputTokens: 40}
+	measured := func(text string, usage kit.Usage) kit.Message {
+		message := kit.NewModelMessage(kit.NewTextContent(text))
+		message.Usage = usage
 
-	manualOutput, err := json.Marshal(compactionexec.Result{Compacted: true, Usage: manualUsage})
-	if err != nil {
-		t.Fatal(err)
+		return message
 	}
 
 	records := []struct {
@@ -49,18 +48,16 @@ func TestUsageRebuildsFromJournal(t *testing.T) {
 		payload     any
 	}{
 		{"first", execution.StartedEntryType, execution.Started{Executor: agent.ExecutorName}},
+		{"first", agent.MessageEntryType, kit.NewUserMessage(kit.NewTextContent("question"))},
 		{"first", compaction.EntryType, compaction.Compaction{Usage: kit.Usage{InputTokens: 50, OutputTokens: 10}}},
-		{"first", agent.FinishedEntryType, agent.Finished{
-			Usage:     kit.Usage{InputTokens: 1200, OutputTokens: 200, CacheReadTokens: 100},
-			LastUsage: kit.Usage{InputTokens: 100, OutputTokens: 20},
-		}},
-		{"first", execution.FinishedEntryType, execution.Result{Outcome: execution.Completed}},
+		{"first", agent.MessageEntryType, measured("answer", kit.Usage{InputTokens: 1200, OutputTokens: 200, CacheReadTokens: 100})},
+		{"first", execution.FinishedEntryType, execution.Finished{Status: execution.Completed}},
 		{"manual", execution.StartedEntryType, execution.Started{Executor: compactionexec.ExecutorName}},
-		{"manual", compaction.EntryType, compaction.Compaction{Usage: manualUsage}},
-		{"manual", execution.FinishedEntryType, execution.Result{Outcome: execution.Completed, Output: manualOutput}},
+		{"manual", compaction.EntryType, compaction.Compaction{Usage: kit.Usage{InputTokens: 300, OutputTokens: 40}}},
+		{"manual", execution.FinishedEntryType, execution.Finished{Status: execution.Completed}},
 		{"second", execution.StartedEntryType, execution.Started{Executor: agent.ExecutorName}},
-		{"second", agent.FinishedEntryType, agent.Finished{Usage: kit.Usage{InputTokens: 400, OutputTokens: 60}}},
-		{"second", execution.FinishedEntryType, execution.Result{Outcome: execution.Completed}},
+		{"second", agent.MessageEntryType, measured("reply", kit.Usage{InputTokens: 400, OutputTokens: 60})},
+		{"second", execution.FinishedEntryType, execution.Finished{Status: execution.Completed}},
 	}
 	for _, record := range records {
 		if err := opened.Commit(ctx, record.executionID, record.entryType, record.payload); err != nil {
@@ -82,7 +79,7 @@ func TestUsageRebuildsFromJournal(t *testing.T) {
 
 		screen.Close()
 
-		if want := (kit.Usage{InputTokens: 1900, OutputTokens: 300, CacheReadTokens: 100}); screen.sessionUsage != want {
+		if want := (kit.Usage{InputTokens: 1950, OutputTokens: 310, CacheReadTokens: 100}); screen.sessionUsage != want {
 			t.Fatalf("session usage = %+v, want %+v", screen.sessionUsage, want)
 		}
 	}

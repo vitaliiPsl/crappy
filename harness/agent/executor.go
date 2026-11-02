@@ -14,15 +14,9 @@ import (
 var errUnrecordedToolResult = errors.New("tool result was not recorded before execution ended; the tool may have changed external state, so verify it before retrying")
 
 const (
-	ExecutorName      = "agent"
-	EventType         = "agent.event"
-	FinishedEntryType = "agent.finished"
+	ExecutorName = "agent"
+	EventType    = "agent.event"
 )
-
-type Finished struct {
-	Usage     kit.Usage `json:"usage"`
-	LastUsage kit.Usage `json:"last_usage"`
-}
 
 type Executor struct {
 	factory *Factory
@@ -34,15 +28,15 @@ func NewExecutor(factory *Factory) *Executor {
 	return &Executor{factory: factory}
 }
 
-func (e *Executor) Execute(ctx context.Context, params execution.ExecuteParams) (any, error) {
+func (e *Executor) Execute(ctx context.Context, params execution.ExecuteParams) error {
 	var input kit.Message
 	if err := json.Unmarshal(params.Input, &input); err != nil {
-		return nil, fmt.Errorf("decode agent input: %w", err)
+		return fmt.Errorf("decode agent input: %w", err)
 	}
 
 	history := NewHistory(params.SessionID, params.ExecutionID, params.Entries, params.Events)
 	if err := e.completeToolResults(ctx, history, params); err != nil {
-		return nil, err
+		return err
 	}
 
 	built, err := e.factory.Build(ctx, BuildRequest{
@@ -52,7 +46,7 @@ func (e *Executor) Execute(ctx context.Context, params execution.ExecuteParams) 
 		History:     history,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("build agent: %w", err)
+		return fmt.Errorf("build agent: %w", err)
 	}
 
 	stream := built.Stream(ctx, input)
@@ -66,8 +60,7 @@ func (e *Executor) Execute(ctx context.Context, params execution.ExecuteParams) 
 		}
 	}
 
-	response, err := stream.Result()
-	if runErr == nil {
+	if _, err := stream.Result(); runErr == nil {
 		runErr = err
 	}
 
@@ -75,16 +68,7 @@ func (e *Executor) Execute(ctx context.Context, params execution.ExecuteParams) 
 		runErr = errors.Join(runErr, e.completeToolResults(context.WithoutCancel(ctx), history, params))
 	}
 
-	if err := params.Events.Commit(context.WithoutCancel(ctx), params.ExecutionID, FinishedEntryType,
-		Finished{
-			Usage:     response.Usage,
-			LastUsage: response.LastUsage,
-		},
-	); err != nil {
-		return response, errors.Join(runErr, fmt.Errorf("record agent result: %w", err))
-	}
-
-	return response, runErr
+	return runErr
 }
 
 func (*Executor) completeToolResults(ctx context.Context, history *History, params execution.ExecuteParams) error {

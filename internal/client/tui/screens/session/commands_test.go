@@ -45,8 +45,8 @@ func TestExecuteReportsTerminalPersistenceFailure(t *testing.T) {
 				entries:  finishFailureStore{Store: storage.EntryStore(), err: failure},
 			}
 			h := harness.New(store, harness.WithExecutor(agent.ExecutorName,
-				execution.Func(func(context.Context, execution.ExecuteParams) (any, error) {
-					return "done", nil
+				execution.Func(func(context.Context, execution.ExecuteParams) error {
+					return nil
 				}),
 			))
 			t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
@@ -116,12 +116,12 @@ func TestWaitForExecutionStopsWhenScreenCloses(t *testing.T) {
 
 	release := make(chan struct{})
 	h := harness.New(storage, harness.WithExecutor(agent.ExecutorName,
-		execution.Func(func(ctx context.Context, _ execution.ExecuteParams) (any, error) {
+		execution.Func(func(ctx context.Context, _ execution.ExecuteParams) error {
 			select {
 			case <-release:
-				return nil, nil
+				return nil
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				return ctx.Err()
 			}
 		}),
 	))

@@ -14,13 +14,12 @@ import (
 	"github.com/vitaliipsl/crappy/harness/compaction"
 	"github.com/vitaliipsl/crappy/harness/compaction/automatic"
 	"github.com/vitaliipsl/crappy/harness/entry"
-	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/session"
 	"github.com/vitaliipsl/crappy/harness/session/state"
 )
 
-func TestExecutorPersistsCompactionAndReceipt(t *testing.T) {
+func TestExecutorPersistsCompaction(t *testing.T) {
 	t.Parallel()
 
 	usage := kit.Usage{InputTokens: 10, OutputTokens: 2}
@@ -42,26 +41,8 @@ func TestExecutorPersistsCompactionAndReceipt(t *testing.T) {
 	}
 
 	current, finished := execute(t, opened, execution.Request{Executor: ExecutorName})
-	if finished.Outcome != execution.Completed {
+	if finished.Status != execution.Completed {
 		t.Fatalf("manual compaction = %+v", finished)
-	}
-
-	var receipt Result
-	if err := json.Unmarshal(finished.Output, &receipt); err != nil {
-		t.Fatal(err)
-	}
-
-	if !receipt.Compacted || receipt.Usage != usage || receipt.RetainedMessages != 1 || receipt.TokensBefore <= 0 || receipt.TokensAfter <= 0 {
-		t.Fatalf("receipt = %+v", receipt)
-	}
-
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(finished.Output, &fields); err != nil {
-		t.Fatal(err)
-	}
-
-	if fields["objective"] != nil || fields["retained"] != nil {
-		t.Fatalf("execution output duplicates compaction content: %s", finished.Output)
 	}
 
 	stored, err := store.List(context.Background(), opened.ID(), 0)
@@ -69,9 +50,12 @@ func TestExecutorPersistsCompactionAndReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wantTypes := []string{agent.MessageEntryType, agent.MessageEntryType, execution.StartedEntryType, compaction.EntryType, execution.FinishedEntryType}
+	wantTypes := []string{
+		agent.MessageEntryType, agent.MessageEntryType,
+		execution.StartedEntryType, compaction.EntryType, execution.FinishedEntryType,
+	}
 	if len(stored) != len(wantTypes) {
-		t.Fatalf("journal contains %d entries, want %d", len(stored), len(wantTypes))
+		t.Fatalf("log contains %d entries, want %d", len(stored), len(wantTypes))
 	}
 
 	for i, value := range stored {
@@ -80,13 +64,8 @@ func TestExecutorPersistsCompactionAndReceipt(t *testing.T) {
 		}
 	}
 
-	var started execution.Started
-	if err := json.Unmarshal(stored[2].Payload, &started); err != nil {
-		t.Fatal(err)
-	}
-
-	if started.Executor != ExecutorName {
-		t.Fatalf("executor = %q", started.Executor)
+	if generated := decode[compaction.Compaction](t, stored[3].Payload); generated.Objective != "saved context" || len(generated.Retained) != 1 || generated.Usage != usage {
+		t.Fatalf("compaction = %+v", generated)
 	}
 
 	reopened, err := session.New(context.Background(), opened.ID(), opened.State(), store, execution.NewRegistry())
@@ -107,32 +86,6 @@ func TestExecutorPersistsCompactionAndReceipt(t *testing.T) {
 	}
 
 	model.AssertCallCount(t, 1)
-}
-
-func TestExecutorReportsUsageOnFailure(t *testing.T) {
-	t.Parallel()
-
-	usage := kit.Usage{InputTokens: 7, OutputTokens: 3}
-	model := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
-		Message: kit.NewModelMessage(kit.NewTextContent("invalid json")), FinishReason: kit.FinishReasonStop, Usage: usage,
-	}})
-	store := entry.NewMemoryStore()
-	bus := event.NewBus("session", store)
-
-	if err := bus.Commit(context.Background(), "previous", agent.MessageEntryType, kit.NewUserMessage(kit.NewTextContent("original work"))); err != nil {
-		t.Fatal(err)
-	}
-
-	params := execution.ExecuteParams{SessionID: "session", ExecutionID: "execution", Entries: store, Events: bus}
-
-	output, err := New(newCompactor(t, model)).Execute(context.Background(), params)
-	if err == nil {
-		t.Fatal("Execute() error = nil, want generation failure")
-	}
-
-	if receipt := output.(Result); receipt.Compacted || receipt.Usage != usage {
-		t.Fatalf("failure receipt = %+v", receipt)
-	}
 }
 
 func TestManualAndAutomaticCompactionRecordToTheirExecutions(t *testing.T) {
@@ -169,7 +122,7 @@ func TestManualAndAutomaticCompactionRecordToTheirExecutions(t *testing.T) {
 		Executor: agent.ExecutorName,
 		Input:    kit.NewUserMessage(kit.NewTextContent("input longer than one token")),
 	})
-	if finished.Outcome != execution.Completed {
+	if finished.Status != execution.Completed {
 		t.Fatalf("execution with compactions = %+v", finished)
 	}
 
@@ -180,17 +133,8 @@ func TestManualAndAutomaticCompactionRecordToTheirExecutions(t *testing.T) {
 	}
 
 	manualExecution, finished := execute(t, opened, execution.Request{Executor: ExecutorName})
-	if finished.Outcome != execution.Completed {
+	if finished.Status != execution.Completed {
 		t.Fatalf("manual compaction = %+v", finished)
-	}
-
-	var receipt Result
-	if err := json.Unmarshal(finished.Output, &receipt); err != nil {
-		t.Fatal(err)
-	}
-
-	if !receipt.Compacted || receipt.Usage != (kit.Usage{InputTokens: 5, OutputTokens: 1}) {
-		t.Fatalf("manual receipt = %+v", receipt)
 	}
 
 	model.AssertCallCount(t, 1)
@@ -203,6 +147,8 @@ func TestManualAndAutomaticCompactionRecordToTheirExecutions(t *testing.T) {
 
 	var startedIDs, finishedIDs, compactionIDs []string
 
+	usage := make(map[string][]kit.Usage)
+
 	for _, value := range stored {
 		switch value.Type {
 		case execution.StartedEntryType:
@@ -211,14 +157,10 @@ func TestManualAndAutomaticCompactionRecordToTheirExecutions(t *testing.T) {
 			finishedIDs = append(finishedIDs, value.ExecutionID)
 		case compaction.EntryType:
 			compactionIDs = append(compactionIDs, value.ExecutionID)
-		case agent.FinishedEntryType:
-			var result agent.Finished
-			if err := json.Unmarshal(value.Payload, &result); err != nil {
-				t.Fatal(err)
-			}
-
-			if result.Usage != (kit.Usage{InputTokens: 14, OutputTokens: 3}) {
-				t.Fatalf("agent usage = %+v, want model and compaction usage", result.Usage)
+			usage[value.ExecutionID] = append(usage[value.ExecutionID], decode[compaction.Compaction](t, value.Payload).Usage)
+		case agent.MessageEntryType:
+			if message := decode[kit.Message](t, value.Payload); message.Usage != (kit.Usage{}) {
+				usage[value.ExecutionID] = append(usage[value.ExecutionID], message.Usage)
 			}
 		}
 	}
@@ -226,6 +168,14 @@ func TestManualAndAutomaticCompactionRecordToTheirExecutions(t *testing.T) {
 	want := []string{agentExecution.ID(), manualExecution.ID()}
 	if !reflect.DeepEqual(startedIDs, want) || !reflect.DeepEqual(finishedIDs, want) || !reflect.DeepEqual(compactionIDs, want) {
 		t.Fatalf("execution attribution: starts=%v, finishes=%v, compactions=%v", startedIDs, finishedIDs, compactionIDs)
+	}
+
+	wantUsage := map[string][]kit.Usage{
+		agentExecution.ID():  {{InputTokens: 10, OutputTokens: 2}, {InputTokens: 4, OutputTokens: 1}},
+		manualExecution.ID(): {{InputTokens: 5, OutputTokens: 1}},
+	}
+	if !reflect.DeepEqual(usage, wantUsage) {
+		t.Fatalf("usage = %+v, want compaction and agent usage recorded separately per execution: %+v", usage, wantUsage)
 	}
 }
 
@@ -247,7 +197,7 @@ func newTestSession(t *testing.T, store entry.Store, executors execution.Resolve
 	return opened
 }
 
-func execute(t *testing.T, opened *session.Session, request execution.Request) (*session.Execution, execution.Result) {
+func execute(t *testing.T, opened *session.Session, request execution.Request) (*session.Execution, execution.Finished) {
 	t.Helper()
 
 	current, err := opened.Execute(context.Background(), request)
@@ -264,6 +214,17 @@ func execute(t *testing.T, opened *session.Session, request execution.Request) (
 	}
 
 	return current, finished
+}
+
+func decode[T any](t *testing.T, payload json.RawMessage) T {
+	t.Helper()
+
+	var value T
+	if err := json.Unmarshal(payload, &value); err != nil {
+		t.Fatal(err)
+	}
+
+	return value
 }
 
 func newCompactor(t *testing.T, model kit.Model) *compaction.Compactor {

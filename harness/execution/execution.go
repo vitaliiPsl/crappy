@@ -27,13 +27,11 @@ type Request struct {
 type Started struct {
 	Executor  string          `json:"executor"`
 	Input     json.RawMessage `json:"input"`
-	CreatedAt time.Time       `json:"created_at"`
 	StartedAt time.Time       `json:"started_at"`
 }
 
-type Result struct {
-	Outcome Status          `json:"outcome"`
-	Output  json.RawMessage `json:"output,omitempty"`
-	Error   string          `json:"error,omitempty"`
-	EndedAt time.Time       `json:"ended_at"`
+type Finished struct {
+	Status  Status    `json:"status"`
+	Error   string    `json:"error,omitempty"`
+	EndedAt time.Time `json:"ended_at"`
 }

@@ -218,8 +218,8 @@ func TestLookupContextDoesNotOwnExecution(t *testing.T) {
 	close(executor.release)
 
 	finished := waitFinished(t, opened, current.ID())
-	if finished.Outcome != execution.Completed {
-		t.Fatalf("execution outcome = %+v", finished)
+	if finished.Status != execution.Completed {
+		t.Fatalf("execution status = %+v", finished)
 	}
 }
 
@@ -252,8 +252,8 @@ func TestShutdownOwnsSessionsAndRejectsFurtherOpens(t *testing.T) {
 
 	waitSignal(t, subscription.Done())
 
-	if finished := waitFinished(t, opened, current.ID()); finished.Outcome != execution.Cancelled {
-		t.Fatalf("execution outcome = %+v", finished)
+	if finished := waitFinished(t, opened, current.ID()); finished.Status != execution.Cancelled {
+		t.Fatalf("execution status = %+v", finished)
 	}
 
 	if _, err := h.Session(context.Background(), ""); !errors.Is(err, ErrClosed) {
@@ -363,8 +363,8 @@ func TestSessionsRemainPersistentAcrossHosts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	first := newTestHarness(t, store, WithExecutor("work", execution.Func(func(context.Context, execution.ExecuteParams) (any, error) {
-		return "saved output", nil
+	first := newTestHarness(t, store, WithExecutor("work", execution.Func(func(context.Context, execution.ExecuteParams) error {
+		return errors.New("saved failure")
 	})))
 
 	opened, err := first.Session(context.Background(), "")
@@ -378,7 +378,7 @@ func TestSessionsRemainPersistentAcrossHosts(t *testing.T) {
 	}
 
 	original, err := current.Wait(context.Background())
-	if err != nil || string(original.Output) != `"saved output"` {
+	if err != nil || original.Status != execution.Failed || original.Error != "saved failure" {
 		t.Fatalf("original execution = %+v, %v", original, err)
 	}
 
@@ -408,7 +408,7 @@ func TestSessionsRemainPersistentAcrossHosts(t *testing.T) {
 	}
 
 	restored, err := attached.Wait(context.Background())
-	if err != nil || restored.Outcome != execution.Completed || string(restored.Output) != string(original.Output) || !restored.EndedAt.Equal(original.EndedAt) {
+	if err != nil || restored.Status != original.Status || restored.Error != original.Error || !restored.EndedAt.Equal(original.EndedAt) {
 		t.Fatalf("restored execution = %+v, %v", restored, err)
 	}
 
@@ -429,17 +429,17 @@ func TestSessionStatePersistsAndReachesExecutors(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := New(storage, WithExecutor("inspect", execution.Func(func(ctx context.Context, params execution.ExecuteParams) (any, error) {
+	h := New(storage, WithExecutor("inspect", execution.Func(func(ctx context.Context, params execution.ExecuteParams) error {
 		var workdir string
 		if _, err := params.State.Get(ctx, "workdir", &workdir); err != nil {
-			return nil, err
+			return err
 		}
 
 		if err := params.State.Set(ctx, "executor.workdir", workdir); err != nil {
-			return nil, err
+			return err
 		}
 
-		return nil, params.State.Set(ctx, "executor.session", params.SessionID)
+		return params.State.Set(ctx, "executor.session", params.SessionID)
 	})))
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 
@@ -462,7 +462,7 @@ func TestSessionStatePersistsAndReachesExecutors(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if result, err := current.Wait(ctx); err != nil || result.Outcome != execution.Completed {
+		if result, err := current.Wait(ctx); err != nil || result.Status != execution.Completed {
 			t.Fatalf("execution result = %+v, error = %v", result, err)
 		}
 	}
@@ -514,7 +514,7 @@ func TestSessionInitializesBeforeReturning(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := New(store, WithExecutor("work", execution.Func(func(context.Context, execution.ExecuteParams) (any, error) { return nil, nil })))
+	h := New(store, WithExecutor("work", execution.Func(func(context.Context, execution.ExecuteParams) error { return nil })))
 
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 
@@ -540,8 +540,8 @@ func TestSessionInitializesBeforeReturning(t *testing.T) {
 		}
 	}
 
-	if finished := waitFinished(t, opened, "unfinished"); finished.Outcome != execution.Interrupted {
-		t.Fatalf("previous outcome = %+v", finished)
+	if finished := waitFinished(t, opened, "unfinished"); finished.Status != execution.Interrupted {
+		t.Fatalf("previous status = %+v", finished)
 	}
 
 	current, err := opened.Execute(ctx, execution.Request{Executor: "work"})
@@ -549,7 +549,7 @@ func TestSessionInitializesBeforeReturning(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if finished, err := current.Wait(ctx); err != nil || finished.Outcome != execution.Completed {
+	if finished, err := current.Wait(ctx); err != nil || finished.Status != execution.Completed {
 		t.Fatalf("new execution = %+v, error = %v", finished, err)
 	}
 }
@@ -592,7 +592,7 @@ func TestSessionAttachmentPreservesActiveExecution(t *testing.T) {
 
 	finish()
 
-	if result, err := current.Wait(ctx); err != nil || result.Outcome != execution.Completed {
+	if result, err := current.Wait(ctx); err != nil || result.Status != execution.Completed {
 		t.Fatalf("active execution = %+v, error = %v", result, err)
 	}
 }
@@ -631,8 +631,8 @@ func TestSessionOpeningRetriesFailedInitialization(t *testing.T) {
 	}
 
 	finished := waitFinished(t, opened, "unfinished")
-	if finished.Outcome != execution.Interrupted || finished.EndedAt.IsZero() {
-		t.Fatalf("reconciled outcome = %+v", finished)
+	if finished.Status != execution.Interrupted || finished.EndedAt.IsZero() {
+		t.Fatalf("reconciled status = %+v", finished)
 	}
 
 	stored, err := opened.Entries(ctx, 0)
@@ -652,10 +652,10 @@ func TestSessionAttachmentDoesNotRetryFailedSettlement(t *testing.T) {
 
 	var calls atomic.Int32
 
-	h := New(testStore{state.NewMemoryStore(), entries}, WithExecutor("work", execution.Func(func(context.Context, execution.ExecuteParams) (any, error) {
+	h := New(testStore{state.NewMemoryStore(), entries}, WithExecutor("work", execution.Func(func(context.Context, execution.ExecuteParams) error {
 		calls.Add(1)
 
-		return map[string]int{"value": 42}, errors.New("work failed")
+		return errors.New("work failed")
 	})))
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 
@@ -1037,20 +1037,20 @@ func newBlockingExecutor() *blockingExecutor {
 	return &blockingExecutor{started: make(chan struct{}), release: make(chan struct{})}
 }
 
-func (e *blockingExecutor) Execute(ctx context.Context, _ execution.ExecuteParams) (any, error) {
+func (e *blockingExecutor) Execute(ctx context.Context, _ execution.ExecuteParams) error {
 	close(e.started)
 
 	if e.ignoreCancel {
 		<-e.release
 
-		return nil, nil
+		return nil
 	}
 
 	select {
 	case <-e.release:
-		return nil, nil
+		return nil
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return ctx.Err()
 	}
 }
 
@@ -1168,7 +1168,7 @@ func (s *blockingInitializationStore) Latest(ctx context.Context, sessionID, ent
 	return s.Store.Latest(ctx, sessionID, entryType)
 }
 
-func waitFinished(t *testing.T, opened *session.Session, id string) execution.Result {
+func waitFinished(t *testing.T, opened *session.Session, id string) execution.Finished {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

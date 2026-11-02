@@ -75,13 +75,13 @@ func (c *Contributor) beforeModelRequest(
 		request kit.ModelRequest,
 	) (bool, error) {
 		if !c.trigger.ShouldTrigger(TriggerRequest{
-			InputTokens: c.inputTokens(run, request),
+			InputTokens: c.inputTokens(request),
 			InputLimit:  inputLimit,
 		}) {
 			return false, nil
 		}
 
-		return c.compact(run, history)
+		return history.Compact(run.Context, c.compactor)
 	}
 }
 
@@ -97,7 +97,7 @@ func (c *Contributor) onModelError(
 			return err
 		}
 
-		compacted, compactErr := c.compact(run, history)
+		compacted, compactErr := history.Compact(run.Context, c.compactor)
 		if compactErr != nil {
 			return compactErr
 		}
@@ -110,35 +110,28 @@ func (c *Contributor) onModelError(
 	}
 }
 
-func (c *Contributor) compact(run *kit.RunContext, history *agent.History) (bool, error) {
-	generated, compacted, err := history.Compact(run.Context, c.compactor)
-	run.Usage.Add(generated.Usage)
-
-	return compacted, err
-}
-
-func (c *Contributor) inputTokens(
-	run *kit.RunContext,
-	request kit.ModelRequest,
-) int64 {
-	if run.LastUsage.InputTokens == 0 {
+func (c *Contributor) inputTokens(request kit.ModelRequest) int64 {
+	measured := lastMeasuredResponse(request.Messages)
+	if measured < 0 {
 		return int64(token.EstimateRequest(c.estimator, request))
 	}
 
-	tokens := run.LastUsage.InputTokens + run.LastUsage.OutputTokens
-	for _, message := range messagesAfterLastModelResponse(run.Messages) {
+	usage := request.Messages[measured].Usage
+	tokens := usage.InputTokens + usage.OutputTokens
+
+	for _, message := range request.Messages[measured+1:] {
 		tokens += int64(token.EstimateMessage(c.estimator, message))
 	}
 
 	return tokens
 }
 
-func messagesAfterLastModelResponse(messages []kit.Message) []kit.Message {
+func lastMeasuredResponse(messages []kit.Message) int {
 	for index := len(messages) - 1; index >= 0; index-- {
-		if messages[index].Role == kit.RoleModel {
-			return messages[index+1:]
+		if messages[index].Role == kit.RoleModel && messages[index].Usage.InputTokens != 0 {
+			return index
 		}
 	}
 
-	return nil
+	return -1
 }

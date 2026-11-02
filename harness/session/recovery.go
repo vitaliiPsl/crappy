@@ -13,8 +13,8 @@ func (s *Session) restore(ctx context.Context) error {
 		return err
 	}
 
-	return s.Commit(ctx, id, execution.FinishedEntryType, execution.Result{
-		Outcome: execution.Interrupted,
+	return s.Commit(ctx, id, execution.FinishedEntryType, execution.Finished{
+		Status:  execution.Interrupted,
 		EndedAt: time.Now().UTC(),
 	})
 }

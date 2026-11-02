@@ -20,8 +20,8 @@ func errorNotice(err error) notice {
 	return notice{kind: noticeError, message: err.Error()}
 }
 
-func executionNotice(finished execution.Result) notice {
-	switch finished.Outcome {
+func executionNotice(finished execution.Finished) notice {
+	switch finished.Status {
 	case execution.Failed:
 		return notice{kind: noticeError, message: finished.Error}
 	case execution.Cancelled, execution.Interrupted:

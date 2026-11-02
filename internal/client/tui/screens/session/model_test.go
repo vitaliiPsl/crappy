@@ -100,7 +100,7 @@ func TestExecutionLifecycleDrivesStatus(t *testing.T) {
 		t,
 		execution.FinishedEntryType,
 		"execution-1",
-		execution.Result{Outcome: execution.Completed},
+		execution.Finished{Status: execution.Completed},
 	))
 
 	if model.running() {
@@ -126,9 +126,9 @@ func TestFailedExecutionIsSurfaced(t *testing.T) {
 		t,
 		execution.FinishedEntryType,
 		"execution-1",
-		execution.Result{
-			Outcome: execution.Failed,
-			Error:   "model exploded",
+		execution.Finished{
+			Status: execution.Failed,
+			Error:  "model exploded",
 		},
 	))
 
@@ -138,11 +138,11 @@ func TestFailedExecutionIsSurfaced(t *testing.T) {
 }
 
 func TestInterruptedExecutionIsSurfaced(t *testing.T) {
-	for _, outcome := range []execution.Status{
+	for _, status := range []execution.Status{
 		execution.Cancelled,
 		execution.Interrupted,
 	} {
-		t.Run(string(outcome), func(t *testing.T) {
+		t.Run(string(status), func(t *testing.T) {
 			model := New(context.Background(), nil, config.Config{}, "session-1")
 			model.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
 
@@ -150,7 +150,7 @@ func TestInterruptedExecutionIsSurfaced(t *testing.T) {
 				t,
 				execution.FinishedEntryType,
 				"execution-1",
-				execution.Result{Outcome: outcome},
+				execution.Finished{Status: status},
 			))
 
 			if !strings.Contains(model.View().Content, interruptedLabel) {

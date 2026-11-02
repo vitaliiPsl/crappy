@@ -112,16 +112,16 @@ func TestCompactCommandUsesNormalExecutionLifecycle(t *testing.T) {
 
 	release := make(chan struct{})
 	h := harness.New(storage, harness.WithExecutor(compactionexec.ExecutorName,
-		execution.Func(func(ctx context.Context, params execution.ExecuteParams) (any, error) {
+		execution.Func(func(ctx context.Context, params execution.ExecuteParams) error {
 			if string(params.Input) != "null" {
 				t.Errorf("compaction received chat input: %s", params.Input)
 			}
 
 			select {
 			case <-release:
-				return compactionexec.Result{Compacted: true}, nil
+				return nil
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				return ctx.Err()
 			}
 		}),
 	))
@@ -167,7 +167,7 @@ func TestCompactCommandUsesNormalExecutionLifecycle(t *testing.T) {
 	screen.Update(wait())
 
 	result, err := accepted.execution.Wait(ctx)
-	if err != nil || result.Outcome != execution.Completed {
+	if err != nil || result.Status != execution.Completed {
 		t.Fatalf("compaction result = %+v, error = %v", result, err)
 	}
 

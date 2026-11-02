@@ -26,19 +26,19 @@ func TestNewSettlesAbandonedExecutionBeforeReturning(t *testing.T) {
 
 	var calls atomic.Int32
 
-	executor := execution.Func(func(ctx context.Context, params execution.ExecuteParams) (any, error) {
+	executor := execution.Func(func(ctx context.Context, params execution.ExecuteParams) error {
 		calls.Add(1)
 
 		entries, err := params.Entries.List(ctx, params.SessionID, 0)
 		if err != nil {
-			return nil, err
+			return err
 		}
 
 		if len(entries) != 3 || entries[1].Type != execution.FinishedEntryType {
 			t.Errorf("new work started before recovery: %+v", entries)
 		}
 
-		return nil, nil
+		return nil
 	})
 
 	store.failing.Store(true)
@@ -70,13 +70,13 @@ func TestNewSettlesAbandonedExecutionBeforeReturning(t *testing.T) {
 		t.Fatalf("recovered journal = %+v, %v", entries, err)
 	}
 
-	var previous execution.Result
+	var previous execution.Finished
 	if err := json.Unmarshal(entries[1].Payload, &previous); err != nil {
 		t.Fatal(err)
 	}
 
-	if previous.Outcome != execution.Interrupted || calls.Load() != 1 {
-		t.Fatalf("previous outcome = %+v, calls = %d", previous, calls.Load())
+	if previous.Status != execution.Interrupted || calls.Load() != 1 {
+		t.Fatalf("previous status = %+v, calls = %d", previous, calls.Load())
 	}
 }
 
@@ -90,11 +90,11 @@ func TestNewPreservesCompletedExecution(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := bus.Commit(context.Background(), "completed", execution.FinishedEntryType, execution.Result{Outcome: execution.Completed}); err != nil {
+	if err := bus.Commit(context.Background(), "completed", execution.FinishedEntryType, execution.Finished{Status: execution.Completed}); err != nil {
 		t.Fatal(err)
 	}
 
-	executor := execution.Func(func(context.Context, execution.ExecuteParams) (any, error) { return nil, nil })
+	executor := execution.Func(func(context.Context, execution.ExecuteParams) error { return nil })
 	session := newExecutorSession(context.Background(), t, "session-1", store, "work", executor)
 
 	current, err := session.Execute(context.Background(), execution.Request{Executor: "work"})

@@ -19,15 +19,14 @@ type Model struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
+	config       config.Config
 	assistant    *assistant.Assistant
 	subscription *event.Subscription
-	config       config.Config
 	commands     *commands.Registry
 
 	sessionID   string
 	workdir     string
 	executionID string
-	executor    string
 	notice      notice
 	terminalErr error
 
