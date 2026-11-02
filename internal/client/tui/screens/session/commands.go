@@ -9,6 +9,7 @@ import (
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/session"
+	"github.com/vitaliipsl/crappy/internal/assistant"
 )
 
 const subscriptionStartEntryID uint64 = 0
@@ -21,6 +22,15 @@ type workdirMsg struct {
 }
 
 func (workdirMsg) Broadcast() {}
+
+type contextMsg struct {
+	target    *Model
+	sessionID string
+	data      assistant.ContextReport
+	err       error
+}
+
+func (contextMsg) Broadcast() {}
 
 type subscribedMsg struct {
 	target       *Model

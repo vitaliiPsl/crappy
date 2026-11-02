@@ -4,6 +4,9 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
 	"github.com/vitaliipsl/crappy/harness/compaction"
@@ -44,7 +47,7 @@ func TestFinishedExecutionCachesItsRender(t *testing.T) {
 
 	_ = model.View()
 
-	finished := model.executions[0]
+	finished := model.lastExecution
 	if finished.width != 80 {
 		t.Fatalf("cached width = %d, want 80", finished.width)
 	}
@@ -70,7 +73,7 @@ func TestActiveExecutionIsNotCached(t *testing.T) {
 
 	_ = model.View()
 
-	model.executions[0].rendered = "SENTINEL"
+	model.lastExecution.rendered = "SENTINEL"
 
 	if strings.Contains(model.render(), "SENTINEL") {
 		t.Fatal("render() reused a cache for a running execution")
@@ -110,8 +113,8 @@ func TestExecutionsAreSeparate(t *testing.T) {
 	model.Start("execution-2")
 	model.Append("execution-2", kit.NewUserMessage(kit.NewTextContent("second")))
 
-	if got, want := len(model.executions), 2; got != want {
-		t.Fatalf("executions = %d, want %d", got, want)
+	if got, want := len(model.blocks), 2; got != want {
+		t.Fatalf("execution blocks = %d, want %d", got, want)
 	}
 
 	view := model.View()
@@ -157,5 +160,67 @@ func TestFinishClearsPendingCompaction(t *testing.T) {
 
 	if view := model.View(); strings.Contains(view, compactionPendingLabel) {
 		t.Fatalf("view = %q, want no pending compaction after finish", view)
+	}
+}
+
+func TestCommandOutputPreservesExecutionUpdates(t *testing.T) {
+	model := New()
+	model.SetSize(80, 40)
+	model.Append("execution-1", kit.NewUserMessage(kit.NewTextContent("question")))
+	model.Apply("execution-1", kit.NewAgentContentDeltaEvent(kit.NewTextContent("partial")))
+	model.AppendCommand("help", "Available commands")
+	model.Apply("execution-1", kit.NewAgentContentDeltaEvent(kit.NewTextContent(" response")))
+
+	if view := model.View(); !strings.Contains(view, "partial response") || !strings.Contains(view, "/help") {
+		t.Fatalf("command output disrupted streaming: %q", view)
+	}
+
+	model.Append("execution-1", kit.NewModelMessage(kit.NewTextContent("complete")))
+	model.Finish("execution-1")
+	model.AppendCommand("context", "Current context")
+	model.Append("execution-2", kit.NewUserMessage(kit.NewTextContent("follow up")))
+
+	view := model.View()
+	if strings.Contains(view, "partial") || strings.Count(view, "complete") != 1 || strings.Count(view, "question") != 1 {
+		t.Fatalf("execution history was duplicated or lost: %q", view)
+	}
+
+	if first, command, second := strings.Index(view, "question"), strings.Index(view, "/context"), strings.Index(view, "follow up"); first < 0 || command <= first || second <= command {
+		t.Fatalf("command output is out of order: %q", view)
+	}
+}
+
+func TestCommandOutputUsesTranscriptScrolling(t *testing.T) {
+	model := New()
+	model.SetSize(40, 8)
+	model.AppendCommand("context", strings.Repeat("first page\n", 20)+strings.Repeat("last page\n", 20))
+
+	if view := model.View(); !strings.Contains(view, "last page") {
+		t.Fatalf("transcript did not follow command output: %q", view)
+	}
+
+	for range 10 {
+		model.Update(tea.KeyPressMsg{Code: tea.KeyPgUp})
+	}
+
+	if view := model.View(); !strings.Contains(view, "first page") || !strings.Contains(view, "/context") {
+		t.Fatalf("command output did not scroll: %q", view)
+	}
+}
+
+func TestCommandOutputFitsWidthAndPreservesStyles(t *testing.T) {
+	model := New()
+	model.SetSize(20, 30)
+
+	highlight := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFCB6B")).Bold(true).Render("highlight")
+	model.AppendCommand("context", highlight+"\n"+strings.Repeat("long text ", 20))
+
+	view := model.View()
+	if !strings.Contains(view, highlight) {
+		t.Fatalf("command output lost its styles: %q", view)
+	}
+
+	if width := lipgloss.Width(view); width > 20 {
+		t.Fatalf("command output width = %d, want at most 20", width)
 	}
 }

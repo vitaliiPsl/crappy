@@ -45,3 +45,20 @@ func TestClosedEventBusClearsActiveExecution(t *testing.T) {
 		t.Fatalf("status = %q, want closed session error", status)
 	}
 }
+
+func TestContextResultIgnoresOtherAndClosedScreens(t *testing.T) {
+	screen := New(context.Background(), nil, config.Config{}, "session-1")
+	screen.contextLoading = true
+	screen.Update(contextMsg{sessionID: "session-1"})
+
+	if !screen.contextLoading {
+		t.Fatal("another screen's context result was accepted")
+	}
+
+	screen.Close()
+	screen.Update(contextMsg{target: screen, sessionID: "session-1"})
+
+	if !screen.contextLoading {
+		t.Fatal("a closed screen accepted a context result")
+	}
+}

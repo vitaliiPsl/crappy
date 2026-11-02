@@ -27,6 +27,26 @@ func (m *Model) handleWorkdir(message workdirMsg) {
 	m.workdir = message.directory
 }
 
+func (m *Model) handleContext(message contextMsg) {
+	if message.target != m || m.ctx.Err() != nil {
+		return
+	}
+
+	m.contextLoading = false
+	if message.sessionID != m.sessionID {
+		return
+	}
+
+	if message.err != nil {
+		m.notice = errorNotice(message.err)
+
+		return
+	}
+
+	m.notice = notice{}
+	m.transcript.AppendCommand("context", renderContext(message.data))
+}
+
 func (m *Model) submit(text string) tea.Cmd {
 	command, handled, err := m.commands.Execute(text)
 	if handled {

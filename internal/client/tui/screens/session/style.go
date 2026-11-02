@@ -21,5 +21,9 @@ var (
 	errorStyle          = lipgloss.NewStyle().Foreground(theme.Default.Error)
 	workingStyle        = lipgloss.NewStyle().Foreground(theme.Default.Primary)
 	noticeStyle         = lipgloss.NewStyle().Foreground(theme.Default.Warning)
-	infoStyle           = lipgloss.NewStyle().Foreground(theme.Default.Subtle)
+
+	contextHeadingStyle = lipgloss.NewStyle().Foreground(theme.Default.Primary).Bold(true)
+	contextValueStyle   = lipgloss.NewStyle().Foreground(theme.Default.Text).Bold(true)
+	contextDetailStyle  = lipgloss.NewStyle().Foreground(theme.Default.Subtle)
+	contextCountStyle   = lipgloss.NewStyle().Foreground(theme.Default.Muted)
 )

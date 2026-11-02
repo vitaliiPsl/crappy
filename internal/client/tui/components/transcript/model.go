@@ -11,11 +11,16 @@ import (
 	"github.com/vitaliipsl/crappy/harness/compaction"
 )
 
+type block interface {
+	render(width int) string
+}
+
 type Model struct {
-	viewport   viewport.Model
-	executions []*execution
-	width      int
-	height     int
+	viewport      viewport.Model
+	blocks        []block
+	lastExecution *execution
+	width         int
+	height        int
 
 	content string
 	view    string
@@ -80,6 +85,11 @@ func (m *Model) Append(executionID string, message kit.Message) {
 	m.execution(executionID).append(message)
 }
 
+// AppendCommand appends styled TUI output; callers must sanitize external text.
+func (m *Model) AppendCommand(name, output string) {
+	m.blocks = append(m.blocks, newCommandOutput(name, output))
+}
+
 func (m *Model) Apply(executionID string, event kit.AgentEvent) {
 	m.execution(executionID).apply(event)
 }
@@ -97,22 +107,20 @@ func (m *Model) Finish(executionID string) {
 }
 
 func (m *Model) execution(id string) *execution {
-	if len(m.executions) > 0 {
-		last := m.executions[len(m.executions)-1]
-		if last.id == id {
-			return last
-		}
+	if m.lastExecution != nil && m.lastExecution.id == id {
+		return m.lastExecution
 	}
 
 	created := newExecution(id)
-	m.executions = append(m.executions, created)
+	m.blocks = append(m.blocks, created)
+	m.lastExecution = created
 
 	return created
 }
 
 func (m *Model) render() string {
-	sections := make([]string, 0, len(m.executions))
-	for _, value := range m.executions {
+	sections := make([]string, 0, len(m.blocks))
+	for _, value := range m.blocks {
 		if rendered := value.render(m.width); rendered != "" {
 			sections = append(sections, rendered)
 		}

@@ -10,7 +10,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/vitaliiPsl/crappy-adk/kit"
+	"github.com/vitaliiPsl/crappy-adk/kittest"
+
 	"github.com/vitaliipsl/crappy/harness"
+	"github.com/vitaliipsl/crappy/harness/agent"
 	compactionexec "github.com/vitaliipsl/crappy/harness/compaction/executor"
 	"github.com/vitaliipsl/crappy/harness/execution"
 	harnesssession "github.com/vitaliipsl/crappy/harness/session"
@@ -36,8 +40,8 @@ func TestHelpCommandWorksWhileExecutionIsActive(t *testing.T) {
 	}
 
 	for _, name := range []string{"/help", "/new", "/sessions", "/compact", "/context"} {
-		if !strings.Contains(screen.statusView(), name) {
-			t.Fatalf("help omitted %s: %q", name, screen.statusView())
+		if !strings.Contains(screen.View().Content, name) {
+			t.Fatalf("help omitted %s: %q", name, screen.View().Content)
 		}
 	}
 
@@ -57,7 +61,6 @@ func TestNavigationCommandsWorkWhileExecutionIsActive(t *testing.T) {
 	}{
 		{command: "/new", operation: navigation.OperationReset, route: routes.SessionName},
 		{command: "/sessions", operation: navigation.OperationToggle, route: routes.SessionsName, sessionID: "session-1"},
-		{command: "/context", operation: navigation.OperationPush, route: routes.ContextName, sessionID: "session-1"},
 	} {
 		t.Run(test.command, func(t *testing.T) {
 			screen := New(context.Background(), nil, config.Config{}, "session-1")
@@ -96,6 +99,129 @@ func TestInvalidCommandsStayOutOfConversation(t *testing.T) {
 		}
 
 		screen.Close()
+	}
+}
+
+func TestContextCommandShowsLocalSnapshotsWhileExecutionIsActive(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	storage, err := jsonl.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	model := kittest.NewModel(t)
+	tool := kittest.NewTool(t, "bash", "Run a shell command")
+	agents := agent.New(kit.AgentConfig{Instructions: "Be concise."}, contextModelResolver{model},
+		agent.WithContributors(agent.ContributorFunc(func(context.Context, agent.BuildContext) (agent.Contribution, error) {
+			return agent.Contribution{Tools: []kit.Tool{tool}}, nil
+		})),
+	)
+	h := harness.New(storage, harness.WithExecutor(agent.ExecutorName, agent.NewExecutor(agents)))
+	t.Cleanup(func() { _ = h.Shutdown(ctx) })
+
+	app := assistant.New(h, storage, agents, token.NewCharacterEstimator())
+
+	opened, err := app.Session(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := opened.Commit(ctx, "prior", agent.MessageEntryType, kit.NewUserMessage(kit.NewTextContent("first message"))); err != nil {
+		t.Fatal(err)
+	}
+
+	screen := New(ctx, app, config.Config{}, opened.ID())
+	defer screen.Close()
+
+	screen.Update(tea.WindowSizeMsg{Width: 100, Height: 60})
+	screen.executionID = "running"
+
+	load := screen.submit("/context")
+	if load == nil {
+		t.Fatal("context command was ignored while busy")
+	}
+
+	if repeated := screen.submit("/context"); repeated != nil {
+		t.Fatal("context command started concurrent requests")
+	}
+
+	if _, command := screen.Update(load()); command != nil {
+		t.Fatal("context output started navigation or execution")
+	}
+
+	view := screen.View().Content
+	for _, want := range []string{"/context", "tokens", "Instructions", "Core", "Conversation", "1 message", "Tools", "1 tool", "bash"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("context output omitted %q: %s", want, view)
+		}
+	}
+
+	if !screen.running() || !strings.Contains(screen.statusView(), workingLabel) {
+		t.Fatal("context command changed the execution state")
+	}
+
+	if err := opened.Commit(ctx, "prior", agent.MessageEntryType, kit.NewUserMessage(kit.NewTextContent("second message"))); err != nil {
+		t.Fatal(err)
+	}
+
+	screen.Update(screen.submit("/context")())
+
+	if view := screen.View().Content; strings.Count(view, "/context") != 2 || !strings.Contains(view, "2 messages") {
+		t.Fatalf("context command did not append a fresh snapshot: %s", view)
+	}
+
+	if command := screen.submit("/help"); command != nil {
+		t.Fatal("help submitted application work")
+	}
+
+	resolved, err := app.Context(ctx, opened.ID())
+	if err != nil || len(resolved.Messages) != 2 {
+		t.Fatalf("command output entered agent context: %+v, %v", resolved.Messages, err)
+	}
+
+	entries, err := opened.Entries(ctx, 0)
+	if err != nil || len(entries) != 2 || entries[0].Type != agent.MessageEntryType || entries[1].Type != agent.MessageEntryType {
+		t.Fatalf("command output changed persisted history: %+v, %v", entries, err)
+	}
+
+	model.AssertNeverCalled(t)
+	tool.AssertNeverCalled(t)
+}
+
+func TestContextCommandRequiresExistingSession(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	storage, err := jsonl.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	h := harness.New(storage)
+	t.Cleanup(func() { _ = h.Shutdown(ctx) })
+
+	app := assistant.New(h, storage, nil, token.NewCharacterEstimator())
+
+	screen := New(ctx, app, config.Config{}, "")
+	defer screen.Close()
+
+	result := screen.submit("/context")().(contextMsg)
+	if !errors.Is(result.err, assistant.ErrSessionRequired) {
+		t.Fatalf("context without a session returned %v", result.err)
+	}
+
+	screen.Update(result)
+
+	if screen.contextLoading || screen.notice.kind != noticeError || screen.sessionID != "" {
+		t.Fatal("context failure did not remain local to the current screen")
+	}
+
+	if sessions, err := app.Sessions(ctx); err != nil || len(sessions) != 0 {
+		t.Fatalf("context command created a session: %+v, %v", sessions, err)
 	}
 }
 
@@ -188,4 +314,12 @@ func TestCompactCommandUsesNormalExecutionLifecycle(t *testing.T) {
 	if started.Executor != compactionexec.ExecutorName {
 		t.Fatalf("command used executor %q", started.Executor)
 	}
+}
+
+type contextModelResolver struct {
+	model kit.Model
+}
+
+func (r contextModelResolver) Resolve(context.Context) (kit.Model, error) {
+	return r.model, nil
 }

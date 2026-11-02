@@ -2,6 +2,7 @@ package session
 
 import (
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/vitaliipsl/crappy/internal/client/tui/commands"
 	"github.com/vitaliipsl/crappy/internal/client/tui/navigation"
@@ -19,7 +20,8 @@ func (m *Model) newCommands() *commands.Registry {
 }
 
 func (m *Model) help() tea.Cmd {
-	m.notice = notice{kind: noticeInfo, message: m.commands.Help()}
+	m.notice = notice{}
+	m.transcript.AppendCommand("help", ansi.Strip(m.commands.Help()))
 
 	return nil
 }
@@ -39,10 +41,17 @@ func (m *Model) showSessions() tea.Cmd {
 }
 
 func (m *Model) showContext() tea.Cmd {
+	if m.contextLoading {
+		return nil
+	}
+
+	m.contextLoading = true
 	sessionID := m.sessionID
 
 	return func() tea.Msg {
-		return navigation.Push(routes.Context(sessionID))
+		data, err := m.assistant.Context(m.ctx, sessionID)
+
+		return contextMsg{target: m, sessionID: sessionID, data: data, err: err}
 	}
 }
 

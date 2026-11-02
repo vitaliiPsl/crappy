@@ -8,7 +8,6 @@ const (
 	noticeNone noticeKind = iota
 	noticeError
 	noticeInterrupted
-	noticeInfo
 )
 
 type notice struct {

@@ -97,10 +97,6 @@ func TestContextInspectsEffectiveInputsWithoutExecution(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if report.Workdir == "" {
-		t.Fatalf("incorrect inspection metadata: %+v", report)
-	}
-
 	if len(report.Instructions) != 2 || report.Instructions[0].Source != "" || report.Instructions[1].Text != "# Session Instructions\n\nFollow local guidance." {
 		t.Fatalf("instruction order or framing changed: %+v", report.Instructions)
 	}

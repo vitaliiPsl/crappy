@@ -3,11 +3,13 @@ package session
 import (
 	"cmp"
 	"fmt"
+	"slices"
 	"strings"
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/vitaliipsl/crappy/internal/assistant"
 	"github.com/vitaliipsl/crappy/internal/client/tui/components/hints"
 )
 
@@ -125,10 +127,6 @@ func (m *Model) statusView() string {
 		return errorStyle.Width(m.contentWidth()).Render(errorPrefix + m.notice.message)
 	}
 
-	if m.notice.kind == noticeInfo {
-		return infoStyle.Width(m.contentWidth()).Render(m.notice.message)
-	}
-
 	if m.running() {
 		return workingStyle.Width(m.contentWidth()).Render(workingLabel)
 	}
@@ -153,4 +151,73 @@ func formatTokens(tokens int64) string {
 	default:
 		return fmt.Sprintf("%d", tokens)
 	}
+}
+
+func renderContext(report assistant.ContextReport) string {
+	labelWidth := len("Instructions")
+
+	tokenWidth := max(
+		len(formatTokens(int64(report.Tokens()))),
+		len(formatTokens(int64(report.MessageTokens()))),
+		len(formatTokens(int64(report.ToolTokens()))),
+		len(formatTokens(int64(report.InstructionTokens()))),
+	)
+	for _, instruction := range report.Instructions {
+		labelWidth = max(labelWidth, 2+ansi.StringWidth(ansi.Strip(cmp.Or(instruction.Source, "Core"))))
+		tokenWidth = max(tokenWidth, len(formatTokens(int64(instruction.Tokens))))
+	}
+
+	for _, tool := range report.Tools {
+		labelWidth = max(labelWidth, 2+ansi.StringWidth(ansi.Strip(tool.Name)))
+		tokenWidth = max(tokenWidth, len(formatTokens(int64(tool.Tokens))))
+	}
+
+	row := func(label string, tokens int, count string, style lipgloss.Style) string {
+		label = ansi.Strip(label)
+		padding := strings.Repeat(" ", max(labelWidth-ansi.StringWidth(label), 0))
+		value := fmt.Sprintf("%*s", tokenWidth, formatTokens(int64(tokens)))
+
+		line := style.Render(label+padding) + "  " + contextValueStyle.Render(value)
+		if count != "" {
+			line += "  " + contextCountStyle.Render(count)
+		}
+
+		return line
+	}
+
+	lines := []string{
+		contextHeadingStyle.Render(formatTokens(int64(report.Tokens()))) + " " + contextCountStyle.Render("tokens"),
+		"",
+		row("Conversation", report.MessageTokens(), countLabel(len(report.Messages), "message"), contextValueStyle),
+		row("Tools", report.ToolTokens(), countLabel(len(report.Tools), "tool"), contextValueStyle),
+		row("Instructions", report.InstructionTokens(), countLabel(len(report.Instructions), "source"), contextValueStyle),
+	}
+	if len(report.Instructions) > 0 {
+		lines = append(lines, "", contextHeadingStyle.Render("Instruction sources"))
+		for _, instruction := range report.Instructions {
+			lines = append(lines, row("  "+cmp.Or(instruction.Source, "Core"), instruction.Tokens, "", contextDetailStyle))
+		}
+	}
+
+	if len(report.Tools) > 0 {
+		tools := slices.Clone(report.Tools)
+		slices.SortStableFunc(tools, func(a, b assistant.ContextTool) int {
+			return cmp.Compare(b.Tokens, a.Tokens)
+		})
+
+		lines = append(lines, "", contextHeadingStyle.Render("Tool definitions"))
+		for _, tool := range tools {
+			lines = append(lines, row("  "+tool.Name, tool.Tokens, "", contextDetailStyle))
+		}
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+func countLabel(count int, noun string) string {
+	if count == 1 {
+		return "1 " + noun
+	}
+
+	return fmt.Sprintf("%d %ss", count, noun)
 }

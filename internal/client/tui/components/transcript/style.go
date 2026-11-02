@@ -14,6 +14,7 @@ var (
 			Background(theme.Default.SurfaceAlt).
 			Padding(1)
 	assistantStyle = lipgloss.NewStyle().PaddingLeft(1).PaddingRight(1)
+	commandStyle   = lipgloss.NewStyle().Foreground(theme.Default.Primary).Bold(true)
 	thinkingStyle  = lipgloss.NewStyle().
 			Foreground(theme.Default.Muted).
 			Italic(true)

@@ -10,7 +10,6 @@ import (
 )
 
 type ContextReport struct {
-	Workdir      string               `json:"workdir"`
 	Instructions []ContextInstruction `json:"instructions"`
 	Messages     []ContextMessage     `json:"messages"`
 	Tools        []ContextTool        `json:"tools"`
@@ -87,14 +86,7 @@ func (a *Assistant) Context(ctx context.Context, sessionID string) (ContextRepor
 		return ContextReport{}, err
 	}
 
-	directory, err := a.Workdir(ctx, sessionID)
-	if err != nil {
-		return ContextReport{}, err
-	}
-
-	result := ContextReport{
-		Workdir: directory,
-	}
+	var result ContextReport
 
 	for _, instruction := range resolved.Instructions {
 		section := kit.AgentContext{Instructions: []kit.Instruction{instruction}}

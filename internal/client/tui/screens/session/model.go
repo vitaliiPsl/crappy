@@ -24,11 +24,12 @@ type Model struct {
 	subscription *event.Subscription
 	commands     *commands.Registry
 
-	sessionID   string
-	workdir     string
-	executionID string
-	notice      notice
-	terminalErr error
+	sessionID      string
+	workdir        string
+	executionID    string
+	contextLoading bool
+	notice         notice
+	terminalErr    error
 
 	sessionUsage kit.Usage
 
@@ -72,6 +73,10 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case workdirMsg:
 		m.handleWorkdir(message)
+
+		return m, nil
+	case contextMsg:
+		m.handleContext(message)
 
 		return m, nil
 	case subscribedMsg:
