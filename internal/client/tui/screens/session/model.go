@@ -12,14 +12,12 @@ import (
 	"github.com/vitaliipsl/crappy/internal/client/tui/commands"
 	"github.com/vitaliipsl/crappy/internal/client/tui/components/composer"
 	"github.com/vitaliipsl/crappy/internal/client/tui/components/transcript"
-	"github.com/vitaliipsl/crappy/internal/config"
 )
 
 type Model struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	config       config.Config
 	assistant    *assistant.Assistant
 	subscription *event.Subscription
 	commands     *commands.Registry
@@ -32,6 +30,7 @@ type Model struct {
 	terminalErr    error
 
 	sessionUsage kit.Usage
+	model        assistant.ModelSelection
 
 	transcript transcript.Model
 	composer   composer.Model
@@ -39,14 +38,13 @@ type Model struct {
 	height     int
 }
 
-func New(ctx context.Context, app *assistant.Assistant, config config.Config, sessionID string) *Model {
+func New(ctx context.Context, app *assistant.Assistant, sessionID string) *Model {
 	ctx, cancel := context.WithCancel(ctx)
 
 	model := &Model{
 		ctx:        ctx,
 		cancel:     cancel,
 		assistant:  app,
-		config:     config,
 		sessionID:  sessionID,
 		transcript: transcript.New(),
 		composer:   composer.New(),
@@ -58,10 +56,10 @@ func New(ctx context.Context, app *assistant.Assistant, config config.Config, se
 
 func (m *Model) Init() tea.Cmd {
 	if m.sessionID == "" {
-		return tea.Batch(m.composer.Init(), m.loadWorkdir())
+		return tea.Batch(m.composer.Init(), m.loadModel(), m.loadWorkdir())
 	}
 
-	return tea.Batch(m.composer.Init(), m.loadWorkdir(), m.subscribe())
+	return tea.Batch(m.composer.Init(), m.loadModel(), m.loadWorkdir(), m.subscribe())
 }
 
 func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
@@ -69,6 +67,10 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = message.Width
 		m.height = message.Height
+
+		return m, nil
+	case modelMsg:
+		m.handleModel(message)
 
 		return m, nil
 	case workdirMsg:

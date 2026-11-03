@@ -13,6 +13,7 @@ import (
 	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
+	"github.com/vitaliipsl/crappy/harness/session/state"
 	"github.com/vitaliipsl/crappy/internal/assistant"
 )
 
@@ -45,12 +46,22 @@ func New(
 }
 
 func (c *Client) Run(ctx context.Context) error {
-	opened, err := c.assistant.Session(ctx, c.sessionID)
+	var (
+		opened state.Record
+		err    error
+	)
+
+	if c.sessionID == "" {
+		opened, err = c.assistant.CreateSession(ctx, "")
+	} else {
+		opened, err = c.assistant.GetSession(ctx, c.sessionID)
+	}
+
 	if err != nil {
 		return fmt.Errorf("open session: %w", err)
 	}
 
-	subscription, err := opened.Subscribe(ctx, 0)
+	subscription, err := c.assistant.Subscribe(ctx, opened.ID, 0)
 	if err != nil {
 		return fmt.Errorf("subscribe: %w", err)
 	}
@@ -101,10 +112,7 @@ func (c *Client) Run(ctx context.Context) error {
 				continue
 			}
 
-			submitted, err := opened.Execute(ctx, execution.Request{
-				Executor: agent.ExecutorName,
-				Input:    kit.NewUserMessage(kit.NewTextContent(text)),
-			})
+			submitted, err := c.assistant.Execute(ctx, opened.ID, kit.NewTextContent(text))
 			if err != nil {
 				return fmt.Errorf("execute: %w", err)
 			}

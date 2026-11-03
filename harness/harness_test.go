@@ -203,7 +203,7 @@ func TestLookupContextDoesNotOwnExecution(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	current, err := opened.Execute(context.Background(), execution.Request{Executor: "work"})
+	current, err := opened.Execute(context.Background(), execution.NewRequest("work", nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +239,7 @@ func TestShutdownOwnsSessionsAndRejectsFurtherOpens(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	current, err := opened.Execute(context.Background(), execution.Request{Executor: "work"})
+	current, err := opened.Execute(context.Background(), execution.NewRequest("work", nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +264,7 @@ func TestShutdownOwnsSessionsAndRejectsFurtherOpens(t *testing.T) {
 		t.Fatalf("Session after shutdown error = %v", err)
 	}
 
-	if _, err := opened.Execute(context.Background(), execution.Request{Executor: "work"}); !errors.Is(err, session.ErrClosed) {
+	if _, err := opened.Execute(context.Background(), execution.NewRequest("work", nil)); !errors.Is(err, session.ErrClosed) {
 		t.Fatalf("execution after shutdown error = %v", err)
 	}
 
@@ -285,7 +285,7 @@ func TestShutdownDeadlineDoesNotAbandonCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := opened.Execute(context.Background(), execution.Request{Executor: "work"}); err != nil {
+	if _, err := opened.Execute(context.Background(), execution.NewRequest("work", nil)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -372,7 +372,7 @@ func TestSessionsRemainPersistentAcrossHosts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	current, err := opened.Execute(context.Background(), execution.Request{Executor: "work"})
+	current, err := opened.Execute(context.Background(), execution.NewRequest("work", nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -457,7 +457,7 @@ func TestSessionStatePersistsAndReachesExecutors(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		current, err := opened.Execute(ctx, execution.Request{Executor: "inspect"})
+		current, err := opened.Execute(ctx, execution.NewRequest("inspect", nil))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -544,7 +544,7 @@ func TestSessionInitializesBeforeReturning(t *testing.T) {
 		t.Fatalf("previous status = %+v", finished)
 	}
 
-	current, err := opened.Execute(ctx, execution.Request{Executor: "work"})
+	current, err := opened.Execute(ctx, execution.NewRequest("work", nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -570,7 +570,7 @@ func TestSessionAttachmentPreservesActiveExecution(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	current, err := opened.Execute(ctx, execution.Request{Executor: "work"})
+	current, err := opened.Execute(ctx, execution.NewRequest("work", nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -666,7 +666,7 @@ func TestSessionAttachmentDoesNotRetryFailedSettlement(t *testing.T) {
 
 	entries.failing.Store(true)
 
-	current, err := opened.Execute(ctx, execution.Request{Executor: "work"})
+	current, err := opened.Execute(ctx, execution.NewRequest("work", nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -683,7 +683,7 @@ func TestSessionAttachmentDoesNotRetryFailedSettlement(t *testing.T) {
 			t.Fatalf("failed session attachment = %v, error = %v", attached, err)
 		}
 
-		if next, err := opened.Execute(ctx, execution.Request{Executor: "work"}); next != nil || !errors.Is(err, session.ErrClosed) {
+		if next, err := opened.Execute(ctx, execution.NewRequest("work", nil)); next != nil || !errors.Is(err, session.ErrClosed) {
 			t.Fatalf("failed session admission = %v, error = %v", next, err)
 		}
 
@@ -748,7 +748,7 @@ func TestSessionAttachmentReturnsExistingClosedSession(t *testing.T) {
 		t.Fatalf("closed session attachment = %v, error = %v", attached, err)
 	}
 
-	if _, err := attached.Execute(context.Background(), execution.Request{}); !errors.Is(err, session.ErrClosed) {
+	if _, err := attached.Execute(context.Background(), execution.NewRequest("work", nil)); !errors.Is(err, session.ErrClosed) {
 		t.Fatalf("closed session admission = %v", err)
 	}
 }

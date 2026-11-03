@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -21,7 +22,112 @@ import (
 	"github.com/vitaliipsl/crappy/internal/assistant"
 	"github.com/vitaliipsl/crappy/internal/config"
 	"github.com/vitaliipsl/crappy/internal/storage/jsonl"
+	"github.com/vitaliipsl/crappy/internal/workdir"
 )
+
+func TestLoadModelReadsAssistantSelection(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	storage, err := jsonl.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	h := harness.New(storage)
+	t.Cleanup(func() { _ = h.Shutdown(ctx) })
+
+	app := assistant.New(config.Config{
+		ProviderID: "provider",
+		ModelID:    "selected-model",
+		Generation: config.Generation{Thinking: "high"},
+	}, h, storage, nil, token.NewCharacterEstimator())
+
+	screen := New(ctx, app, "")
+	defer screen.Close()
+
+	screen.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+
+	commands := screen.Init()().(tea.BatchMsg)
+	for _, command := range commands {
+		if message, ok := command().(modelMsg); ok {
+			screen.Update(message)
+		}
+	}
+
+	if header := screen.headerView(); !strings.Contains(header, "provider / selected-model · high") {
+		t.Fatalf("header omitted assistant model selection: %q", header)
+	}
+
+	if records, err := app.ListSessions(ctx); err != nil || len(records) != 0 {
+		t.Fatalf("initializing the screen created sessions: %+v, %v", records, err)
+	}
+}
+
+func TestLoadWorkdirReadsSessionState(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	storage, err := jsonl.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	h := harness.New(storage)
+	t.Cleanup(func() { _ = h.Shutdown(ctx) })
+
+	app := assistant.New(config.Config{}, h, storage, nil, token.NewCharacterEstimator())
+
+	screen := New(ctx, app, "")
+	defer screen.Close()
+
+	directory, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	screen.Update(screen.loadWorkdir()())
+
+	if screen.workdir != directory {
+		t.Fatalf("draft workdir = %q, want %q", screen.workdir, directory)
+	}
+
+	if records, err := app.ListSessions(ctx); err != nil || len(records) != 0 {
+		t.Fatalf("draft lookup created a session: %+v, %v", records, err)
+	}
+
+	directory = t.TempDir()
+
+	created, err := app.CreateSession(ctx, directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	screen.sessionID = created.ID
+	screen.Update(screen.loadWorkdir()())
+
+	if screen.workdir != directory {
+		t.Fatalf("session workdir = %q, want %q", screen.workdir, directory)
+	}
+
+	opened, err := h.Session(ctx, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	directory = t.TempDir()
+	if err := opened.State().Set(ctx, workdir.StateKey, directory); err != nil {
+		t.Fatal(err)
+	}
+
+	screen.Update(screen.loadWorkdir()())
+
+	if screen.workdir != directory {
+		t.Fatalf("updated workdir = %q, want %q", screen.workdir, directory)
+	}
+}
 
 func TestExecuteReportsTerminalPersistenceFailure(t *testing.T) {
 	for _, streamClosesFirst := range []bool{true, false} {
@@ -56,7 +162,7 @@ func TestExecuteReportsTerminalPersistenceFailure(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			screen := New(ctx, assistant.New(h, storage, nil, token.NewCharacterEstimator()), config.Config{}, opened.ID())
+			screen := New(ctx, assistant.New(config.Config{}, h, storage, nil, token.NewCharacterEstimator()), opened.ID())
 			defer screen.Close()
 
 			screen.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
@@ -134,7 +240,7 @@ func TestWaitForExecutionStopsWhenScreenCloses(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	screen := New(ctx, assistant.New(h, storage, nil, token.NewCharacterEstimator()), config.Config{}, opened.ID())
+	screen := New(ctx, assistant.New(config.Config{}, h, storage, nil, token.NewCharacterEstimator()), opened.ID())
 	defer screen.Close()
 
 	accepted := screen.execute(kit.NewUserMessage(kit.NewTextContent("hello")))().(executeResultMsg)
@@ -166,7 +272,7 @@ func TestFirstSubmitCreatesSession(t *testing.T) {
 	h := harness.New(storage)
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 
-	screen := New(context.Background(), assistant.New(h, storage, nil, token.NewCharacterEstimator()), config.Config{}, "")
+	screen := New(context.Background(), assistant.New(config.Config{}, h, storage, nil, token.NewCharacterEstimator()), "")
 	defer screen.Close()
 
 	created := screen.submit("fix the compaction")().(createdMsg)

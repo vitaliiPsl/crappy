@@ -14,19 +14,15 @@ import (
 
 	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/internal/assistant"
-	"github.com/vitaliipsl/crappy/internal/config"
 )
 
 func TestViewShowsAgentContextAndUsage(t *testing.T) {
 	for _, thinking := range []string{"", "high"} {
 		t.Run("reasoning="+thinking, func(t *testing.T) {
-			screen := New(context.Background(), nil, config.Config{
-				ProviderID: "openai",
-				ModelID:    "test-model",
-				Generation: config.Generation{Thinking: thinking},
-			}, "session-1")
+			screen := New(context.Background(), nil, "session-1")
 			defer screen.Close()
 
+			screen.model = assistant.ModelSelection{ProviderID: "openai", ModelID: "test-model", Thinking: thinking}
 			screen.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
 			screen.sessionUsage = kit.Usage{InputTokens: 3400, OutputTokens: 900}
 			screen.workdir = "/projects/crappy"
@@ -53,13 +49,10 @@ func TestViewShowsAgentContextAndUsage(t *testing.T) {
 func TestViewFitsWindowWithContext(t *testing.T) {
 	for _, size := range [][2]int{{40, 16}, {80, 20}, {120, 30}} {
 		t.Run(fmt.Sprintf("%dx%d", size[0], size[1]), func(t *testing.T) {
-			screen := New(context.Background(), nil, config.Config{
-				ProviderID: "openai",
-				ModelID:    "test-model",
-				Generation: config.Generation{Thinking: "high"},
-			}, "session-1")
+			screen := New(context.Background(), nil, "session-1")
 			defer screen.Close()
 
+			screen.model = assistant.ModelSelection{ProviderID: "openai", ModelID: "test-model", Thinking: "high"}
 			screen.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 			screen.sessionUsage = kit.Usage{InputTokens: 1200, OutputTokens: 300}
 			screen.workdir = "/projects/" + strings.Repeat("long-directory/", 12) + "crappy"

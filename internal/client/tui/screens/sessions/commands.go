@@ -22,7 +22,7 @@ type deletedMsg struct {
 
 func (m *Model) load() tea.Cmd {
 	return func() tea.Msg {
-		sessions, err := m.assistant.Sessions(m.ctx)
+		sessions, err := m.assistant.ListSessions(m.ctx)
 
 		return loadedMsg{target: m, sessions: sessions, err: err}
 	}

@@ -29,7 +29,7 @@ import (
 func TestHelpCommandWorksWhileExecutionIsActive(t *testing.T) {
 	t.Parallel()
 
-	screen := New(context.Background(), nil, config.Config{}, "session-1")
+	screen := New(context.Background(), nil, "session-1")
 	defer screen.Close()
 
 	screen.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -63,7 +63,7 @@ func TestNavigationCommandsWorkWhileExecutionIsActive(t *testing.T) {
 		{command: "/sessions", operation: navigation.OperationToggle, route: routes.SessionsName, sessionID: "session-1"},
 	} {
 		t.Run(test.command, func(t *testing.T) {
-			screen := New(context.Background(), nil, config.Config{}, "session-1")
+			screen := New(context.Background(), nil, "session-1")
 			defer screen.Close()
 
 			screen.executionID = "running"
@@ -89,7 +89,7 @@ func TestInvalidCommandsStayOutOfConversation(t *testing.T) {
 	t.Parallel()
 
 	for _, text := range []string{"/unknown", "/compact extra", "/"} {
-		screen := New(context.Background(), nil, config.Config{}, "")
+		screen := New(context.Background(), nil, "")
 		if command := screen.submit(text); command != nil {
 			t.Fatalf("invalid command %q submitted application work", text)
 		}
@@ -122,9 +122,14 @@ func TestContextCommandShowsLocalSnapshotsWhileExecutionIsActive(t *testing.T) {
 	h := harness.New(storage, harness.WithExecutor(agent.ExecutorName, agent.NewExecutor(agents)))
 	t.Cleanup(func() { _ = h.Shutdown(ctx) })
 
-	app := assistant.New(h, storage, agents, token.NewCharacterEstimator())
+	app := assistant.New(config.Config{}, h, storage, agents, token.NewCharacterEstimator())
 
-	opened, err := app.Session(ctx, "")
+	created, err := app.CreateSession(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	opened, err := h.Session(ctx, created.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +138,7 @@ func TestContextCommandShowsLocalSnapshotsWhileExecutionIsActive(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	screen := New(ctx, app, config.Config{}, opened.ID())
+	screen := New(ctx, app, opened.ID())
 	defer screen.Close()
 
 	screen.Update(tea.WindowSizeMsg{Width: 100, Height: 60})
@@ -204,9 +209,9 @@ func TestContextCommandRequiresExistingSession(t *testing.T) {
 	h := harness.New(storage)
 	t.Cleanup(func() { _ = h.Shutdown(ctx) })
 
-	app := assistant.New(h, storage, nil, token.NewCharacterEstimator())
+	app := assistant.New(config.Config{}, h, storage, nil, token.NewCharacterEstimator())
 
-	screen := New(ctx, app, config.Config{}, "")
+	screen := New(ctx, app, "")
 	defer screen.Close()
 
 	result := screen.submit("/context")().(contextMsg)
@@ -220,7 +225,7 @@ func TestContextCommandRequiresExistingSession(t *testing.T) {
 		t.Fatal("context failure did not remain local to the current screen")
 	}
 
-	if sessions, err := app.Sessions(ctx); err != nil || len(sessions) != 0 {
+	if sessions, err := app.ListSessions(ctx); err != nil || len(sessions) != 0 {
 		t.Fatalf("context command created a session: %+v, %v", sessions, err)
 	}
 }
@@ -253,9 +258,9 @@ func TestCompactCommandUsesNormalExecutionLifecycle(t *testing.T) {
 	))
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 
-	app := assistant.New(h, storage, nil, token.NewCharacterEstimator())
+	app := assistant.New(config.Config{}, h, storage, nil, token.NewCharacterEstimator())
 
-	screen := New(ctx, app, config.Config{}, "")
+	screen := New(ctx, app, "")
 	defer screen.Close()
 
 	missing := screen.submit("/compact")().(executeResultMsg)
@@ -263,11 +268,16 @@ func TestCompactCommandUsesNormalExecutionLifecycle(t *testing.T) {
 		t.Fatalf("compaction without a session returned %v", missing.err)
 	}
 
-	if sessions, err := app.Sessions(ctx); err != nil || len(sessions) != 0 {
+	if sessions, err := app.ListSessions(ctx); err != nil || len(sessions) != 0 {
 		t.Fatalf("compaction created an empty session: %+v, %v", sessions, err)
 	}
 
-	opened, err := app.Session(ctx, "")
+	created, err := app.CreateSession(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	opened, err := h.Session(ctx, created.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

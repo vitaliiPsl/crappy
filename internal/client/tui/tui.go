@@ -10,11 +10,10 @@ import (
 	"github.com/vitaliipsl/crappy/internal/client/tui/routes"
 	sessionscreen "github.com/vitaliipsl/crappy/internal/client/tui/screens/session"
 	sessionsscreen "github.com/vitaliipsl/crappy/internal/client/tui/screens/sessions"
-	"github.com/vitaliipsl/crappy/internal/config"
 )
 
-func Run(ctx context.Context, app *assistant.Assistant, config config.Config) error {
-	sessions, err := app.Sessions(ctx)
+func Run(ctx context.Context, app *assistant.Assistant) error {
+	sessions, err := app.ListSessions(ctx)
 	if err != nil {
 		return err
 	}
@@ -31,7 +30,6 @@ func Run(ctx context.Context, app *assistant.Assistant, config config.Config) er
 				return sessionscreen.New(
 					ctx,
 					app,
-					config,
 					route.Param(routes.ParamSessionID),
 				)
 			},

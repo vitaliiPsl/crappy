@@ -9,9 +9,19 @@ import (
 	"github.com/vitaliipsl/crappy/harness/compaction"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
+	"github.com/vitaliipsl/crappy/internal/assistant"
 )
 
 func (m *Model) applyEvent(value event.Event) {
+	usage, err := assistant.UsageFromEvent(value)
+	if err != nil {
+		m.notice = errorNotice(err)
+
+		return
+	}
+
+	m.sessionUsage.Add(usage)
+
 	switch value.Type {
 	case agent.MessageEntryType:
 		var message kit.Message
@@ -22,7 +32,6 @@ func (m *Model) applyEvent(value event.Event) {
 		}
 
 		m.transcript.Append(value.ExecutionID, message)
-		m.sessionUsage.Add(message.Usage)
 	case agent.EventType:
 		var agentEvent kit.AgentEvent
 		if err := json.Unmarshal(value.Payload, &agentEvent); err != nil {
@@ -43,7 +52,6 @@ func (m *Model) applyEvent(value event.Event) {
 		}
 
 		m.transcript.AppendCompaction(value.ExecutionID, generated)
-		m.sessionUsage.Add(generated.Usage)
 	case execution.StartedEntryType:
 		if m.terminalErr == nil {
 			m.executionID = value.ExecutionID

@@ -58,7 +58,7 @@ func TestNewSettlesAbandonedExecutionBeforeReturning(t *testing.T) {
 
 	session := newExecutorSession(context.Background(), t, "session-1", store, "work", executor)
 
-	current, err := session.Execute(context.Background(), execution.Request{Executor: "work"})
+	current, err := session.Execute(context.Background(), execution.NewRequest("work", nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestNewPreservesCompletedExecution(t *testing.T) {
 	executor := execution.Func(func(context.Context, execution.ExecuteParams) error { return nil })
 	session := newExecutorSession(context.Background(), t, "session-1", store, "work", executor)
 
-	current, err := session.Execute(context.Background(), execution.Request{Executor: "work"})
+	current, err := session.Execute(context.Background(), execution.NewRequest("work", nil))
 	if err != nil {
 		t.Fatal(err)
 	}

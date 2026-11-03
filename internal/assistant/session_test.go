@@ -2,11 +2,14 @@ package assistant
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"testing"
 
+	"github.com/vitaliipsl/crappy/internal/config"
+
 	"github.com/vitaliipsl/crappy/harness"
-	"github.com/vitaliipsl/crappy/harness/session"
+	"github.com/vitaliipsl/crappy/harness/session/state"
 	"github.com/vitaliipsl/crappy/harness/token"
 	"github.com/vitaliipsl/crappy/internal/storage/jsonl"
 	"github.com/vitaliipsl/crappy/internal/workdir"
@@ -24,7 +27,7 @@ func TestSessionPersistsWorkdirAtCreationAndPreservesItOnResume(t *testing.T) {
 	h := harness.New(storage)
 	t.Cleanup(func() { _ = h.Shutdown(ctx) })
 
-	app := New(h, storage, nil, token.NewCharacterEstimator())
+	app := New(config.Config{}, h, storage, nil, token.NewCharacterEstimator())
 
 	t.Chdir(t.TempDir())
 
@@ -33,15 +36,7 @@ func TestSessionPersistsWorkdirAtCreationAndPreservesItOnResume(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if directory, err := app.Workdir(ctx, ""); err != nil || directory != firstDirectory {
-		t.Fatalf("new conversation workdir = %q, error = %v; want %q", directory, err, firstDirectory)
-	}
-
-	if records, err := storage.SessionStore().List(ctx); err != nil || len(records) != 0 {
-		t.Fatalf("workdir lookup created a session: records = %v, error = %v", records, err)
-	}
-
-	first, err := app.Session(ctx, "")
+	first, err := app.CreateSession(ctx, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,18 +50,14 @@ func TestSessionPersistsWorkdirAtCreationAndPreservesItOnResume(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resumed, err := app.Session(ctx, first.ID())
+	resumed, err := app.GetSession(ctx, first.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	assertSessionWorkdir(t, resumed, firstDirectory)
 
-	if directory, err := app.Workdir(ctx, first.ID()); err != nil || directory != firstDirectory {
-		t.Fatalf("resumed workdir = %q, error = %v; want %q", directory, err, firstDirectory)
-	}
-
-	second, err := app.Session(ctx, "")
+	second, err := app.CreateSession(ctx, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +66,13 @@ func TestSessionPersistsWorkdirAtCreationAndPreservesItOnResume(t *testing.T) {
 	assertSessionWorkdir(t, first, firstDirectory)
 
 	updatedDirectory := t.TempDir()
-	if err := first.State().Set(ctx, workdir.StateKey, updatedDirectory); err != nil {
+
+	opened, err := h.Session(ctx, first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := opened.State().Set(ctx, workdir.StateKey, updatedDirectory); err != nil {
 		t.Fatal(err)
 	}
 
@@ -91,31 +88,34 @@ func TestSessionPersistsWorkdirAtCreationAndPreservesItOnResume(t *testing.T) {
 	restarted := harness.New(storage)
 	t.Cleanup(func() { _ = restarted.Shutdown(ctx) })
 
-	app = New(restarted, storage, nil, token.NewCharacterEstimator())
+	app = New(config.Config{}, restarted, storage, nil, token.NewCharacterEstimator())
 
 	for _, test := range []struct {
 		id      string
 		workdir string
 	}{
-		{id: first.ID(), workdir: updatedDirectory},
-		{id: second.ID(), workdir: secondDirectory},
+		{id: first.ID, workdir: updatedDirectory},
+		{id: second.ID, workdir: secondDirectory},
 	} {
-		opened, err := app.Session(ctx, test.id)
+		record, err := app.GetSession(ctx, test.id)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		assertSessionWorkdir(t, opened, test.workdir)
+		assertSessionWorkdir(t, record, test.workdir)
 	}
 }
 
-func assertSessionWorkdir(t *testing.T, opened *session.Session, want string) {
+func assertSessionWorkdir(t *testing.T, record state.Record, want string) {
 	t.Helper()
 
 	var directory string
 
-	found, err := opened.State().Get(context.Background(), workdir.StateKey, &directory)
-	if err != nil || !found || directory != want {
-		t.Fatalf("session %s workdir = %q, found = %v, error = %v; want %q", opened.ID(), directory, found, err, want)
+	if err := json.Unmarshal(record.Values[workdir.StateKey], &directory); err != nil {
+		t.Fatal(err)
+	}
+
+	if directory != want {
+		t.Fatalf("session workdir = %q, want %q", directory, want)
 	}
 }

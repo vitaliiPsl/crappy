@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vitaliipsl/crappy/internal/config"
+
 	adkagent "github.com/vitaliiPsl/crappy-adk/agent"
 	"github.com/vitaliiPsl/crappy-adk/kit"
 	"github.com/vitaliiPsl/crappy-adk/kittest"
@@ -56,16 +58,21 @@ func TestContextInspectsEffectiveInputsWithoutExecution(t *testing.T) {
 	h := harness.New(storage, harness.WithExecutor(agent.ExecutorName, agent.NewExecutor(agents)))
 	t.Cleanup(func() { _ = h.Shutdown(ctx) })
 
-	app := New(h, storage, agents, fixedEstimator(23))
+	app := New(config.Config{}, h, storage, agents, fixedEstimator(23))
 	if _, err := app.Context(ctx, ""); !errors.Is(err, ErrSessionRequired) {
 		t.Fatalf("Context without a session: %v", err)
 	}
 
-	if sessions, err := app.Sessions(ctx); err != nil || len(sessions) != 0 {
+	if sessions, err := app.ListSessions(ctx); err != nil || len(sessions) != 0 {
 		t.Fatalf("inspection created a session: %v, %v", sessions, err)
 	}
 
-	opened, err := app.Session(ctx, "")
+	created, err := app.CreateSession(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	opened, err := h.Session(ctx, created.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/vitaliipsl/crappy/internal/config"
+
 	"github.com/vitaliiPsl/crappy-adk/kit"
 	"github.com/vitaliiPsl/crappy-adk/kittest"
 
@@ -48,7 +50,7 @@ func TestClientRunsSession(t *testing.T) {
 			var output bytes.Buffer
 
 			err = New(
-				assistant.New(h, storage, nil, token.NewCharacterEstimator()),
+				assistant.New(config.Config{}, h, storage, nil, token.NewCharacterEstimator()),
 				"",
 				strings.NewReader("hi\n"),
 				&output,
@@ -81,7 +83,7 @@ func TestClientReportsFailedExecution(t *testing.T) {
 	var output bytes.Buffer
 
 	err = New(
-		assistant.New(h, storage, nil, token.NewCharacterEstimator()),
+		assistant.New(config.Config{}, h, storage, nil, token.NewCharacterEstimator()),
 		"",
 		strings.NewReader("hi\n"),
 		&output,

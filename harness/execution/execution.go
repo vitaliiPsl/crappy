@@ -24,6 +24,10 @@ type Request struct {
 	Input    any    `json:"input"`
 }
 
+func NewRequest(executor string, input any) Request {
+	return Request{Executor: executor, Input: input}
+}
+
 type Started struct {
 	Executor  string          `json:"executor"`
 	Input     json.RawMessage `json:"input"`

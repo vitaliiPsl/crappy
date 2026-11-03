@@ -58,14 +58,14 @@ func (m *Model) headerView() string {
 	width := m.contentWidth()
 	usage := ansi.Truncate(m.usageLabel(), width, "…")
 	available := max(0, width-ansi.StringWidth(usage)-2)
-	modelID := cmp.Or(m.config.ModelID, "No model selected")
+	modelID := cmp.Or(m.model.ModelID, "No model selected")
 
 	model := modelID
-	if m.config.ProviderID != "" {
-		model = m.config.ProviderID + " / " + model
+	if m.model.ProviderID != "" {
+		model = m.model.ProviderID + " / " + model
 	}
 
-	details := model + " · " + cmp.Or(m.config.Generation.Thinking, "default")
+	details := model + " · " + cmp.Or(m.model.Thinking, "default")
 	if m.workdir != "" && available > 3 {
 		directory := m.workdir
 		directoryWidth := min(ansi.StringWidth(directory), available/2)

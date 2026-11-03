@@ -9,11 +9,10 @@ import (
 
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
-	"github.com/vitaliipsl/crappy/internal/config"
 )
 
 func TestSubscriptionFailureIsVisibleWhileExecutionIsActive(t *testing.T) {
-	screen := New(context.Background(), nil, config.Config{}, "session-1")
+	screen := New(context.Background(), nil, "session-1")
 	defer screen.Close()
 
 	screen.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
@@ -30,7 +29,7 @@ func TestSubscriptionFailureIsVisibleWhileExecutionIsActive(t *testing.T) {
 }
 
 func TestClosedEventBusClearsActiveExecution(t *testing.T) {
-	screen := New(context.Background(), nil, config.Config{}, "session-1")
+	screen := New(context.Background(), nil, "session-1")
 	defer screen.Close()
 
 	screen.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
@@ -47,7 +46,7 @@ func TestClosedEventBusClearsActiveExecution(t *testing.T) {
 }
 
 func TestContextResultIgnoresOtherAndClosedScreens(t *testing.T) {
-	screen := New(context.Background(), nil, config.Config{}, "session-1")
+	screen := New(context.Background(), nil, "session-1")
 	screen.contextLoading = true
 	screen.Update(contextMsg{sessionID: "session-1"})
 

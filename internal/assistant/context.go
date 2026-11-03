@@ -63,11 +63,7 @@ type ContextTool struct {
 }
 
 func (a *Assistant) Context(ctx context.Context, sessionID string) (ContextReport, error) {
-	if sessionID == "" {
-		return ContextReport{}, ErrSessionRequired
-	}
-
-	opened, err := a.Session(ctx, sessionID)
+	opened, err := a.openSession(ctx, sessionID)
 	if err != nil {
 		return ContextReport{}, err
 	}

@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vitaliipsl/crappy/internal/config"
+
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
@@ -172,7 +174,7 @@ func TestDeleteClosesLiveSessionBeforeRemovingStorage(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := opened.Execute(ctx, execution.Request{Executor: "work"}); err != nil {
+	if _, err := opened.Execute(ctx, execution.NewRequest("work", nil)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -182,7 +184,7 @@ func TestDeleteClosesLiveSessionBeforeRemovingStorage(t *testing.T) {
 		t.Fatal("executor did not start")
 	}
 
-	model := New(ctx, assistant.New(h, storage, nil, token.NewCharacterEstimator()), "other-session")
+	model := New(ctx, assistant.New(config.Config{}, h, storage, nil, token.NewCharacterEstimator()), "other-session")
 	defer model.Close()
 
 	deleted := model.deleteSession(opened.ID())().(deletedMsg)
@@ -200,7 +202,7 @@ func TestDeleteClosesLiveSessionBeforeRemovingStorage(t *testing.T) {
 		t.Fatalf("deleted session lookup error = %v", err)
 	}
 
-	if _, err := opened.Execute(ctx, execution.Request{}); !errors.Is(err, session.ErrClosed) {
+	if _, err := opened.Execute(ctx, execution.NewRequest("work", nil)); !errors.Is(err, session.ErrClosed) {
 		t.Fatalf("execution on deleted session error = %v", err)
 	}
 
@@ -257,7 +259,7 @@ func testModel(t *testing.T, currentID string, sessions []state.Record) *Model {
 	h := harness.New(testStorage{store})
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 
-	return New(context.Background(), assistant.New(h, testStorage{store}, nil, token.NewCharacterEstimator()), currentID)
+	return New(context.Background(), assistant.New(config.Config{}, h, testStorage{store}, nil, token.NewCharacterEstimator()), currentID)
 }
 
 type testStorage struct{ state.Store }

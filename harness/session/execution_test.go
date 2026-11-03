@@ -27,7 +27,7 @@ func TestExecuteRecordsEachExecutionSeparately(t *testing.T) {
 	var ids []string
 
 	for _, input := range []string{"first", "second"} {
-		current, err := session.Execute(context.Background(), execution.Request{Executor: "work", Input: input})
+		current, err := session.Execute(context.Background(), execution.NewRequest("work", input))
 		if err != nil {
 			t.Fatalf("Execute() error = %v", err)
 		}
@@ -56,7 +56,7 @@ func TestExecuteRejectsConcurrentExecution(t *testing.T) {
 	executor := newBlockingExecutor()
 	session := newExecutorSession(context.Background(), t, "session-1", entry.NewMemoryStore(), "work", executor)
 
-	current, err := session.Execute(context.Background(), execution.Request{Executor: "work"})
+	current, err := session.Execute(context.Background(), execution.NewRequest("work", nil))
 	if err != nil {
 		t.Fatalf("first Execute() error = %v", err)
 	}
@@ -74,7 +74,7 @@ func TestExecuteRejectsConcurrentExecution(t *testing.T) {
 
 	<-executor.started
 
-	_, err = session.Execute(context.Background(), execution.Request{Executor: "work"})
+	_, err = session.Execute(context.Background(), execution.NewRequest("work", nil))
 	if !errors.Is(err, ErrBusy) {
 		t.Fatalf("concurrent Execute() error = %v, want ErrBusy", err)
 	}
@@ -92,7 +92,7 @@ func TestExecuteRecordsFailure(t *testing.T) {
 	})
 	session := newExecutorSession(context.Background(), t, "session-1", entry.NewMemoryStore(), "work", executor)
 
-	current, err := session.Execute(context.Background(), execution.Request{Executor: "work"})
+	current, err := session.Execute(context.Background(), execution.NewRequest("work", nil))
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -129,7 +129,7 @@ func TestCancelActiveExecution(t *testing.T) {
 	executor := newBlockingExecutor()
 	session := newExecutorSession(context.Background(), t, "session-1", entry.NewMemoryStore(), "work", executor)
 
-	current, err := session.Execute(context.Background(), execution.Request{Executor: "work"})
+	current, err := session.Execute(context.Background(), execution.NewRequest("work", nil))
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -172,7 +172,7 @@ func TestSessionLifetimeCancelsActiveExecution(t *testing.T) {
 	executor := newBlockingExecutor()
 	session := newExecutorSession(ctx, t, "session-1", entry.NewMemoryStore(), "work", executor)
 
-	current, err := session.Execute(context.Background(), execution.Request{Executor: "work"})
+	current, err := session.Execute(context.Background(), execution.NewRequest("work", nil))
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -218,7 +218,7 @@ func TestFunctionExecutionUsesSessionLifetimeAndDetachedInput(t *testing.T) {
 
 	input := map[string]int{"value": 1}
 
-	current, err := session.Execute(ctx, execution.Request{Executor: "function", Input: input})
+	current, err := session.Execute(ctx, execution.NewRequest("function", input))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +291,7 @@ func TestExecuteValidatesBeforeRecording(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if _, err := session.Execute(ctx, execution.Request{Executor: "work"}); !errors.Is(err, context.Canceled) {
+	if _, err := session.Execute(ctx, execution.NewRequest("work", nil)); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled submission = %v", err)
 	}
 
@@ -320,7 +320,7 @@ func TestExecutionWaitReturnsDurableFinishToIndependentClients(t *testing.T) {
 	session := newExecutorSession(ctx, t, "session-1", entry.NewMemoryStore(), "work", executor)
 	defer session.Close()
 
-	current, err := session.Execute(ctx, execution.Request{Executor: "work"})
+	current, err := session.Execute(ctx, execution.NewRequest("work", nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -399,7 +399,7 @@ func TestExecutionFinishSeparatesWorkFailuresFromWaitErrors(t *testing.T) {
 			session := newExecutorSession(ctx, t, "session-1", entry.NewMemoryStore(), "work", executor)
 			defer session.Close()
 
-			current, err := session.Execute(ctx, execution.Request{Executor: "work"})
+			current, err := session.Execute(ctx, execution.NewRequest("work", nil))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -432,7 +432,7 @@ func TestExecutionLookupDoesNotRetryPersistence(t *testing.T) {
 	session := newExecutorSession(ctx, t, "session-1", store, "work", executor)
 	defer session.Close()
 
-	current, err := session.Execute(ctx, execution.Request{Executor: "work"})
+	current, err := session.Execute(ctx, execution.NewRequest("work", nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -461,7 +461,7 @@ func TestExecutionLookupDoesNotRetryPersistence(t *testing.T) {
 		t.Fatal("lookup retried persistence")
 	}
 
-	if next, err := session.Execute(ctx, execution.Request{Executor: "work"}); next != nil || !errors.Is(err, ErrClosed) {
+	if next, err := session.Execute(ctx, execution.NewRequest("work", nil)); next != nil || !errors.Is(err, ErrClosed) {
 		t.Fatalf("admission after persistence failure = %v, error = %v", next, err)
 	}
 
@@ -491,7 +491,7 @@ func TestExecutionDoneWaitsForPersistence(t *testing.T) {
 	defer session.Close()
 	defer release()
 
-	current, err := session.Execute(ctx, execution.Request{Executor: "work"})
+	current, err := session.Execute(ctx, execution.NewRequest("work", nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -586,7 +586,7 @@ func TestExecuteRejectsAfterTerminalPersistenceFailure(t *testing.T) {
 
 			session := newExecutorSession(context.Background(), t, "session-1", store, "work", executor)
 
-			request := execution.Request{Executor: "work"}
+			request := execution.NewRequest("work", nil)
 
 			first, err := session.Execute(context.Background(), request)
 			if err != nil {
@@ -642,7 +642,7 @@ func TestExecuteDoesNotReloadExecutionState(t *testing.T) {
 	}
 
 	for range 3 {
-		current, err := session.Execute(ctx, execution.Request{Executor: "work"})
+		current, err := session.Execute(ctx, execution.NewRequest("work", nil))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -671,7 +671,7 @@ func TestExecutionRetainsFinishWhenItCannotBeCommitted(t *testing.T) {
 		return workErr
 	}))
 
-	current, err := opened.Execute(ctx, execution.Request{Executor: "work"})
+	current, err := opened.Execute(ctx, execution.NewRequest("work", nil))
 	if err != nil {
 		t.Fatal(err)
 	}

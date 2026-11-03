@@ -40,7 +40,7 @@ func TestExecutorPersistsCompaction(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	current, finished := execute(t, opened, execution.Request{Executor: ExecutorName})
+	current, finished := execute(t, opened, execution.NewRequest(ExecutorName, nil))
 	if finished.Status != execution.Completed {
 		t.Fatalf("manual compaction = %+v", finished)
 	}
@@ -118,10 +118,10 @@ func TestManualAndAutomaticCompactionRecordToTheirExecutions(t *testing.T) {
 	)))
 	opened := newTestSession(t, store, registry)
 
-	agentExecution, finished := execute(t, opened, execution.Request{
-		Executor: agent.ExecutorName,
-		Input:    kit.NewUserMessage(kit.NewTextContent("input longer than one token")),
-	})
+	agentExecution, finished := execute(t, opened, execution.NewRequest(
+		agent.ExecutorName,
+		kit.NewUserMessage(kit.NewTextContent("input longer than one token")),
+	))
 	if finished.Status != execution.Completed {
 		t.Fatalf("execution with compactions = %+v", finished)
 	}
@@ -132,7 +132,7 @@ func TestManualAndAutomaticCompactionRecordToTheirExecutions(t *testing.T) {
 		t.Fatalf("agent request message = %q, want %q", got, want)
 	}
 
-	manualExecution, finished := execute(t, opened, execution.Request{Executor: ExecutorName})
+	manualExecution, finished := execute(t, opened, execution.NewRequest(ExecutorName, nil))
 	if finished.Status != execution.Completed {
 		t.Fatalf("manual compaction = %+v", finished)
 	}

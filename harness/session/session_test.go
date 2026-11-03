@@ -157,7 +157,7 @@ func TestExecutePublishesEntriesAndEvents(t *testing.T) {
 
 	t.Cleanup(subscription.Close)
 
-	current, err := session.Execute(context.Background(), execution.Request{Executor: "work"})
+	current, err := session.Execute(context.Background(), execution.NewRequest("work", nil))
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -213,7 +213,7 @@ func TestNewUsesContextForConstructionAndLifetime(t *testing.T) {
 
 			cancel()
 
-			if _, err := opened.Execute(context.Background(), execution.Request{}); !errors.Is(err, ErrClosed) {
+			if _, err := opened.Execute(context.Background(), execution.NewRequest("work", nil)); !errors.Is(err, ErrClosed) {
 				t.Fatalf("session after context cancelled = %v", err)
 			}
 		})
@@ -233,7 +233,7 @@ func TestCloseRejectsExecution(t *testing.T) {
 	session.Close()
 	session.Close()
 
-	_, err := session.Execute(context.Background(), execution.Request{Executor: "work"})
+	_, err := session.Execute(context.Background(), execution.NewRequest("work", nil))
 	if !errors.Is(err, ErrClosed) {
 		t.Fatalf("Execute() error = %v, want ErrClosed", err)
 	}
@@ -250,7 +250,7 @@ func TestCloseCancelsActiveExecution(t *testing.T) {
 		t.Fatalf("Subscribe() error = %v", err)
 	}
 
-	current, err := session.Execute(context.Background(), execution.Request{Executor: "work"})
+	current, err := session.Execute(context.Background(), execution.NewRequest("work", nil))
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}

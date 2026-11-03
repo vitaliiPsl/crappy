@@ -8,10 +8,17 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
 	"github.com/vitaliipsl/crappy/harness/event"
-	harnesssession "github.com/vitaliipsl/crappy/harness/session"
 )
 
 const cancelKey = "esc"
+
+func (m *Model) handleModel(message modelMsg) {
+	if message.target != m || m.ctx.Err() != nil {
+		return
+	}
+
+	m.model = message.model
+}
 
 func (m *Model) handleWorkdir(message workdirMsg) {
 	if message.target != m || message.sessionID != m.sessionID || m.ctx.Err() != nil {
@@ -158,7 +165,7 @@ func (m *Model) handleCancelResult(message cancelResultMsg) {
 		return
 	}
 
-	if message.err == nil || errors.Is(message.err, harnesssession.ErrExecutionNotActive) {
+	if message.err == nil {
 		return
 	}
 

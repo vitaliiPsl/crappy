@@ -70,7 +70,7 @@ func run(ctx context.Context) error {
 		<-done
 	}()
 
-	return tui.Run(ctx, app, config)
+	return tui.Run(ctx, app)
 }
 
 func newAssistant(
@@ -121,5 +121,5 @@ func newAssistant(
 		harness.WithExecutor(compactionexec.ExecutorName, compactionExecutor),
 	)
 
-	return h, assistant.New(h, storage, agents, estimator), nil
+	return h, assistant.New(config, h, storage, agents, estimator), nil
 }
