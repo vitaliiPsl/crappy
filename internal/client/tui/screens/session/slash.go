@@ -56,6 +56,10 @@ func (m *Model) showContext() tea.Cmd {
 }
 
 func (m *Model) compact() tea.Cmd {
+	if m.running() || m.terminalErr != nil {
+		return nil
+	}
+
 	sessionID := m.sessionID
 
 	return func() tea.Msg {

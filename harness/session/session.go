@@ -11,8 +11,10 @@ import (
 )
 
 type Session struct {
-	ctx context.Context
-	id  string
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	id string
 
 	state     state.State
 	entries   entry.Store
@@ -20,9 +22,9 @@ type Session struct {
 	executors execution.Resolver
 
 	current *Execution
+	queue   []*Execution
 
-	mu     sync.Mutex
-	closed bool
+	mu sync.Mutex
 }
 
 func New(
@@ -36,8 +38,10 @@ func New(
 		return nil, err
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
 	s := &Session{
 		ctx:       ctx,
+		cancel:    cancel,
 		id:        id,
 		state:     state,
 		entries:   entries,
@@ -46,6 +50,7 @@ func New(
 	}
 
 	if err := s.restore(ctx); err != nil {
+		s.cancel()
 		s.events.Close()
 
 		return nil, err
@@ -88,13 +93,29 @@ func (s *Session) Commit(
 
 func (s *Session) Close() {
 	s.mu.Lock()
-	s.closed = true
+	s.cancel()
 	current := s.current
 	s.mu.Unlock()
 
 	if current != nil {
-		current.cancel()
-		<-current.done
+		<-current.Done()
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.halt(ErrClosed)
+}
+
+func (s *Session) halt(err error) {
+	s.cancel()
+
+	if s.current != nil {
+		s.current.stop(err)
+	}
+
+	for _, queued := range s.queue {
+		queued.stop(err)
 	}
 
 	s.events.Close()

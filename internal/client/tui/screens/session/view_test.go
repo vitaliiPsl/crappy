@@ -56,7 +56,7 @@ func TestViewFitsWindowWithContext(t *testing.T) {
 			screen.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 			screen.sessionUsage = kit.Usage{InputTokens: 1200, OutputTokens: 300}
 			screen.workdir = "/projects/" + strings.Repeat("long-directory/", 12) + "crappy"
-			screen.applyEvent(executionEvent(t, execution.StartedEntryType, "execution-1", execution.Started{}))
+			screen.applyEvent(executionEvent(t, execution.EntryType, "execution-1", execution.Record{Status: execution.Running}))
 
 			if height := lipgloss.Height(screen.headerView()); height != 1+headerMarginBottom {
 				t.Fatalf("header height = %d, want one line with its bottom margin", height)

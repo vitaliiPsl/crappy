@@ -52,7 +52,7 @@ func TestExecutorPersistsCompaction(t *testing.T) {
 
 	wantTypes := []string{
 		agent.MessageEntryType, agent.MessageEntryType,
-		execution.StartedEntryType, compaction.EntryType, execution.FinishedEntryType,
+		execution.EntryType, execution.EntryType, compaction.EntryType, execution.EntryType,
 	}
 	if len(stored) != len(wantTypes) {
 		t.Fatalf("log contains %d entries, want %d", len(stored), len(wantTypes))
@@ -64,7 +64,7 @@ func TestExecutorPersistsCompaction(t *testing.T) {
 		}
 	}
 
-	if generated := decode[compaction.Compaction](t, stored[3].Payload); generated.Objective != "saved context" || len(generated.Retained) != 1 || generated.Usage != usage {
+	if generated := decode[compaction.Compaction](t, stored[4].Payload); generated.Objective != "saved context" || len(generated.Retained) != 1 || generated.Usage != usage {
 		t.Fatalf("compaction = %+v", generated)
 	}
 
@@ -151,10 +151,15 @@ func TestManualAndAutomaticCompactionRecordToTheirExecutions(t *testing.T) {
 
 	for _, value := range stored {
 		switch value.Type {
-		case execution.StartedEntryType:
-			startedIDs = append(startedIDs, value.ExecutionID)
-		case execution.FinishedEntryType:
-			finishedIDs = append(finishedIDs, value.ExecutionID)
+		case execution.EntryType:
+			saved := decode[execution.Record](t, value.Payload)
+			if saved.Status == execution.Running {
+				startedIDs = append(startedIDs, value.ExecutionID)
+			}
+
+			if saved.Status.Terminal() {
+				finishedIDs = append(finishedIDs, value.ExecutionID)
+			}
 		case compaction.EntryType:
 			compactionIDs = append(compactionIDs, value.ExecutionID)
 			usage[value.ExecutionID] = append(usage[value.ExecutionID], decode[compaction.Compaction](t, value.Payload).Usage)

@@ -71,6 +71,20 @@ func TestFactoryBuild(t *testing.T) {
 	}
 }
 
+func TestFactoryReturnsNilAgentWhenConstructionFails(t *testing.T) {
+	t.Parallel()
+
+	tool := kittest.NewTool(t, "duplicate", "Duplicate capability")
+	factory := New(kit.AgentConfig{}, staticModelResolver{kittest.NewModel(t)},
+		WithContributors(contribute(Contribution{Tools: []kit.Tool{tool, tool}})),
+	)
+
+	built, err := factory.Build(context.Background(), testBuildRequest())
+	if err == nil || built != nil {
+		t.Fatalf("failed construction returned agent = %v, error = %v", built, err)
+	}
+}
+
 func TestFactoryBuildsFreshAgents(t *testing.T) {
 	t.Parallel()
 

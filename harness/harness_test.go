@@ -194,7 +194,7 @@ func TestDeleteSessionStopsWorkBeforeRemovingPersistence(t *testing.T) {
 
 	waitSignal(t, subscription.Done())
 
-	if status, err := current.Wait(ctx); err != nil || status != execution.Cancelled {
+	if status, err := current.Wait(ctx); err != nil || status != execution.Interrupted {
 		t.Fatalf("deleted execution = %q, %v", status, err)
 	}
 
@@ -336,7 +336,7 @@ func TestConcurrentSessionLookupInitializesOnce(t *testing.T) {
 	entries := newFailingEntryStore(nil)
 
 	bus := event.NewBus("shared", entries)
-	if err := bus.Commit(context.Background(), "unfinished", execution.StartedEntryType, execution.Started{Executor: "removed"}); err != nil {
+	if err := bus.Commit(context.Background(), "unfinished", execution.EntryType, execution.Record{ID: "unfinished", Status: execution.Running}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -374,7 +374,7 @@ func TestConcurrentSessionLookupInitializesOnce(t *testing.T) {
 	}
 
 	stored, err := entries.List(context.Background(), "shared", 0)
-	if err != nil || len(stored) != 2 || stored[1].Type != execution.FinishedEntryType || stored[1].ExecutionID != "unfinished" {
+	if err != nil || len(stored) != 2 || stored[1].Type != execution.EntryType || stored[1].ExecutionID != "unfinished" {
 		t.Fatalf("reconciled entries = %+v, error = %v", stored, err)
 	}
 
@@ -445,7 +445,7 @@ func TestShutdownOwnsSessionsAndRejectsFurtherOpens(t *testing.T) {
 
 	waitSignal(t, subscription.Done())
 
-	if finished := waitFinished(t, opened, current.ID()); finished.Status != execution.Cancelled {
+	if finished := waitFinished(t, opened, current.ID()); finished.Status != execution.Interrupted {
 		t.Fatalf("execution status = %+v", finished)
 	}
 
@@ -605,7 +605,7 @@ func TestSessionsRemainPersistentAcrossHosts(t *testing.T) {
 		t.Fatalf("restored execution = %+v, %v", restored, err)
 	}
 
-	if finished := waitFinished(t, reopened, current.ID()); finished != original {
+	if finished := waitFinished(t, reopened, current.ID()); !reflect.DeepEqual(finished, original) {
 		t.Fatalf("restored finish = %+v; want %+v", finished, original)
 	}
 
@@ -707,7 +707,7 @@ func TestSessionInitializesBeforeReturning(t *testing.T) {
 	}
 
 	bus := event.NewBus("persisted", store.entries)
-	if err := bus.Commit(context.Background(), "unfinished", execution.StartedEntryType, execution.Started{Executor: "work"}); err != nil {
+	if err := bus.Commit(context.Background(), "unfinished", execution.EntryType, execution.Record{ID: "unfinished", Status: execution.Running}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -726,7 +726,7 @@ func TestSessionInitializesBeforeReturning(t *testing.T) {
 	}
 	defer subscription.Close()
 
-	for _, want := range []string{execution.StartedEntryType, execution.FinishedEntryType} {
+	for _, want := range []string{execution.EntryType, execution.EntryType} {
 		select {
 		case value := <-subscription.Events():
 			if value.Type != want || value.ExecutionID != "unfinished" {
@@ -808,7 +808,7 @@ func TestSessionOpeningRetriesFailedInitialization(t *testing.T) {
 	}
 
 	bus := event.NewBus("persisted", entries)
-	if err := bus.Commit(ctx, "unfinished", execution.StartedEntryType, execution.Started{Executor: "removed"}); err != nil {
+	if err := bus.Commit(ctx, "unfinished", execution.EntryType, execution.Record{ID: "unfinished", Status: execution.Running}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -828,7 +828,7 @@ func TestSessionOpeningRetriesFailedInitialization(t *testing.T) {
 	}
 
 	finished := waitFinished(t, opened, "unfinished")
-	if finished.Status != execution.Interrupted || finished.EndedAt.IsZero() {
+	if finished.Status != execution.Interrupted {
 		t.Fatalf("reconciled status = %+v", finished)
 	}
 
@@ -1325,22 +1325,29 @@ func newFailingEntryStore(failure error) *failingEntryStore {
 
 func (s *failingEntryStore) Append(ctx context.Context, sessionID string, entries ...entry.Entry) ([]entry.Entry, error) {
 	for _, value := range entries {
-		if value.Type == execution.FinishedEntryType && s.failing.Load() {
-			return nil, s.failure
+		if value.Type == execution.EntryType && s.failing.Load() {
+			var saved execution.Record
+			if err := json.Unmarshal(value.Payload, &saved); err != nil {
+				return nil, err
+			}
+
+			if saved.Status.Terminal() {
+				return nil, s.failure
+			}
 		}
 	}
 
 	return s.Store.Append(ctx, sessionID, entries...)
 }
 
-func (s *failingEntryStore) Latest(ctx context.Context, sessionID, entryType string) (entry.Entry, bool, error) {
+func (s *failingEntryStore) List(ctx context.Context, sessionID string, afterID uint64) ([]entry.Entry, error) {
 	s.reads.Add(1)
 
 	if s.readFailing.Load() {
-		return entry.Entry{}, false, s.failure
+		return nil, s.failure
 	}
 
-	return s.Store.Latest(ctx, sessionID, entryType)
+	return s.Store.List(ctx, sessionID, afterID)
 }
 
 type blockingInitializationStore struct {
@@ -1361,7 +1368,7 @@ func newBlockingInitializationStore(sessionID string) *blockingInitializationSto
 	}
 }
 
-func (s *blockingInitializationStore) Latest(ctx context.Context, sessionID, entryType string) (entry.Entry, bool, error) {
+func (s *blockingInitializationStore) List(ctx context.Context, sessionID string, afterID uint64) ([]entry.Entry, error) {
 	if sessionID == s.sessionID {
 		s.reads.Add(1)
 		s.start.Do(func() { close(s.started) })
@@ -1369,14 +1376,14 @@ func (s *blockingInitializationStore) Latest(ctx context.Context, sessionID, ent
 		select {
 		case <-s.release:
 		case <-ctx.Done():
-			return entry.Entry{}, false, ctx.Err()
+			return nil, ctx.Err()
 		}
 	}
 
-	return s.Store.Latest(ctx, sessionID, entryType)
+	return s.Store.List(ctx, sessionID, afterID)
 }
 
-func waitFinished(t *testing.T, opened *session.Session, id string) execution.Finished {
+func waitFinished(t *testing.T, opened *session.Session, id string) execution.Record {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -1396,20 +1403,20 @@ func waitFinished(t *testing.T, opened *session.Session, id string) execution.Fi
 		t.Fatal(err)
 	}
 
-	for _, value := range entries {
-		if value.ExecutionID != id || value.Type != execution.FinishedEntryType {
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].ExecutionID != id || entries[i].Type != execution.EntryType {
 			continue
 		}
 
-		var finished execution.Finished
-		if err := json.Unmarshal(value.Payload, &finished); err != nil {
+		var saved execution.Record
+		if err := json.Unmarshal(entries[i].Payload, &saved); err != nil {
 			t.Fatal(err)
 		}
 
-		return finished
+		return saved
 	}
 
-	t.Fatalf("execution %s has no persisted finish", id)
+	t.Fatalf("execution %s has no persisted record", id)
 
-	return execution.Finished{}
+	return execution.Record{}
 }

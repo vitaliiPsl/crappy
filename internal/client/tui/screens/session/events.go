@@ -52,26 +52,29 @@ func (m *Model) applyEvent(value event.Event) {
 		}
 
 		m.transcript.AppendCompaction(value.ExecutionID, generated)
-	case execution.StartedEntryType:
-		if m.terminalErr == nil {
-			m.executionID = value.ExecutionID
-			m.notice = notice{}
-		}
-
-		m.transcript.Start(value.ExecutionID)
-	case execution.FinishedEntryType:
-		var finished execution.Finished
-		if err := json.Unmarshal(value.Payload, &finished); err != nil {
+	case execution.EntryType:
+		var record execution.Record
+		if err := json.Unmarshal(value.Payload, &record); err != nil {
 			m.notice = errorNotice(err)
 
 			return
 		}
 
-		if value.ExecutionID == m.executionID {
-			m.executionID = ""
-		}
+		switch {
+		case record.Status == execution.Running:
+			if m.terminalErr == nil {
+				m.executionID = value.ExecutionID
+				m.notice = notice{}
+			}
 
-		m.transcript.Finish(value.ExecutionID)
-		m.notice = executionNotice(finished)
+			m.transcript.Start(value.ExecutionID)
+		case record.Status.Terminal():
+			if value.ExecutionID == m.executionID {
+				m.executionID = ""
+			}
+
+			m.transcript.Finish(value.ExecutionID)
+			m.notice = executionNotice(record)
+		}
 	}
 }

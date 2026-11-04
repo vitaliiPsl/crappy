@@ -17,7 +17,6 @@ import (
 	"github.com/vitaliipsl/crappy/harness/agent"
 	compactionexec "github.com/vitaliipsl/crappy/harness/compaction/executor"
 	"github.com/vitaliipsl/crappy/harness/execution"
-	harnesssession "github.com/vitaliipsl/crappy/harness/session"
 	"github.com/vitaliipsl/crappy/harness/token"
 	"github.com/vitaliipsl/crappy/internal/assistant"
 	"github.com/vitaliipsl/crappy/internal/client/tui/navigation"
@@ -289,9 +288,10 @@ func TestCompactCommandUsesNormalExecutionLifecycle(t *testing.T) {
 		t.Fatal(accepted.err)
 	}
 
-	busy := screen.submit("/compact")().(executeResultMsg)
-	if !errors.Is(busy.err, harnesssession.ErrBusy) {
-		t.Fatalf("concurrent compaction returned %v, want ErrBusy", busy.err)
+	screen.applyEvent(executionEvent(t, execution.EntryType, accepted.executionID, execution.Record{Status: execution.Running}))
+
+	if command := screen.submit("/compact"); command != nil {
+		t.Fatal("compaction submitted work while an execution was running")
 	}
 
 	_, wait := screen.Update(accepted)
@@ -312,17 +312,23 @@ func TestCompactCommandUsesNormalExecutionLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(entries) != 2 || entries[0].Type != execution.StartedEntryType || entries[1].Type != execution.FinishedEntryType {
+	if len(entries) != 3 {
 		t.Fatalf("unexpected compaction journal: %+v", entries)
 	}
 
-	var started execution.Started
-	if err := json.Unmarshal(entries[0].Payload, &started); err != nil {
-		t.Fatal(err)
-	}
+	for i, status := range []execution.Status{execution.Queued, execution.Running, execution.Completed} {
+		if entries[i].Type != execution.EntryType {
+			t.Fatalf("unexpected compaction entry: %+v", entries[i])
+		}
 
-	if started.Executor != compactionexec.ExecutorName {
-		t.Fatalf("command used executor %q", started.Executor)
+		var record execution.Record
+		if err := json.Unmarshal(entries[i].Payload, &record); err != nil {
+			t.Fatal(err)
+		}
+
+		if record.Executor != compactionexec.ExecutorName || record.Status != status {
+			t.Fatalf("compaction entry = %+v, want %s from %s", record, status, compactionexec.ExecutorName)
+		}
 	}
 }
 

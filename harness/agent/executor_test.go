@@ -45,8 +45,8 @@ func TestExecutorCompletesMissingToolResults(t *testing.T) {
 		"session-1",
 		entry.Entry{
 			ExecutionID: "execution-1",
-			Type:        execution.StartedEntryType,
-			Payload:     json.RawMessage(`{}`),
+			Type:        execution.EntryType,
+			Payload:     json.RawMessage(`{"id":"execution-1","executor":"agent","input":null,"status":"running"}`),
 		},
 		entry.Entry{
 			ExecutionID: "execution-1",

@@ -16,7 +16,7 @@ func TestSubscriptionFailureIsVisibleWhileExecutionIsActive(t *testing.T) {
 	defer screen.Close()
 
 	screen.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
-	screen.applyEvent(executionEvent(t, execution.StartedEntryType, "execution-1", execution.Started{}))
+	screen.applyEvent(executionEvent(t, execution.EntryType, "execution-1", execution.Record{Status: execution.Running}))
 	screen.Update(eventMsg{target: screen, open: false, err: event.ErrSubscriptionLagged})
 
 	if status := screen.statusView(); !strings.Contains(status, event.ErrSubscriptionLagged.Error()) {
@@ -33,7 +33,7 @@ func TestClosedEventBusClearsActiveExecution(t *testing.T) {
 	defer screen.Close()
 
 	screen.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
-	screen.applyEvent(executionEvent(t, execution.StartedEntryType, "execution-1", execution.Started{}))
+	screen.applyEvent(executionEvent(t, execution.EntryType, "execution-1", execution.Record{Status: execution.Running}))
 	screen.Update(eventMsg{target: screen, open: false, err: event.ErrClosed})
 
 	if screen.running() {

@@ -43,7 +43,7 @@ func TestUsageReadsPersistedFactsWithoutChangingHistory(t *testing.T) {
 	events := event.NewBus(sessionID, storage.EntryStore())
 	defer events.Close()
 
-	if err := events.Commit(ctx, "unfinished", execution.StartedEntryType, execution.Started{Executor: agent.ExecutorName}); err != nil {
+	if err := events.Commit(ctx, "unfinished", execution.EntryType, execution.Record{ID: "unfinished", Status: execution.Running}); err != nil {
 		t.Fatal(err)
 	}
 

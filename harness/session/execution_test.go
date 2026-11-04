@@ -38,49 +38,30 @@ func TestExecuteRecordsEachExecutionSeparately(t *testing.T) {
 	}
 
 	entries, err := session.Entries(context.Background(), 0)
-	if err != nil || len(entries) != 6 {
-		t.Fatalf("Entries() = %+v, error = %v, want three per execution", entries, err)
+	if err != nil || len(entries) != 8 {
+		t.Fatalf("Entries() = %+v, error = %v, want four per execution", entries, err)
 	}
 
-	wantTypes := []string{execution.StartedEntryType, "work.output", execution.FinishedEntryType}
+	wantTypes := []string{execution.EntryType, execution.EntryType, "work.output", execution.EntryType}
+
+	wantStatuses := []execution.Status{execution.Queued, execution.Running, "", execution.Completed}
 	for i, value := range entries {
-		if value.Type != wantTypes[i%3] || value.ExecutionID != ids[i/3] {
-			t.Fatalf("entry %d = %+v, want %s from %s", i, value, wantTypes[i%3], ids[i/3])
+		if value.Type != wantTypes[i%4] || value.ExecutionID != ids[i/4] {
+			t.Fatalf("entry %d = %+v, want %s from %s", i, value, wantTypes[i%4], ids[i/4])
+		}
+
+		if value.Type == execution.EntryType {
+			var saved execution.Record
+			if err := json.Unmarshal(value.Payload, &saved); err != nil {
+				t.Fatal(err)
+			}
+
+			wantInput := []string{`"first"`, `"second"`}[i/4]
+			if saved.ID != ids[i/4] || saved.Executor != "work" || string(saved.Input) != wantInput || saved.Status != wantStatuses[i%4] || saved.Error != "" {
+				t.Fatalf("execution revision %d lost state: %+v", i, saved)
+			}
 		}
 	}
-}
-
-func TestExecuteRejectsConcurrentExecution(t *testing.T) {
-	t.Parallel()
-
-	executor := newBlockingExecutor()
-	session := newExecutorSession(context.Background(), t, "session-1", entry.NewMemoryStore(), "work", executor)
-
-	current, err := session.Execute(context.Background(), execution.NewRequest("work", nil))
-	if err != nil {
-		t.Fatalf("first Execute() error = %v", err)
-	}
-
-	entries, err := session.Entries(context.Background(), 0)
-	if err != nil {
-		t.Fatalf("Entries() error = %v", err)
-	}
-
-	if len(entries) == 0 ||
-		entries[0].ExecutionID != current.ID() ||
-		entries[0].Type != execution.StartedEntryType {
-		t.Fatalf("first entry = %#v, want started execution %q", entries, current.ID())
-	}
-
-	<-executor.started
-
-	_, err = session.Execute(context.Background(), execution.NewRequest("work", nil))
-	if !errors.Is(err, ErrBusy) {
-		t.Fatalf("concurrent Execute() error = %v, want ErrBusy", err)
-	}
-
-	close(executor.release)
-	waitExecution(t, current)
 }
 
 func TestExecuteRecordsFailure(t *testing.T) {
@@ -105,11 +86,11 @@ func TestExecuteRecordsFailure(t *testing.T) {
 	}
 
 	last := entries[len(entries)-1]
-	if last.ExecutionID != current.ID() || last.Type != execution.FinishedEntryType {
+	if last.ExecutionID != current.ID() || last.Type != execution.EntryType {
 		t.Fatalf("last entry = %#v, want finished execution %q", last, current.ID())
 	}
 
-	var finished execution.Finished
+	var finished execution.Record
 	if err := json.Unmarshal(last.Payload, &finished); err != nil {
 		t.Fatalf("decode finished execution: %v", err)
 	}
@@ -151,7 +132,7 @@ func TestCancelActiveExecution(t *testing.T) {
 		t.Fatalf("Entries() error = %v", err)
 	}
 
-	var finished execution.Finished
+	var finished execution.Record
 	if err := json.Unmarshal(entries[len(entries)-1].Payload, &finished); err != nil {
 		t.Fatalf("decode finished execution: %v", err)
 	}
@@ -165,7 +146,7 @@ func TestCancelActiveExecution(t *testing.T) {
 	}
 }
 
-func TestSessionLifetimeCancelsActiveExecution(t *testing.T) {
+func TestSessionLifetimeInterruptsActiveExecution(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -186,13 +167,13 @@ func TestSessionLifetimeCancelsActiveExecution(t *testing.T) {
 		t.Fatalf("Entries() error = %v", err)
 	}
 
-	var finished execution.Finished
+	var finished execution.Record
 	if err := json.Unmarshal(entries[len(entries)-1].Payload, &finished); err != nil {
 		t.Fatalf("decode finished execution: %v", err)
 	}
 
-	if finished.Status != execution.Cancelled {
-		t.Fatalf("execution status = %q, want %q", finished.Status, execution.Cancelled)
+	if finished.Status != execution.Interrupted {
+		t.Fatalf("execution status = %q, want %q", finished.Status, execution.Interrupted)
 	}
 }
 
@@ -243,21 +224,26 @@ func TestFunctionExecutionUsesSessionLifetimeAndDetachedInput(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(entries) != 3 || string(entries[1].Payload) != `{"value":1}` {
+	if len(entries) != 4 || string(entries[2].Payload) != `{"value":1}` {
 		t.Fatalf("function journal = %+v", entries)
 	}
 
-	var startedEntry execution.Started
-	if err := json.Unmarshal(entries[0].Payload, &startedEntry); err != nil {
+	var queuedEntry execution.Record
+	if err := json.Unmarshal(entries[0].Payload, &queuedEntry); err != nil {
 		t.Fatal(err)
 	}
 
-	if string(startedEntry.Input) != `{"value":1}` || startedEntry.StartedAt.IsZero() {
+	var startedEntry execution.Record
+	if err := json.Unmarshal(entries[1].Payload, &startedEntry); err != nil {
+		t.Fatal(err)
+	}
+
+	if string(queuedEntry.Input) != `{"value":1}` || entries[1].CreatedAt.IsZero() {
 		t.Fatalf("mutated request = %+v", startedEntry)
 	}
 
-	var finished execution.Finished
-	if err := json.Unmarshal(entries[2].Payload, &finished); err != nil {
+	var finished execution.Record
+	if err := json.Unmarshal(entries[3].Payload, &finished); err != nil {
 		t.Fatal(err)
 	}
 
@@ -330,7 +316,7 @@ func TestExecutionWaitReturnsDurableStatusToIndependentClients(t *testing.T) {
 		t.Fatalf("live attachment = %v, %v", attached, err)
 	}
 
-	active, err := attached.Status()
+	active, err := current.Status()
 	if err != nil || active != execution.Running {
 		t.Fatalf("running execution status = %q, %v", active, err)
 	}
@@ -351,7 +337,7 @@ func TestExecutionWaitReturnsDurableStatusToIndependentClients(t *testing.T) {
 	var clients sync.WaitGroup
 	for range 16 {
 		clients.Go(func() {
-			if _, err := attached.Status(); err != nil {
+			if _, err := current.Status(); err != nil {
 				t.Errorf("client execution status: %v", err)
 			}
 
@@ -374,12 +360,12 @@ func TestExecutionWaitReturnsDurableStatusToIndependentClients(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var stored execution.Finished
+	var stored execution.Record
 	if err := json.Unmarshal(entries[len(entries)-1].Payload, &stored); err != nil {
 		t.Fatal(err)
 	}
 
-	if stored.Status != status || stored.EndedAt.IsZero() {
+	if stored.Status != status || entries[len(entries)-1].CreatedAt.IsZero() {
 		t.Fatalf("persisted finish = %+v; want status %q and completion time", stored, status)
 	}
 
@@ -388,8 +374,7 @@ func TestExecutionWaitReturnsDurableStatusToIndependentClients(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	restored, err := loaded.Status()
-	if err != nil || restored != status {
+	if restored, err := loaded.Status(); err != nil || restored != status {
 		t.Fatalf("persisted execution status = %q, %v", restored, err)
 	}
 }
@@ -438,7 +423,7 @@ func TestExecutionFinishSeparatesWorkFailuresFromWaitErrors(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			var finished execution.Finished
+			var finished execution.Record
 			if err := json.Unmarshal(entries[len(entries)-1].Payload, &finished); err != nil {
 				t.Fatal(err)
 			}
@@ -579,9 +564,9 @@ func TestExecutionLookupLeavesUnfinishedHistoryUntouched(t *testing.T) {
 	defer session.Close()
 
 	if _, err := store.Append(ctx, "session-1",
-		entry.Entry{ExecutionID: "old", Type: execution.StartedEntryType, Payload: json.RawMessage(`{}`)},
-		entry.Entry{ExecutionID: "old", Type: execution.FinishedEntryType, Payload: json.RawMessage(`{"status":"completed"}`)},
-		entry.Entry{ExecutionID: "unfinished", Type: execution.StartedEntryType, Payload: json.RawMessage(`{}`)},
+		entry.Entry{ExecutionID: "old", Type: execution.EntryType, Payload: json.RawMessage(`{"id":"old","status":"running"}`)},
+		entry.Entry{ExecutionID: "old", Type: execution.EntryType, Payload: json.RawMessage(`{"status":"completed","id":"old"}`)},
+		entry.Entry{ExecutionID: "unfinished", Type: execution.EntryType, Payload: json.RawMessage(`{"id":"unfinished","status":"running"}`)},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -600,8 +585,7 @@ func TestExecutionLookupLeavesUnfinishedHistoryUntouched(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		status, err := old.Wait(ctx)
-		if err != nil || status != execution.Completed {
+		if status, err := old.Wait(ctx); err != nil || status != execution.Completed {
 			t.Fatalf("old execution status = %q, %v", status, err)
 		}
 
@@ -665,7 +649,7 @@ func TestExecuteRejectsAfterTerminalPersistenceFailure(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if len(entries) != 1 || calls.Load() != 1 || store.finishes.Load() != 1 {
+			if len(entries) != 2 || calls.Load() != 1 || store.finishes.Load() != 1 {
 				t.Fatalf("failed settlement was retried: entries = %+v, calls = %d", entries, calls.Load())
 			}
 		})
@@ -742,8 +726,8 @@ func TestExecutionRetainsStatusWhenCompletionCannotBeCommitted(t *testing.T) {
 		}
 	}
 
-	if current.status != execution.Failed {
-		t.Fatalf("execution status changed after failed commit: %q", current.status)
+	if current.record.Status != execution.Running || current.record.Error != "" {
+		t.Fatalf("uncommitted completion changed the execution: %+v", current.record)
 	}
 }
 
@@ -789,10 +773,10 @@ func newFinishFailingStore(err error) *finishFailingStore {
 	return &finishFailingStore{Store: entry.NewMemoryStore(), err: err}
 }
 
-func (s *finishFailingStore) Latest(ctx context.Context, sessionID, entryType string) (entry.Entry, bool, error) {
+func (s *finishFailingStore) List(ctx context.Context, sessionID string, afterID uint64) ([]entry.Entry, error) {
 	s.reads.Add(1)
 
-	return s.Store.Latest(ctx, sessionID, entryType)
+	return s.Store.List(ctx, sessionID, afterID)
 }
 
 func (s *finishFailingStore) Append(
@@ -801,7 +785,16 @@ func (s *finishFailingStore) Append(
 	entries ...entry.Entry,
 ) ([]entry.Entry, error) {
 	for _, current := range entries {
-		if current.Type == execution.FinishedEntryType {
+		if current.Type == execution.EntryType {
+			var saved execution.Record
+			if err := json.Unmarshal(current.Payload, &saved); err != nil {
+				return nil, err
+			}
+
+			if !saved.Status.Terminal() {
+				continue
+			}
+
 			s.finishes.Add(1)
 
 			if s.failing.Load() {
@@ -817,12 +810,22 @@ type blockingFinishStore struct {
 	entry.Store
 	started chan struct{}
 	release chan struct{}
+	once    sync.Once
 }
 
 func (s *blockingFinishStore) Append(ctx context.Context, sessionID string, entries ...entry.Entry) ([]entry.Entry, error) {
 	for _, value := range entries {
-		if value.Type == execution.FinishedEntryType {
-			close(s.started)
+		if value.Type == execution.EntryType {
+			var saved execution.Record
+			if err := json.Unmarshal(value.Payload, &saved); err != nil {
+				return nil, err
+			}
+
+			if !saved.Status.Terminal() {
+				continue
+			}
+
+			s.once.Do(func() { close(s.started) })
 			<-s.release
 		}
 	}

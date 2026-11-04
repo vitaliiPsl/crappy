@@ -146,8 +146,17 @@ func (c *Client) Run(ctx context.Context) error {
 				}
 
 				streamed = ""
-			case execution.FinishedEntryType:
-				if err := c.finish(value); err != nil {
+			case execution.EntryType:
+				var record execution.Record
+				if err := json.Unmarshal(value.Payload, &record); err != nil {
+					return fmt.Errorf("decode execution: %w", err)
+				}
+
+				if !record.Status.Terminal() {
+					continue
+				}
+
+				if err := c.finish(record); err != nil {
 					return err
 				}
 
@@ -205,18 +214,13 @@ func (c *Client) writeUnstreamed(value event.Event, streamed string) error {
 	return nil
 }
 
-func (c *Client) finish(value event.Event) error {
-	var finished execution.Finished
-	if err := json.Unmarshal(value.Payload, &finished); err != nil {
-		return fmt.Errorf("decode execution finish: %w", err)
-	}
-
+func (c *Client) finish(record execution.Record) error {
 	if _, err := fmt.Fprintln(c.output); err != nil {
 		return fmt.Errorf("finish response: %w", err)
 	}
 
-	if finished.Status == execution.Failed {
-		if _, err := fmt.Fprintf(c.output, "error: %s\n", finished.Error); err != nil {
+	if record.Status == execution.Failed {
+		if _, err := fmt.Fprintf(c.output, "error: %s\n", record.Error); err != nil {
 			return fmt.Errorf("write execution error: %w", err)
 		}
 	}

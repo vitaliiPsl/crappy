@@ -2,37 +2,46 @@ package session
 
 import (
 	"context"
-	"time"
+	"encoding/json"
+	"fmt"
 
 	"github.com/vitaliipsl/crappy/harness/execution"
 )
 
 func (s *Session) restore(ctx context.Context) error {
-	id, err := s.unfinishedExecution(ctx)
-	if err != nil || id == "" {
+	entries, err := s.entries.List(ctx, s.id, 0)
+	if err != nil {
 		return err
 	}
 
-	return s.Commit(ctx, id, execution.FinishedEntryType, execution.Finished{
-		Status:  execution.Interrupted,
-		EndedAt: time.Now().UTC(),
-	})
-}
+	latest := make(map[string]execution.Record)
 
-func (s *Session) unfinishedExecution(ctx context.Context) (string, error) {
-	started, found, err := s.entries.Latest(ctx, s.id, execution.StartedEntryType)
-	if err != nil || !found {
-		return "", err
+	var order []string
+
+	for _, value := range entries {
+		if value.Type != execution.EntryType {
+			continue
+		}
+
+		var record execution.Record
+		if err := json.Unmarshal(value.Payload, &record); err != nil {
+			return fmt.Errorf("decode execution %s: %w", value.ExecutionID, err)
+		}
+
+		if _, seen := latest[record.ID]; !seen {
+			order = append(order, record.ID)
+		}
+
+		latest[record.ID] = record
 	}
 
-	finished, found, err := s.entries.Latest(ctx, s.id, execution.FinishedEntryType)
-	if err != nil {
-		return "", err
+	for _, id := range order {
+		if record := latest[id]; !record.Status.Terminal() {
+			if err := s.commitExecution(ctx, newExecution(record), execution.Interrupted, ""); err != nil {
+				return err
+			}
+		}
 	}
 
-	if found && finished.ExecutionID == started.ExecutionID && finished.ID > started.ID {
-		return "", nil
-	}
-
-	return started.ExecutionID, nil
+	return nil
 }

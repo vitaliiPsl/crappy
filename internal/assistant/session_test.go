@@ -33,7 +33,7 @@ func TestGetSessionReadsStateWithoutConstructingRuntime(t *testing.T) {
 	}
 
 	before, err := storage.EntryStore().Append(ctx, "saved", entry.Entry{
-		ExecutionID: "unfinished", Type: execution.StartedEntryType, Payload: json.RawMessage(`{}`),
+		ExecutionID: "unfinished", Type: execution.EntryType, Payload: json.RawMessage(`{"id":"unfinished","executor":"agent","input":null,"status":"running"}`),
 	})
 	if err != nil {
 		t.Fatal(err)

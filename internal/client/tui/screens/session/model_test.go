@@ -82,9 +82,9 @@ func TestExecutionLifecycleDrivesStatus(t *testing.T) {
 
 	model.applyEvent(executionEvent(
 		t,
-		execution.StartedEntryType,
+		execution.EntryType,
 		"execution-1",
-		execution.Started{},
+		execution.Record{Status: execution.Running},
 	))
 
 	if !model.running() {
@@ -97,9 +97,9 @@ func TestExecutionLifecycleDrivesStatus(t *testing.T) {
 
 	model.applyEvent(executionEvent(
 		t,
-		execution.FinishedEntryType,
+		execution.EntryType,
 		"execution-1",
-		execution.Finished{Status: execution.Completed},
+		execution.Record{Status: execution.Completed},
 	))
 
 	if model.running() {
@@ -117,15 +117,15 @@ func TestFailedExecutionIsSurfaced(t *testing.T) {
 
 	model.applyEvent(executionEvent(
 		t,
-		execution.StartedEntryType,
+		execution.EntryType,
 		"execution-1",
-		execution.Started{},
+		execution.Record{Status: execution.Running},
 	))
 	model.applyEvent(executionEvent(
 		t,
-		execution.FinishedEntryType,
+		execution.EntryType,
 		"execution-1",
-		execution.Finished{
+		execution.Record{
 			Status: execution.Failed,
 			Error:  "model exploded",
 		},
@@ -147,9 +147,9 @@ func TestInterruptedExecutionIsSurfaced(t *testing.T) {
 
 			model.applyEvent(executionEvent(
 				t,
-				execution.FinishedEntryType,
+				execution.EntryType,
 				"execution-1",
-				execution.Finished{Status: status},
+				execution.Record{Status: status},
 			))
 
 			if !strings.Contains(model.View().Content, interruptedLabel) {
@@ -165,9 +165,9 @@ func TestSubmitIsIgnoredWhileBusy(t *testing.T) {
 
 	model.applyEvent(executionEvent(
 		t,
-		execution.StartedEntryType,
+		execution.EntryType,
 		"execution-1",
-		execution.Started{},
+		execution.Record{Status: execution.Running},
 	))
 
 	if command := model.submit("second message"); command != nil {
@@ -185,9 +185,9 @@ func TestCancelKeyOnlyFiresWhileRunning(t *testing.T) {
 
 	model.applyEvent(executionEvent(
 		t,
-		execution.StartedEntryType,
+		execution.EntryType,
 		"execution-1",
-		execution.Started{},
+		execution.Record{Status: execution.Running},
 	))
 
 	if _, command := model.Update(tea.KeyPressMsg{Code: tea.KeyEscape}); command == nil {

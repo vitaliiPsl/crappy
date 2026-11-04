@@ -47,17 +47,17 @@ func TestUsageRebuildsFromJournal(t *testing.T) {
 		entryType   string
 		payload     any
 	}{
-		{"first", execution.StartedEntryType, execution.Started{Executor: agent.ExecutorName}},
+		{"first", execution.EntryType, execution.Record{Status: execution.Running, Executor: agent.ExecutorName}},
 		{"first", agent.MessageEntryType, kit.NewUserMessage(kit.NewTextContent("question"))},
 		{"first", compaction.EntryType, compaction.Compaction{Usage: kit.Usage{InputTokens: 50, OutputTokens: 10}}},
 		{"first", agent.MessageEntryType, measured("answer", kit.Usage{InputTokens: 1200, OutputTokens: 200, CacheReadTokens: 100})},
-		{"first", execution.FinishedEntryType, execution.Finished{Status: execution.Completed}},
-		{"manual", execution.StartedEntryType, execution.Started{Executor: compactionexec.ExecutorName}},
+		{"first", execution.EntryType, execution.Record{Status: execution.Completed}},
+		{"manual", execution.EntryType, execution.Record{Status: execution.Running, Executor: compactionexec.ExecutorName}},
 		{"manual", compaction.EntryType, compaction.Compaction{Usage: kit.Usage{InputTokens: 300, OutputTokens: 40}}},
-		{"manual", execution.FinishedEntryType, execution.Finished{Status: execution.Completed}},
-		{"second", execution.StartedEntryType, execution.Started{Executor: agent.ExecutorName}},
+		{"manual", execution.EntryType, execution.Record{Status: execution.Completed}},
+		{"second", execution.EntryType, execution.Record{Status: execution.Running, Executor: agent.ExecutorName}},
 		{"second", agent.MessageEntryType, measured("reply", kit.Usage{InputTokens: 400, OutputTokens: 60})},
-		{"second", execution.FinishedEntryType, execution.Finished{Status: execution.Completed}},
+		{"second", execution.EntryType, execution.Record{Status: execution.Completed}},
 	}
 	for _, record := range records {
 		if err := opened.Commit(ctx, record.executionID, record.entryType, record.payload); err != nil {

@@ -30,7 +30,7 @@ func TestExecuteAndCancelUseHarnessExecutionLifetime(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	started := make(chan context.Context, 1)
+	started := make(chan context.Context, 2)
 	h := harness.New(storage, harness.WithExecutor(agent.ExecutorName,
 		execution.Func(func(ctx context.Context, params execution.ExecuteParams) error {
 			var input kit.Message
@@ -38,7 +38,7 @@ func TestExecuteAndCancelUseHarnessExecutionLifetime(t *testing.T) {
 				return err
 			}
 
-			if input.Role != kit.RoleUser || input.TextContent().Text != "hello" {
+			if input.Role != kit.RoleUser {
 				t.Errorf("agent input = %+v", input)
 			}
 
@@ -95,8 +95,17 @@ func TestExecuteAndCancelUseHarnessExecutionLifetime(t *testing.T) {
 		t.Fatalf("disconnected observation = %v", err)
 	}
 
-	if _, err := app.Execute(ctx, created.ID, kit.NewTextContent("second")); !errors.Is(err, session.ErrBusy) {
-		t.Fatalf("concurrent send error = %v", err)
+	second, err := app.Execute(ctx, created.ID, kit.NewTextContent("second"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if status, err := app.GetExecutionStatus(ctx, created.ID, second); err != nil || status != execution.Queued {
+		t.Fatalf("queued execution status = %q, %v", status, err)
+	}
+
+	if err := app.Cancel(ctx, created.ID, second); err != nil {
+		t.Fatal(err)
 	}
 
 	if err := app.Cancel(ctx, created.ID, id); err != nil {
@@ -255,5 +264,103 @@ func TestOperationsRequireAnExistingSession(t *testing.T) {
 
 	if records, err := app.ListSessions(ctx); err != nil || len(records) != 0 {
 		t.Fatalf("operations created sessions: %+v, %v", records, err)
+	}
+}
+
+func TestRestartInterruptsQueuedExecutions(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	root := t.TempDir()
+
+	storage, err := jsonl.Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	started := make(chan struct{})
+	h := harness.New(storage, harness.WithExecutor(agent.ExecutorName, execution.Func(
+		func(ctx context.Context, _ execution.ExecuteParams) error {
+			close(started)
+			<-ctx.Done()
+
+			return ctx.Err()
+		},
+	)))
+	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
+
+	app := New(config.Config{}, h, storage, nil, token.NewCharacterEstimator())
+
+	created, err := app.CreateSession(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := app.Execute(ctx, created.ID, kit.NewTextContent("first"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-started:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+
+	submitted := []string{first}
+	for _, input := range []string{"second", "third"} {
+		id, err := app.Execute(ctx, created.ID, kit.NewTextContent(input))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		submitted = append(submitted, id)
+	}
+
+	if err := h.Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	storage, err = jsonl.Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ran := make(chan string, 4)
+	restarted := harness.New(storage, harness.WithExecutor(agent.ExecutorName, execution.Func(
+		func(_ context.Context, params execution.ExecuteParams) error {
+			var input kit.Message
+			if err := json.Unmarshal(params.Input, &input); err != nil {
+				return err
+			}
+
+			ran <- input.TextContent().Text
+
+			return nil
+		},
+	)))
+	t.Cleanup(func() { _ = restarted.Shutdown(context.Background()) })
+
+	app = New(config.Config{}, restarted, storage, nil, token.NewCharacterEstimator())
+
+	for _, id := range submitted {
+		if status, err := app.GetExecutionStatus(ctx, created.ID, id); err != nil || status != execution.Interrupted {
+			t.Fatalf("execution %s after restart = %q, %v", id, status, err)
+		}
+	}
+
+	fourth, err := app.Execute(ctx, created.ID, kit.NewTextContent("fourth"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if status, err := app.WaitExecution(ctx, created.ID, fourth); err != nil || status != execution.Completed {
+		t.Fatalf("execution after restart = %q, %v", status, err)
+	}
+
+	if input := <-ran; input != "fourth" || len(ran) != 0 {
+		t.Fatalf("restart ran queued work: %s", input)
 	}
 }

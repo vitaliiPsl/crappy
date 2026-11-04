@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"strings"
@@ -172,7 +173,7 @@ func TestExecuteReportsTerminalPersistenceFailure(t *testing.T) {
 				t.Fatal(accepted.err)
 			}
 
-			started := executionEvent(t, execution.StartedEntryType, accepted.executionID, execution.Started{})
+			started := executionEvent(t, execution.EntryType, accepted.executionID, execution.Record{Status: execution.Running})
 			screen.applyEvent(started)
 
 			_, wait := screen.Update(accepted)
@@ -319,8 +320,15 @@ type finishFailureStore struct {
 
 func (s finishFailureStore) Append(ctx context.Context, sessionID string, entries ...entry.Entry) ([]entry.Entry, error) {
 	for _, value := range entries {
-		if value.Type == execution.FinishedEntryType {
-			return nil, s.err
+		if value.Type == execution.EntryType {
+			var record execution.Record
+			if err := json.Unmarshal(value.Payload, &record); err != nil {
+				return nil, err
+			}
+
+			if record.Status.Terminal() {
+				return nil, s.err
+			}
 		}
 	}
 

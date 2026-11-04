@@ -27,20 +27,16 @@ type Store interface {
 	EntryStore() entry.Store
 }
 
-type Option func(*config)
-
-type config struct {
-	executors *execution.Registry
-}
+type Option func(*Harness)
 
 func WithExecutor(name string, executor execution.Executor) Option {
-	return func(c *config) { c.executors.Register(name, executor) }
+	return func(h *Harness) { h.executors.Register(name, executor) }
 }
 
 type Harness struct {
 	sessions  state.Store
 	entries   entry.Store
-	executors execution.Resolver
+	executors *execution.Registry
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -53,23 +49,24 @@ type Harness struct {
 }
 
 func New(store Store, options ...Option) *Harness {
-	c := config{executors: execution.NewRegistry()}
-	for _, option := range options {
-		option(&c)
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 
-	return &Harness{
+	h := &Harness{
 		sessions:  store.SessionStore(),
 		entries:   store.EntryStore(),
-		executors: c.executors,
+		executors: execution.NewRegistry(),
 
 		ctx:    ctx,
 		cancel: cancel,
 		done:   make(chan struct{}),
 		opened: make(map[string]*session.Session),
 	}
+
+	for _, option := range options {
+		option(h)
+	}
+
+	return h
 }
 
 func (h *Harness) Run(ctx context.Context) error {
@@ -186,21 +183,17 @@ func (h *Harness) Session(ctx context.Context, sessionID string) (*session.Sessi
 
 func (h *Harness) DeleteSession(ctx context.Context, sessionID string) error {
 	h.mu.Lock()
-	if h.ctx.Err() != nil {
-		h.mu.Unlock()
+	defer h.mu.Unlock()
 
+	if h.ctx.Err() != nil {
 		return ErrClosed
 	}
 
 	if err := ctx.Err(); err != nil {
-		h.mu.Unlock()
-
 		return err
 	}
 
 	if sessionID == "" {
-		h.mu.Unlock()
-
 		return ErrSessionRequired
 	}
 
@@ -210,7 +203,6 @@ func (h *Harness) DeleteSession(ctx context.Context, sessionID string) error {
 		opened.Close()
 		h.mu.Lock()
 	}
-	defer h.mu.Unlock()
 
 	if err := h.sessions.Delete(ctx, sessionID); err != nil {
 		return err

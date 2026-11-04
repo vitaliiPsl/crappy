@@ -19,10 +19,10 @@ func errorNotice(err error) notice {
 	return notice{kind: noticeError, message: err.Error()}
 }
 
-func executionNotice(finished execution.Finished) notice {
-	switch finished.Status {
+func executionNotice(record execution.Record) notice {
+	switch record.Status {
 	case execution.Failed:
-		return notice{kind: noticeError, message: finished.Error}
+		return notice{kind: noticeError, message: record.Error}
 	case execution.Cancelled, execution.Interrupted:
 		return notice{kind: noticeInterrupted}
 	}

@@ -166,10 +166,11 @@ func TestExecutePublishesEntriesAndEvents(t *testing.T) {
 		entryID   uint64
 		eventType string
 	}{
-		{1, execution.StartedEntryType},
+		{1, execution.EntryType},
+		{2, execution.EntryType},
 		{0, "work.progress"},
-		{2, "work.output"},
-		{3, execution.FinishedEntryType},
+		{3, "work.output"},
+		{4, execution.EntryType},
 	} {
 		received := receiveEvent(t, subscription)
 		if received.EntryID != want.entryID || received.Type != want.eventType || received.ExecutionID != current.ID() {
@@ -239,7 +240,58 @@ func TestCloseRejectsExecution(t *testing.T) {
 	}
 }
 
-func TestCloseCancelsActiveExecution(t *testing.T) {
+func TestCloseReleasesQueuedExecutions(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	store := entry.NewMemoryStore()
+	executor := newBlockingExecutor()
+	opened := newExecutorSession(ctx, t, "session", store, "work", executor)
+
+	running, err := opened.Execute(ctx, execution.NewRequest("work", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	<-executor.started
+
+	queued, err := opened.Execute(ctx, execution.NewRequest("work", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	opened.Close()
+
+	if status, err := running.Wait(ctx); err != nil || status != execution.Interrupted {
+		t.Fatalf("running execution after close = %q, %v", status, err)
+	}
+
+	if _, err := queued.Wait(ctx); !errors.Is(err, ErrClosed) {
+		t.Fatalf("queued execution waiter = %v", err)
+	}
+
+	if _, err := opened.Execute(ctx, execution.NewRequest("work", nil)); !errors.Is(err, ErrClosed) {
+		t.Fatalf("submit to closed session = %v", err)
+	}
+
+	entries, err := store.List(ctx, "session", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var saved execution.Record
+	if err := json.Unmarshal(entries[len(entries)-1].Payload, &saved); err != nil {
+		t.Fatal(err)
+	}
+
+	if saved.ID != running.ID() || saved.Status != execution.Interrupted {
+		t.Fatalf("closing settled queued work: %+v", saved)
+	}
+}
+
+func TestCloseInterruptsActiveExecution(t *testing.T) {
 	t.Parallel()
 
 	executor := newBlockingExecutor()
@@ -274,17 +326,17 @@ func TestCloseCancelsActiveExecution(t *testing.T) {
 	}
 
 	last := entries[len(entries)-1]
-	if last.ExecutionID != current.ID() || last.Type != execution.FinishedEntryType {
+	if last.ExecutionID != current.ID() || last.Type != execution.EntryType {
 		t.Fatalf("last entry = %#v, want finished execution %q", last, current.ID())
 	}
 
-	var finished execution.Finished
+	var finished execution.Record
 	if err := json.Unmarshal(last.Payload, &finished); err != nil {
 		t.Fatalf("decode finished execution: %v", err)
 	}
 
-	if finished.Status != execution.Cancelled {
-		t.Fatalf("execution status = %q, want %q", finished.Status, execution.Cancelled)
+	if finished.Status != execution.Interrupted {
+		t.Fatalf("execution status = %q, want %q", finished.Status, execution.Interrupted)
 	}
 }
 

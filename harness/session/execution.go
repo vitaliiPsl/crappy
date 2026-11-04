@@ -5,15 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"time"
-
-	"github.com/google/uuid"
+	"sync"
 
 	"github.com/vitaliipsl/crappy/harness/execution"
 )
 
 var (
-	ErrBusy                = errors.New("session is busy")
 	ErrClosed              = errors.New("session is closed")
 	ErrExecutionNotActive  = errors.New("execution is not active")
 	ErrExecutionNotFound   = errors.New("execution not found")
@@ -21,29 +18,39 @@ var (
 )
 
 type Execution struct {
-	id     string
 	cancel context.CancelFunc
 	done   chan struct{}
 
-	status execution.Status
+	mu     sync.Mutex
+	record execution.Record
 	err    error
 }
 
+func newExecution(record execution.Record) *Execution {
+	created := &Execution{record: record, done: make(chan struct{})}
+	if record.Status.Terminal() {
+		close(created.done)
+	}
+
+	return created
+}
+
 func (e *Execution) ID() string {
-	return e.id
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	return e.record.ID
 }
 
 func (e *Execution) Status() (execution.Status, error) {
-	select {
-	case <-e.done:
-		if e.err != nil {
-			return "", e.err
-		}
+	e.mu.Lock()
+	defer e.mu.Unlock()
 
-		return e.status, nil
-	default:
-		return execution.Running, nil
+	if e.err != nil {
+		return "", e.err
 	}
+
+	return e.record.Status, nil
 }
 
 func (e *Execution) Done() <-chan struct{} {
@@ -61,60 +68,20 @@ func (e *Execution) Wait(ctx context.Context) (execution.Status, error) {
 	case <-e.done:
 	}
 
-	if e.err != nil {
-		return "", e.err
-	}
-
-	return e.status, nil
+	return e.Status()
 }
 
-func (s *Session) Execute(ctx context.Context, request execution.Request) (*Execution, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (e *Execution) stop(err error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 
-	if err := ctx.Err(); err != nil {
-		return nil, err
+	select {
+	case <-e.done:
+		return
+	default:
+		e.err = err
+		close(e.done)
 	}
-
-	if s.closed || s.ctx.Err() != nil {
-		return nil, ErrClosed
-	}
-
-	if s.current != nil {
-		return nil, ErrBusy
-	}
-
-	executor, err := s.executors.Resolve(request.Executor)
-	if err != nil {
-		return nil, err
-	}
-
-	input, err := json.Marshal(request.Input)
-	if err != nil {
-		return nil, fmt.Errorf("encode execution input: %w", err)
-	}
-
-	id := uuid.NewString()
-
-	if err := s.Commit(ctx, id, execution.StartedEntryType, execution.Started{
-		Executor:  request.Executor,
-		Input:     input,
-		StartedAt: time.Now().UTC(),
-	}); err != nil {
-		return nil, fmt.Errorf("start execution: %w", err)
-	}
-
-	runCtx, cancel := context.WithCancel(s.ctx)
-	current := &Execution{
-		id:     id,
-		cancel: cancel,
-		done:   make(chan struct{}),
-	}
-	s.current = current
-
-	go s.runExecution(runCtx, executor, current, input)
-
-	return current, nil
 }
 
 func (s *Session) Execution(ctx context.Context, id string) (*Execution, error) {
@@ -129,115 +96,99 @@ func (s *Session) Execution(ctx context.Context, id string) (*Execution, error) 
 		return s.current, nil
 	}
 
+	for _, queued := range s.queue {
+		if queued.ID() == id {
+			return queued, nil
+		}
+	}
+
 	entries, err := s.entries.List(ctx, s.id, 0)
 	if err != nil {
 		return nil, err
 	}
 
-	var started bool
-
-	for _, value := range entries {
-		if value.ExecutionID != id {
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].Type != execution.EntryType || entries[i].ExecutionID != id {
 			continue
 		}
 
-		if value.Type == execution.StartedEntryType {
-			started = true
+		var record execution.Record
+		if err := json.Unmarshal(entries[i].Payload, &record); err != nil {
+			return nil, fmt.Errorf("decode execution %s: %w", id, err)
 		}
 
-		if value.Type != execution.FinishedEntryType {
-			continue
+		if !record.Status.Terminal() {
+			return nil, ErrExecutionUnfinished
 		}
 
-		var finished execution.Finished
-		if err := json.Unmarshal(value.Payload, &finished); err != nil {
-			return nil, fmt.Errorf("decode execution %s finish: %w", id, err)
-		}
-
-		loaded := &Execution{
-			id:     id,
-			done:   make(chan struct{}),
-			status: finished.Status,
-		}
-		close(loaded.done)
-
-		return loaded, nil
+		return newExecution(record), nil
 	}
 
-	if !started {
-		return nil, ErrExecutionNotFound
-	}
-
-	return nil, ErrExecutionUnfinished
+	return nil, ErrExecutionNotFound
 }
 
-func (s *Session) Cancel(ctx context.Context, executionID string) error {
+func (s *Session) runExecution(ctx context.Context, current *Execution) {
+	defer current.cancel()
+
+	runErr := s.invokeExecutor(ctx, current.record)
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	status, failure := execution.Completed, ""
+
+	switch {
+	case runErr == nil:
+	case s.ctx.Err() != nil:
+		status = execution.Interrupted
+	case ctx.Err() != nil || errors.Is(runErr, context.Canceled):
+		status = execution.Cancelled
+	default:
+		status, failure = execution.Failed, runErr.Error()
+	}
+
+	if err := s.commitExecution(context.WithoutCancel(ctx), current, status, failure); err != nil {
+		s.halt(err)
+
+		return
+	}
+
+	current.stop(nil)
+	s.current = nil
+	s.startNext()
+}
+
+func (s *Session) invokeExecutor(ctx context.Context, record execution.Record) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 
-	if s.closed {
-		return ErrClosed
+	executor, err := s.executors.Resolve(record.Executor)
+	if err != nil {
+		return err
 	}
 
-	if s.current == nil || s.current.ID() != executionID {
-		return ErrExecutionNotActive
-	}
-
-	s.current.cancel()
-
-	return nil
-}
-
-func (s *Session) runExecution(ctx context.Context, executor execution.Executor, current *Execution, input json.RawMessage) {
-	defer current.cancel()
-
-	runErr := executor.Execute(ctx, execution.ExecuteParams{
+	return executor.Execute(ctx, execution.ExecuteParams{
 		SessionID:   s.id,
-		ExecutionID: current.ID(),
-		Input:       input,
+		ExecutionID: record.ID,
+		Input:       record.Input,
 		State:       s.state,
 		Entries:     s.entries,
 		Events:      s.events,
 	})
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	runErr = errors.Join(runErr, ctx.Err())
-	finished := execution.Finished{Status: execution.Completed, EndedAt: time.Now().UTC()}
-
-	switch {
-	case errors.Is(runErr, context.Canceled):
-		finished.Status = execution.Cancelled
-	case runErr != nil:
-		finished.Status = execution.Failed
-		finished.Error = runErr.Error()
-	}
-
-	s.finishExecution(context.WithoutCancel(ctx), finished)
 }
 
-func (s *Session) finishExecution(ctx context.Context, finished execution.Finished) {
-	current := s.current
+func (s *Session) commitExecution(ctx context.Context, current *Execution, status execution.Status, failure string) error {
+	saved := current.record
+	saved.Status, saved.Error = status, failure
 
-	err := s.Commit(ctx, current.ID(), execution.FinishedEntryType, finished)
-	if err != nil {
-		err = fmt.Errorf("finish execution %s: %w", current.ID(), err)
+	if err := s.Commit(ctx, saved.ID, execution.EntryType, saved); err != nil {
+		return fmt.Errorf("commit execution %s: %w", saved.ID, err)
 	}
 
-	if err != nil {
-		s.closed = true
-		s.events.Close()
-	} else {
-		s.current = nil
-	}
+	current.mu.Lock()
+	current.record = saved
+	current.mu.Unlock()
 
-	current.status = finished.Status
-	current.err = err
-
-	close(current.done)
+	return nil
 }

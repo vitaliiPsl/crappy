@@ -71,7 +71,9 @@ func (f *Factory) Build(ctx context.Context, request BuildRequest) (kit.Agent, e
 		return nil, err
 	}
 
-	built, err := adkagent.New(model, request.History, append(options, adkagent.WithTools(tools...))...)
+	options = append(options, adkagent.WithTools(tools...))
+
+	built, err := adkagent.New(model, request.History, options...)
 	if err != nil {
 		return nil, err
 	}
