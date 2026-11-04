@@ -30,7 +30,7 @@ func TestUsageRebuildsFromJournal(t *testing.T) {
 	h := harness.New(storage)
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 
-	opened, err := h.Session(ctx, "")
+	opened, err := h.CreateSession(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

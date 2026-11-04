@@ -14,6 +14,8 @@ import (
 	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/compaction"
 	"github.com/vitaliipsl/crappy/harness/event"
+	"github.com/vitaliipsl/crappy/harness/execution"
+	"github.com/vitaliipsl/crappy/harness/session/state"
 	"github.com/vitaliipsl/crappy/harness/token"
 	"github.com/vitaliipsl/crappy/internal/storage/jsonl"
 )
@@ -31,42 +33,53 @@ func TestUsageReadsPersistedFactsWithoutChangingHistory(t *testing.T) {
 	h := harness.New(storage)
 	t.Cleanup(func() { _ = h.Shutdown(ctx) })
 
-	opened, err := h.Session(ctx, "")
-	if err != nil {
+	const sessionID = "saved"
+	if err := storage.SessionStore().Save(ctx, state.Record{ID: sessionID}); err != nil {
 		t.Fatal(err)
 	}
 
 	app := New(config.Config{}, h, storage, nil, token.NewCharacterEstimator())
 
+	events := event.NewBus(sessionID, storage.EntryStore())
+	defer events.Close()
+
+	if err := events.Commit(ctx, "unfinished", execution.StartedEntryType, execution.Started{Executor: agent.ExecutorName}); err != nil {
+		t.Fatal(err)
+	}
+
 	message := kit.NewModelMessage(kit.NewTextContent("done"))
 
 	message.Usage = kit.Usage{InputTokens: 100, OutputTokens: 20, CacheReadTokens: 15}
-	if err := opened.Commit(ctx, "agent", agent.MessageEntryType, message); err != nil {
+	if err := events.Commit(ctx, "agent", agent.MessageEntryType, message); err != nil {
 		t.Fatal(err)
 	}
 
-	if got, err := app.Usage(ctx, opened.ID()); err != nil || got != message.Usage {
+	if got, err := app.Usage(ctx, sessionID); err != nil || got != message.Usage {
 		t.Fatalf("first query = %+v, %v", got, err)
 	}
 
+	if records, err := storage.EntryStore().List(ctx, sessionID, 0); err != nil || len(records) != 2 {
+		t.Fatalf("usage query initialized recovery: %+v, %v", records, err)
+	}
+
 	compacted := compaction.Compaction{Retained: []kit.Message{message}, Usage: kit.Usage{InputTokens: 50, OutputTokens: 10}}
-	if err := opened.Commit(ctx, "compact", compaction.EntryType, compacted); err != nil {
+	if err := events.Commit(ctx, "compact", compaction.EntryType, compacted); err != nil {
 		t.Fatal(err)
 	}
 
-	before, err := opened.Entries(ctx, 0)
+	before, err := storage.EntryStore().List(ctx, sessionID, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	for range 2 {
-		usage, err := app.Usage(ctx, opened.ID())
+		usage, err := app.Usage(ctx, sessionID)
 		if want := (kit.Usage{InputTokens: 150, OutputTokens: 30, CacheReadTokens: 15}); err != nil || usage != want {
 			t.Fatalf("usage = %+v, error = %v; want %+v", usage, err, want)
 		}
 	}
 
-	after, err := opened.Entries(ctx, 0)
+	after, err := storage.EntryStore().List(ctx, sessionID, 0)
 	if err != nil || !reflect.DeepEqual(before, after) {
 		t.Fatalf("usage query changed history: %+v, %v", after, err)
 	}

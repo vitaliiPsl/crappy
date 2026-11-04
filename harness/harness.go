@@ -2,6 +2,7 @@ package harness
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -16,8 +17,9 @@ import (
 )
 
 var (
-	ErrClosed         = errors.New("harness is closed")
-	ErrAlreadyRunning = errors.New("harness is already running")
+	ErrClosed          = errors.New("harness is closed")
+	ErrAlreadyRunning  = errors.New("harness is already running")
+	ErrSessionRequired = errors.New("an existing session is required")
 )
 
 type Store interface {
@@ -46,16 +48,8 @@ type Harness struct {
 
 	mu      sync.Mutex
 	opened  map[string]*session.Session
-	pending map[string]*sessionOpening
-	opening sync.WaitGroup
 	stop    sync.Once
 	running bool
-}
-
-type sessionOpening struct {
-	done    chan struct{}
-	session *session.Session
-	err     error
 }
 
 func New(store Store, options ...Option) *Harness {
@@ -71,11 +65,10 @@ func New(store Store, options ...Option) *Harness {
 		entries:   store.EntryStore(),
 		executors: c.executors,
 
-		ctx:     ctx,
-		cancel:  cancel,
-		done:    make(chan struct{}),
-		opened:  make(map[string]*session.Session),
-		pending: make(map[string]*sessionOpening),
+		ctx:    ctx,
+		cancel: cancel,
+		done:   make(chan struct{}),
+		opened: make(map[string]*session.Session),
 	}
 }
 
@@ -125,119 +118,16 @@ func (h *Harness) Shutdown(ctx context.Context) error {
 	}
 }
 
-func (h *Harness) Session(ctx context.Context, sessionID string) (*session.Session, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
+func (h *Harness) CreateSession(ctx context.Context, values map[string]any) (*session.Session, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 
 	if h.ctx.Err() != nil {
 		return nil, ErrClosed
 	}
 
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	stop := context.AfterFunc(h.ctx, cancel)
-	defer stop()
-
-	record, err := h.sessionState(ctx, sessionID)
-	if err != nil {
-		if h.ctx.Err() != nil {
-			return nil, ErrClosed
-		}
-
-		if errors.Is(err, state.ErrNotFound) {
-			h.mu.Lock()
-			opened := h.opened[sessionID]
-			delete(h.opened, sessionID)
-			h.mu.Unlock()
-
-			if opened != nil {
-				opened.Close()
-			}
-		}
-
-		return nil, err
-	}
-
-	return h.openSession(ctx, record.ID)
-}
-
-func (h *Harness) openSession(ctx context.Context, sessionID string) (*session.Session, error) {
-	h.mu.Lock()
-	if h.ctx.Err() != nil {
-		h.mu.Unlock()
-
-		return nil, ErrClosed
-	}
-
 	if err := ctx.Err(); err != nil {
-		h.mu.Unlock()
-
 		return nil, err
-	}
-
-	if opened := h.opened[sessionID]; opened != nil {
-		h.mu.Unlock()
-
-		return opened, nil
-	}
-
-	pending := h.pending[sessionID]
-	if pending == nil {
-		pending = &sessionOpening{done: make(chan struct{})}
-		h.pending[sessionID] = pending
-		h.opening.Add(1)
-
-		go h.constructSession(sessionID, pending)
-	}
-	h.mu.Unlock()
-
-	select {
-	case <-ctx.Done():
-		if h.ctx.Err() != nil {
-			return nil, ErrClosed
-		}
-
-		return nil, ctx.Err()
-	case <-pending.done:
-	}
-
-	return pending.session, pending.err
-}
-
-func (h *Harness) constructSession(sessionID string, pending *sessionOpening) {
-	defer h.opening.Done()
-
-	opened, err := session.New(h.ctx, sessionID, state.New(h.sessions, sessionID), h.entries, h.executors)
-	if err != nil {
-		err = fmt.Errorf("open session %s: %w", sessionID, err)
-	}
-
-	h.mu.Lock()
-	if h.ctx.Err() != nil {
-		err = ErrClosed
-	}
-
-	if err == nil {
-		h.opened[sessionID] = opened
-		pending.session = opened
-	}
-
-	pending.err = err
-	delete(h.pending, sessionID)
-	h.mu.Unlock()
-
-	if err != nil && opened != nil {
-		opened.Close()
-	}
-
-	close(pending.done)
-}
-
-func (h *Harness) sessionState(ctx context.Context, sessionID string) (state.Record, error) {
-	if sessionID != "" {
-		return h.sessions.Get(ctx, sessionID)
 	}
 
 	now := time.Now().UTC()
@@ -247,11 +137,113 @@ func (h *Harness) sessionState(ctx context.Context, sessionID string) (state.Rec
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	if err := h.sessions.Save(ctx, record); err != nil {
-		return state.Record{}, fmt.Errorf("save session: %w", err)
+	if len(values) > 0 {
+		record.Values = make(map[string]json.RawMessage, len(values))
 	}
 
-	return record, nil
+	for key, value := range values {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return nil, fmt.Errorf("encode session value %q: %w", key, err)
+		}
+
+		record.Values[key] = encoded
+	}
+
+	if err := h.sessions.Save(ctx, record); err != nil {
+		return nil, fmt.Errorf("save session: %w", err)
+	}
+
+	return h.openSession(ctx, record.ID)
+}
+
+func (h *Harness) Session(ctx context.Context, sessionID string) (*session.Session, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if h.ctx.Err() != nil {
+		return nil, ErrClosed
+	}
+
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	if sessionID == "" {
+		return nil, ErrSessionRequired
+	}
+
+	if opened := h.opened[sessionID]; opened != nil {
+		return opened, nil
+	}
+
+	if _, err := h.sessions.Get(ctx, sessionID); err != nil {
+		return nil, err
+	}
+
+	return h.openSession(ctx, sessionID)
+}
+
+func (h *Harness) DeleteSession(ctx context.Context, sessionID string) error {
+	h.mu.Lock()
+	if h.ctx.Err() != nil {
+		h.mu.Unlock()
+
+		return ErrClosed
+	}
+
+	if err := ctx.Err(); err != nil {
+		h.mu.Unlock()
+
+		return err
+	}
+
+	if sessionID == "" {
+		h.mu.Unlock()
+
+		return ErrSessionRequired
+	}
+
+	// Keep the runtime cached while closing so lookups cannot construct a replacement.
+	if opened := h.opened[sessionID]; opened != nil {
+		h.mu.Unlock()
+		opened.Close()
+		h.mu.Lock()
+	}
+	defer h.mu.Unlock()
+
+	if err := h.sessions.Delete(ctx, sessionID); err != nil {
+		return err
+	}
+
+	delete(h.opened, sessionID)
+
+	return nil
+}
+
+func (h *Harness) openSession(ctx context.Context, sessionID string) (*session.Session, error) {
+	opened, err := session.New(h.ctx, sessionID, state.New(h.sessions, sessionID), h.entries, h.executors)
+	if err != nil {
+		if h.ctx.Err() != nil {
+			return nil, ErrClosed
+		}
+
+		return nil, fmt.Errorf("open session %s: %w", sessionID, err)
+	}
+
+	if h.ctx.Err() != nil {
+		opened.Close()
+
+		return nil, ErrClosed
+	}
+
+	h.opened[sessionID] = opened
+
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	return opened, nil
 }
 
 func (h *Harness) closeSessions() {
@@ -262,8 +254,6 @@ func (h *Harness) closeSessions() {
 		opened = append(opened, s)
 	}
 	h.mu.Unlock()
-
-	h.opening.Wait()
 
 	for _, s := range opened {
 		s.Close()

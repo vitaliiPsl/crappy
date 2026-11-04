@@ -210,6 +210,17 @@ func TestOperationsRequireAnExistingSession(t *testing.T) {
 
 	operations := []func() error{
 		func() error {
+			_, err := app.GetSession(ctx, "")
+
+			return err
+		},
+		func() error {
+			_, err := app.Usage(ctx, "")
+
+			return err
+		},
+		func() error { return app.DeleteSession(ctx, "") },
+		func() error {
 			_, err := app.Execute(ctx, "", kit.NewTextContent("hello"))
 
 			return err
@@ -237,7 +248,7 @@ func TestOperationsRequireAnExistingSession(t *testing.T) {
 		},
 	}
 	for _, operation := range operations {
-		if err := operation(); !errors.Is(err, ErrSessionRequired) {
+		if err := operation(); !errors.Is(err, harness.ErrSessionRequired) {
 			t.Fatalf("operation error = %v", err)
 		}
 	}

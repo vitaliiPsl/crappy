@@ -157,7 +157,7 @@ func TestExecuteReportsTerminalPersistenceFailure(t *testing.T) {
 			))
 			t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 
-			opened, err := h.Session(ctx, "")
+			opened, err := h.CreateSession(ctx, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -239,7 +239,7 @@ func TestWaitForExecutionStopsWhenScreenCloses(t *testing.T) {
 
 	defer close(release)
 
-	opened, err := h.Session(ctx, "")
+	opened, err := h.CreateSession(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

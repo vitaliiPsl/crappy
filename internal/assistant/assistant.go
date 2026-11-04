@@ -1,8 +1,6 @@
 package assistant
 
 import (
-	"errors"
-
 	"github.com/vitaliipsl/crappy/harness"
 	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/entry"
@@ -10,8 +8,6 @@ import (
 	"github.com/vitaliipsl/crappy/harness/token"
 	"github.com/vitaliipsl/crappy/internal/config"
 )
-
-var ErrSessionRequired = errors.New("an existing session is required")
 
 type Assistant struct {
 	config    config.Config

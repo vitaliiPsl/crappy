@@ -215,7 +215,7 @@ func TestContextCommandRequiresExistingSession(t *testing.T) {
 	defer screen.Close()
 
 	result := screen.submit("/context")().(contextMsg)
-	if !errors.Is(result.err, assistant.ErrSessionRequired) {
+	if !errors.Is(result.err, harness.ErrSessionRequired) {
 		t.Fatalf("context without a session returned %v", result.err)
 	}
 
@@ -264,7 +264,7 @@ func TestCompactCommandUsesNormalExecutionLifecycle(t *testing.T) {
 	defer screen.Close()
 
 	missing := screen.submit("/compact")().(executeResultMsg)
-	if !errors.Is(missing.err, assistant.ErrSessionRequired) {
+	if !errors.Is(missing.err, harness.ErrSessionRequired) {
 		t.Fatalf("compaction without a session returned %v", missing.err)
 	}
 

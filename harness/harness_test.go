@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"reflect"
 	"sync"
 	"sync/atomic"
@@ -18,25 +19,36 @@ import (
 	"github.com/vitaliipsl/crappy/internal/storage/jsonl"
 )
 
-func TestSessionCreatesStateAndSharesInstance(t *testing.T) {
+func TestCreateSessionPersistsInitialValuesAndSharesInstance(t *testing.T) {
 	t.Parallel()
 
-	store := newTestStore()
+	sessions := newObservedSessionStore()
+	store := testStore{sessions, entry.NewMemoryStore()}
 	h := newTestHarness(t, store)
 
-	created, err := h.Session(context.Background(), "")
+	created, err := h.CreateSession(context.Background(), map[string]any{"workdir": "/workspace", "attempt": 1})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	state, err := store.sessions.Get(context.Background(), created.ID())
+	record, err := store.sessions.Get(context.Background(), created.ID())
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if created.ID() == "" || state.ID != created.ID() || state.CreatedAt.IsZero() || state.UpdatedAt != state.CreatedAt {
-		t.Fatalf("persisted state = %+v", state)
+	if created.ID() == "" || record.ID != created.ID() || record.CreatedAt.IsZero() || record.UpdatedAt != record.CreatedAt {
+		t.Fatalf("persisted state = %+v", record)
 	}
+
+	if string(record.Values["workdir"]) != `"/workspace"` || string(record.Values["attempt"]) != "1" {
+		t.Fatalf("initial values = %v", record.Values)
+	}
+
+	if sessions.saves.Load() != 1 || sessions.updates.Load() != 0 {
+		t.Fatal("creation did not persist initial state in one save")
+	}
+
+	sessions.getErr = errors.New("session storage unavailable")
 
 	const clients = 20
 
@@ -64,25 +76,205 @@ func TestSessionCreatesStateAndSharesInstance(t *testing.T) {
 			t.Fatal("clients received different instances of one session")
 		}
 	}
+
+	if sessions.gets.Load() != 1 {
+		t.Fatal("cached session lookup reread storage")
+	}
 }
 
-func TestSessionCreatesDistinctSessionsForEmptyID(t *testing.T) {
+func TestCreateSessionCreatesDistinctSessions(t *testing.T) {
 	t.Parallel()
 
 	h := newTestHarness(t, newTestStore())
 
-	first, err := h.Session(context.Background(), "")
+	first, err := h.CreateSession(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	second, err := h.Session(context.Background(), "")
+	second, err := h.CreateSession(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	if first.ID() == second.ID() {
-		t.Fatal("empty ID reused an existing session")
+		t.Fatal("creation reused an existing session")
+	}
+}
+
+func TestCreateSessionRejectsInvalidInitialValuesBeforeSaving(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore()
+	h := newTestHarness(t, store)
+
+	opened, err := h.CreateSession(context.Background(), map[string]any{"invalid": func() {}})
+	if opened != nil || err == nil {
+		t.Fatalf("invalid initial values = %v, %v", opened, err)
+	}
+
+	records, err := store.sessions.List(context.Background())
+	if err != nil || len(records) != 0 {
+		t.Fatalf("invalid creation persisted a session: %v, %v", records, err)
+	}
+}
+
+func TestSessionOperationsRequireID(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t, newTestStore())
+	if _, err := h.Session(context.Background(), ""); !errors.Is(err, ErrSessionRequired) {
+		t.Fatalf("empty lookup = %v", err)
+	}
+
+	if err := h.DeleteSession(context.Background(), ""); !errors.Is(err, ErrSessionRequired) {
+		t.Fatalf("empty deletion = %v", err)
+	}
+}
+
+func TestDeleteSessionStopsWorkBeforeRemovingPersistence(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	storage, err := jsonl.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	started := make(chan struct{})
+	accessed := make(chan error, 1)
+
+	var h *Harness
+
+	h = newTestHarness(t, storage, WithExecutor("work", execution.Func(func(ctx context.Context, params execution.ExecuteParams) error {
+		close(started)
+		<-ctx.Done()
+
+		_, err := h.Session(context.Background(), params.SessionID)
+		accessed <- err
+
+		return ctx.Err()
+	})))
+
+	opened, err := h.CreateSession(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	path, err := storage.PutBlob(ctx, opened.ID(), []byte("saved output"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	subscription, err := opened.Subscribe(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer subscription.Close()
+
+	current, err := opened.Execute(ctx, execution.NewRequest("work", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	waitSignal(t, started)
+
+	deleted := make(chan error, 1)
+	go func() { deleted <- h.DeleteSession(ctx, opened.ID()) }()
+
+	if err := waitError(t, deleted); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := waitError(t, accessed); err != nil {
+		t.Fatalf("deletion blocked execution cleanup from accessing the harness: %v", err)
+	}
+
+	waitSignal(t, subscription.Done())
+
+	if status, err := current.Wait(ctx); err != nil || status != execution.Cancelled {
+		t.Fatalf("deleted execution = %q, %v", status, err)
+	}
+
+	if _, err := h.Session(ctx, opened.ID()); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("deleted session lookup = %v", err)
+	}
+
+	if _, err := opened.Execute(ctx, execution.NewRequest("work", nil)); !errors.Is(err, session.ErrClosed) {
+		t.Fatalf("deleted runtime admitted work: %v", err)
+	}
+
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("deleted session retained its blob: %v", err)
+	}
+
+	if err := h.DeleteSession(ctx, opened.ID()); err != nil {
+		t.Fatalf("repeated deletion = %v", err)
+	}
+}
+
+func TestDeleteSessionDoesNotConstructUnopenedRuntime(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	entries := newFailingEntryStore(errors.New("journal unavailable"))
+	entries.readFailing.Store(true)
+
+	store := testStore{state.NewMemoryStore(), entries}
+	if err := store.sessions.Save(ctx, state.Record{ID: "unopened"}); err != nil {
+		t.Fatal(err)
+	}
+
+	h := newTestHarness(t, store)
+	if err := h.DeleteSession(ctx, "unopened"); err != nil {
+		t.Fatalf("deleting unopened session read its journal: %v", err)
+	}
+
+	if entries.reads.Load() != 0 {
+		t.Fatal("deletion initialized execution recovery")
+	}
+
+	if _, err := store.sessions.Get(ctx, "unopened"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("session record survived deletion: %v", err)
+	}
+}
+
+func TestDeleteSessionFailureKeepsClosedRuntimeUntilRetry(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	sessions := newObservedSessionStore()
+	sessions.deleteErr = errors.New("delete unavailable")
+	h := newTestHarness(t, testStore{sessions, entry.NewMemoryStore()})
+
+	opened, err := h.CreateSession(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := h.DeleteSession(ctx, opened.ID()); !errors.Is(err, sessions.deleteErr) {
+		t.Fatalf("failed deletion = %v", err)
+	}
+
+	attached, err := h.Session(ctx, opened.ID())
+	if err != nil || attached != opened {
+		t.Fatalf("failed deletion replaced the stopped runtime: %v, %v", attached, err)
+	}
+
+	if _, err := attached.Execute(ctx, execution.NewRequest("work", nil)); !errors.Is(err, session.ErrClosed) {
+		t.Fatalf("failed deletion restarted work: %v", err)
+	}
+
+	sessions.deleteErr = nil
+
+	if err := h.DeleteSession(ctx, opened.ID()); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := h.Session(ctx, opened.ID()); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("successful retry retained runtime: %v", err)
 	}
 }
 
@@ -199,7 +391,7 @@ func TestLookupContextDoesNotOwnExecution(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	opened, err := h.Session(ctx, "")
+	opened, err := h.CreateSession(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +422,7 @@ func TestShutdownOwnsSessionsAndRejectsFurtherOpens(t *testing.T) {
 	executor := newBlockingExecutor()
 	h := newTestHarness(t, newTestStore(), WithExecutor("work", executor))
 
-	opened, err := h.Session(context.Background(), "")
+	opened, err := h.CreateSession(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +449,7 @@ func TestShutdownOwnsSessionsAndRejectsFurtherOpens(t *testing.T) {
 		t.Fatalf("execution status = %+v", finished)
 	}
 
-	if _, err := h.Session(context.Background(), ""); !errors.Is(err, ErrClosed) {
+	if _, err := h.CreateSession(context.Background(), nil); !errors.Is(err, ErrClosed) {
 		t.Fatalf("new session after shutdown error = %v", err)
 	}
 
@@ -281,7 +473,7 @@ func TestShutdownDeadlineDoesNotAbandonCleanup(t *testing.T) {
 	executor.ignoreCancel = true
 	h := newTestHarness(t, newTestStore(), WithExecutor("work", executor))
 
-	opened, err := h.Session(context.Background(), "")
+	opened, err := h.CreateSession(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -368,7 +560,7 @@ func TestSessionsRemainPersistentAcrossHosts(t *testing.T) {
 		return errors.New("saved failure")
 	})))
 
-	opened, err := first.Session(context.Background(), "")
+	opened, err := first.CreateSession(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -452,7 +644,7 @@ func TestSessionStatePersistsAndReachesExecutors(t *testing.T) {
 
 	ids := make([]string, 0, len(workdirs))
 	for _, workdir := range workdirs {
-		opened, err := h.Session(ctx, "")
+		opened, err := h.CreateSession(ctx, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -570,7 +762,7 @@ func TestSessionAttachmentPreservesActiveExecution(t *testing.T) {
 	h := newTestHarness(t, newTestStore(), WithExecutor("work", executor))
 	t.Cleanup(finish)
 
-	opened, err := h.Session(ctx, "")
+	opened, err := h.CreateSession(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -664,7 +856,7 @@ func TestSessionAttachmentDoesNotRetryFailedSettlement(t *testing.T) {
 	})))
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 
-	opened, err := h.Session(ctx, "")
+	opened, err := h.CreateSession(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -741,7 +933,7 @@ func TestSessionAttachmentReturnsExistingClosedSession(t *testing.T) {
 
 	h := newTestHarness(t, newTestStore())
 
-	opened, err := h.Session(context.Background(), "")
+	opened, err := h.CreateSession(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -783,45 +975,6 @@ func TestSessionOpeningReturnsInitializationReadFailure(t *testing.T) {
 	opened, err = h.Session(ctx, "persisted")
 	if err != nil || opened.ID() != "persisted" {
 		t.Fatalf("attachment after journal recovery = %v, error = %v", opened, err)
-	}
-}
-
-func TestSessionInitializationDoesNotBlockOtherSessions(t *testing.T) {
-	t.Parallel()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	entries := newBlockingInitializationStore("blocked")
-
-	sessions := state.NewMemoryStore()
-	for _, id := range []string{"blocked", "other"} {
-		if err := sessions.Save(ctx, state.Record{ID: id}); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	h := newTestHarness(t, testStore{sessions, entries})
-	release := sync.OnceFunc(func() { close(entries.release) })
-	t.Cleanup(release)
-
-	result := make(chan error, 1)
-	go func() {
-		_, err := h.Session(ctx, "blocked")
-		result <- err
-	}()
-
-	waitSignal(t, entries.started)
-
-	opened, err := h.Session(ctx, "other")
-	if err != nil || opened.ID() != "other" {
-		t.Fatalf("independent session attachment = %v, error = %v", opened, err)
-	}
-
-	release()
-
-	if err := waitError(t, result); err != nil {
-		t.Fatal(err)
 	}
 }
 
@@ -912,7 +1065,7 @@ func TestSessionOpeningWaitsForInitialization(t *testing.T) {
 	}
 }
 
-func TestCancelledSessionOpeningCanBeRetried(t *testing.T) {
+func TestSessionConstructionSurvivesCallerCancellation(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -940,12 +1093,11 @@ func TestCancelledSessionOpeningCanBeRetried(t *testing.T) {
 
 	waitSignal(t, entries.started)
 	cancelOpening()
+	release()
 
 	if err := waitError(t, result); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled opening = %v", err)
 	}
-
-	release()
 
 	opened, err := h.Session(ctx, "persisted")
 	if err != nil || opened.ID() != "persisted" {
@@ -985,9 +1137,13 @@ func TestWaitingClientCancellationPreservesSessionConstruction(t *testing.T) {
 	waiting, stopWaiting := context.WithTimeout(ctx, 100*time.Millisecond)
 	defer stopWaiting()
 
-	if opened, err := h.Session(waiting, "persisted"); opened != nil || !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("cancelled waiter = %v, error = %v", opened, err)
-	}
+	waiter := make(chan error, 1)
+	go func() {
+		_, err := h.Session(waiting, "persisted")
+		waiter <- err
+	}()
+
+	<-waiting.Done()
 
 	select {
 	case err := <-result:
@@ -996,6 +1152,10 @@ func TestWaitingClientCancellationPreservesSessionConstruction(t *testing.T) {
 	}
 
 	release()
+
+	if err := waitError(t, waiter); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("cancelled waiter = %v", err)
+	}
 
 	if err := waitError(t, result); err != nil {
 		t.Fatalf("construction after waiter cancelled = %v", err)
@@ -1031,6 +1191,49 @@ func newTestStore() testStore {
 func (s testStore) SessionStore() state.Store { return s.sessions }
 
 func (s testStore) EntryStore() entry.Store { return s.entries }
+
+type observedSessionStore struct {
+	state.Store
+	gets      atomic.Int32
+	saves     atomic.Int32
+	updates   atomic.Int32
+	getErr    error
+	deleteErr error
+}
+
+func newObservedSessionStore() *observedSessionStore {
+	return &observedSessionStore{Store: state.NewMemoryStore()}
+}
+
+func (s *observedSessionStore) Get(ctx context.Context, id string) (state.Record, error) {
+	s.gets.Add(1)
+
+	if s.getErr != nil {
+		return state.Record{}, s.getErr
+	}
+
+	return s.Store.Get(ctx, id)
+}
+
+func (s *observedSessionStore) Save(ctx context.Context, record state.Record) error {
+	s.saves.Add(1)
+
+	return s.Store.Save(ctx, record)
+}
+
+func (s *observedSessionStore) Update(ctx context.Context, id string, update func(*state.Record) error) error {
+	s.updates.Add(1)
+
+	return s.Store.Update(ctx, id, update)
+}
+
+func (s *observedSessionStore) Delete(ctx context.Context, id string) error {
+	if s.deleteErr != nil {
+		return s.deleteErr
+	}
+
+	return s.Store.Delete(ctx, id)
+}
 
 type blockingExecutor struct {
 	started      chan struct{}

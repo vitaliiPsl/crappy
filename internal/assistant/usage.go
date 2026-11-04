@@ -13,7 +13,7 @@ import (
 )
 
 func (a *Assistant) Usage(ctx context.Context, sessionID string) (kit.Usage, error) {
-	if _, err := a.openSession(ctx, sessionID); err != nil {
+	if _, err := a.GetSession(ctx, sessionID); err != nil {
 		return kit.Usage{}, err
 	}
 

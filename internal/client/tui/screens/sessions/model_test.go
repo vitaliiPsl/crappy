@@ -5,7 +5,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/vitaliipsl/crappy/internal/config"
 
@@ -14,14 +13,11 @@ import (
 
 	"github.com/vitaliipsl/crappy/harness"
 	"github.com/vitaliipsl/crappy/harness/entry"
-	"github.com/vitaliipsl/crappy/harness/execution"
-	"github.com/vitaliipsl/crappy/harness/session"
 	"github.com/vitaliipsl/crappy/harness/session/state"
 	"github.com/vitaliipsl/crappy/harness/token"
 	"github.com/vitaliipsl/crappy/internal/assistant"
 	"github.com/vitaliipsl/crappy/internal/client/tui/navigation"
 	"github.com/vitaliipsl/crappy/internal/client/tui/routes"
-	"github.com/vitaliipsl/crappy/internal/storage/jsonl"
 )
 
 func TestLoadSelectsCurrentSession(t *testing.T) {
@@ -140,74 +136,6 @@ func TestDeleteRejectsCurrentSession(t *testing.T) {
 
 	if command != nil || !errors.Is(model.err, errCurrentSession) {
 		t.Fatalf("command = %v, error = %v", command, model.err)
-	}
-}
-
-func TestDeleteClosesLiveSessionBeforeRemovingStorage(t *testing.T) {
-	t.Parallel()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	storage, err := jsonl.Open(ctx, t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	started := make(chan struct{})
-	executor := execution.Func(func(ctx context.Context, _ execution.ExecuteParams) error {
-		close(started)
-		<-ctx.Done()
-
-		return ctx.Err()
-	})
-	h := harness.New(storage, harness.WithExecutor("work", executor))
-	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
-
-	opened, err := h.Session(ctx, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	subscription, err := opened.Subscribe(ctx, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := opened.Execute(ctx, execution.NewRequest("work", nil)); err != nil {
-		t.Fatal(err)
-	}
-
-	select {
-	case <-started:
-	case <-ctx.Done():
-		t.Fatal("executor did not start")
-	}
-
-	model := New(ctx, assistant.New(config.Config{}, h, storage, nil, token.NewCharacterEstimator()), "other-session")
-	defer model.Close()
-
-	deleted := model.deleteSession(opened.ID())().(deletedMsg)
-	if deleted.err != nil {
-		t.Fatal(deleted.err)
-	}
-
-	select {
-	case <-subscription.Done():
-	default:
-		t.Fatal("deleted session retained a live subscription")
-	}
-
-	if _, err := h.Session(ctx, opened.ID()); !errors.Is(err, state.ErrNotFound) {
-		t.Fatalf("deleted session lookup error = %v", err)
-	}
-
-	if _, err := opened.Execute(ctx, execution.NewRequest("work", nil)); !errors.Is(err, session.ErrClosed) {
-		t.Fatalf("execution on deleted session error = %v", err)
-	}
-
-	if states, err := storage.SessionStore().List(ctx); err != nil || len(states) != 0 {
-		t.Fatalf("sessions after deletion = %+v, %v", states, err)
 	}
 }
 

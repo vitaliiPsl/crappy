@@ -13,7 +13,7 @@ import (
 )
 
 func (a *Assistant) Execute(ctx context.Context, sessionID string, content ...kit.Content) (string, error) {
-	opened, err := a.openSession(ctx, sessionID)
+	opened, err := a.harness.Session(ctx, sessionID)
 	if err != nil {
 		return "", err
 	}
@@ -27,7 +27,7 @@ func (a *Assistant) Execute(ctx context.Context, sessionID string, content ...ki
 }
 
 func (a *Assistant) GetExecutionStatus(ctx context.Context, sessionID, executionID string) (execution.Status, error) {
-	opened, err := a.openSession(ctx, sessionID)
+	opened, err := a.harness.Session(ctx, sessionID)
 	if err != nil {
 		return "", err
 	}
@@ -41,7 +41,7 @@ func (a *Assistant) GetExecutionStatus(ctx context.Context, sessionID, execution
 }
 
 func (a *Assistant) WaitExecution(ctx context.Context, sessionID, executionID string) (execution.Status, error) {
-	opened, err := a.openSession(ctx, sessionID)
+	opened, err := a.harness.Session(ctx, sessionID)
 	if err != nil {
 		return "", err
 	}
@@ -55,7 +55,7 @@ func (a *Assistant) WaitExecution(ctx context.Context, sessionID, executionID st
 }
 
 func (a *Assistant) Cancel(ctx context.Context, sessionID, executionID string) error {
-	opened, err := a.openSession(ctx, sessionID)
+	opened, err := a.harness.Session(ctx, sessionID)
 	if err != nil {
 		return err
 	}
@@ -68,7 +68,7 @@ func (a *Assistant) Cancel(ctx context.Context, sessionID, executionID string) e
 }
 
 func (a *Assistant) Compact(ctx context.Context, sessionID string) (string, error) {
-	opened, err := a.openSession(ctx, sessionID)
+	opened, err := a.harness.Session(ctx, sessionID)
 	if err != nil {
 		return "", err
 	}

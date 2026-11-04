@@ -4,16 +4,63 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"reflect"
 	"testing"
 
 	"github.com/vitaliipsl/crappy/internal/config"
 
 	"github.com/vitaliipsl/crappy/harness"
+	"github.com/vitaliipsl/crappy/harness/entry"
+	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/session/state"
 	"github.com/vitaliipsl/crappy/harness/token"
 	"github.com/vitaliipsl/crappy/internal/storage/jsonl"
 	"github.com/vitaliipsl/crappy/internal/workdir"
 )
+
+func TestGetSessionReadsStateWithoutConstructingRuntime(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	storage, err := jsonl.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := storage.SessionStore().Save(ctx, state.Record{ID: "saved"}); err != nil {
+		t.Fatal(err)
+	}
+
+	before, err := storage.EntryStore().Append(ctx, "saved", entry.Entry{
+		ExecutionID: "unfinished", Type: execution.StartedEntryType, Payload: json.RawMessage(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	h := harness.New(storage)
+	t.Cleanup(func() { _ = h.Shutdown(ctx) })
+
+	app := New(config.Config{}, h, storage, nil, token.NewCharacterEstimator())
+
+	if record, err := app.GetSession(ctx, "saved"); err != nil || record.ID != "saved" {
+		t.Fatalf("session query = %+v, %v", record, err)
+	}
+
+	if err := h.Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if record, err := app.GetSession(ctx, "saved"); err != nil || record.ID != "saved" {
+		t.Fatalf("state query depends on host lifetime: %+v, %v", record, err)
+	}
+
+	after, err := storage.EntryStore().List(ctx, "saved", 0)
+	if err != nil || !reflect.DeepEqual(after, before) {
+		t.Fatalf("session query changed execution history: %+v, %v", after, err)
+	}
+}
 
 func TestSessionPersistsWorkdirAtCreationAndPreservesItOnResume(t *testing.T) {
 	ctx := context.Background()

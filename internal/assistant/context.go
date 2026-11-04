@@ -63,7 +63,7 @@ type ContextTool struct {
 }
 
 func (a *Assistant) Context(ctx context.Context, sessionID string) (ContextReport, error) {
-	opened, err := a.openSession(ctx, sessionID)
+	opened, err := a.harness.Session(ctx, sessionID)
 	if err != nil {
 		return ContextReport{}, err
 	}
