@@ -10,7 +10,6 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
 	"github.com/vitaliipsl/crappy/harness/event"
-	"github.com/vitaliipsl/crappy/harness/session"
 	"github.com/vitaliipsl/crappy/internal/assistant"
 	"github.com/vitaliipsl/crappy/internal/workdir"
 )
@@ -69,9 +68,9 @@ type createdMsg struct {
 func (createdMsg) Broadcast() {}
 
 type executeResultMsg struct {
-	target    *Model
-	execution *session.Execution
-	err       error
+	target      *Model
+	executionID string
+	err         error
 }
 
 func (executeResultMsg) Broadcast() {}
@@ -162,15 +161,17 @@ func (m *Model) create(input kit.Message) tea.Cmd {
 
 func (m *Model) execute(input kit.Message) tea.Cmd {
 	return func() tea.Msg {
-		current, err := m.assistant.Execute(m.ctx, m.sessionID, input.Content...)
+		id, err := m.assistant.Execute(m.ctx, m.sessionID, input.Content...)
 
-		return executeResultMsg{target: m, execution: current, err: err}
+		return executeResultMsg{target: m, executionID: id, err: err}
 	}
 }
 
-func (m *Model) waitForExecution(current *session.Execution) tea.Cmd {
+func (m *Model) waitForExecution(executionID string) tea.Cmd {
+	sessionID := m.sessionID
+
 	return func() tea.Msg {
-		_, err := current.Wait(m.ctx)
+		_, err := m.assistant.WaitExecution(m.ctx, sessionID, executionID)
 
 		return executionWaitMsg{target: m, err: err}
 	}

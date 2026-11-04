@@ -59,8 +59,8 @@ func (m *Model) compact() tea.Cmd {
 	sessionID := m.sessionID
 
 	return func() tea.Msg {
-		current, err := m.assistant.Compact(m.ctx, sessionID)
+		id, err := m.assistant.Compact(m.ctx, sessionID)
 
-		return executeResultMsg{target: m, execution: current, err: err}
+		return executeResultMsg{target: m, executionID: id, err: err}
 	}
 }

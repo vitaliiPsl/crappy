@@ -301,7 +301,7 @@ func TestExecuteValidatesBeforeRecording(t *testing.T) {
 	}
 }
 
-func TestExecutionWaitReturnsDurableFinishToIndependentClients(t *testing.T) {
+func TestExecutionWaitReturnsDurableStatusToIndependentClients(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -330,6 +330,11 @@ func TestExecutionWaitReturnsDurableFinishToIndependentClients(t *testing.T) {
 		t.Fatalf("live attachment = %v, %v", attached, err)
 	}
 
+	active, err := attached.Status()
+	if err != nil || active != execution.Running {
+		t.Fatalf("running execution status = %q, %v", active, err)
+	}
+
 	clientCtx, disconnect := context.WithCancel(ctx)
 	disconnect()
 
@@ -346,8 +351,12 @@ func TestExecutionWaitReturnsDurableFinishToIndependentClients(t *testing.T) {
 	var clients sync.WaitGroup
 	for range 16 {
 		clients.Go(func() {
-			if finished, err := attached.Wait(ctx); err != nil || finished.Status != execution.Completed {
-				t.Errorf("client finish = %+v, %v", finished, err)
+			if _, err := attached.Status(); err != nil {
+				t.Errorf("client execution status: %v", err)
+			}
+
+			if status, err := attached.Wait(ctx); err != nil || status != execution.Completed {
+				t.Errorf("client status = %q, %v", status, err)
 			}
 		})
 	}
@@ -355,9 +364,9 @@ func TestExecutionWaitReturnsDurableFinishToIndependentClients(t *testing.T) {
 	close(release)
 	clients.Wait()
 
-	finished, err := current.Wait(ctx)
-	if err != nil || finished.EndedAt.IsZero() {
-		t.Fatalf("finish = %+v, %v", finished, err)
+	status, err := current.Wait(ctx)
+	if err != nil || status != execution.Completed {
+		t.Fatalf("status = %q, %v", status, err)
 	}
 
 	entries, err := session.Entries(ctx, 0)
@@ -370,8 +379,18 @@ func TestExecutionWaitReturnsDurableFinishToIndependentClients(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if stored.Status != finished.Status || !stored.EndedAt.Equal(finished.EndedAt) {
-		t.Fatalf("returned finish differs from persisted finish: %+v, %+v", finished, stored)
+	if stored.Status != status || stored.EndedAt.IsZero() {
+		t.Fatalf("persisted finish = %+v; want status %q and completion time", stored, status)
+	}
+
+	loaded, err := session.Execution(ctx, current.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	restored, err := loaded.Status()
+	if err != nil || restored != status {
+		t.Fatalf("persisted execution status = %q, %v", restored, err)
 	}
 }
 
@@ -404,9 +423,28 @@ func TestExecutionFinishSeparatesWorkFailuresFromWaitErrors(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			finished, err := current.Wait(ctx)
-			if err != nil || finished.Status != test.status || !strings.Contains(finished.Error, test.failure) {
-				t.Fatalf("execution finish = %+v, wait error = %v", finished, err)
+			status, err := current.Wait(ctx)
+			if err != nil || status != test.status {
+				t.Fatalf("execution status = %q, wait error = %v", status, err)
+			}
+
+			loaded, err := current.Status()
+			if err != nil || loaded != status {
+				t.Fatalf("execution status = %q, error = %v; want %q", loaded, err, status)
+			}
+
+			entries, err := session.Entries(ctx, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var finished execution.Finished
+			if err := json.Unmarshal(entries[len(entries)-1].Payload, &finished); err != nil {
+				t.Fatal(err)
+			}
+
+			if finished.Status != status || !strings.Contains(finished.Error, test.failure) {
+				t.Fatalf("persisted finish = %+v; want status %q and failure %q", finished, status, test.failure)
 			}
 		})
 	}
@@ -448,8 +486,17 @@ func TestExecutionLookupDoesNotRetryPersistence(t *testing.T) {
 	store.failing.Store(false)
 
 	for range 3 {
-		if _, err := session.Execution(ctx, current.ID()); !errors.Is(err, ErrExecutionUnfinished) {
-			t.Fatalf("uncommitted execution lookup = %v", err)
+		loaded, err := session.Execution(ctx, current.ID())
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := loaded.Status(); !errors.Is(err, store.err) {
+			t.Fatalf("lookup lost persistence error = %v", err)
+		}
+
+		if _, err := loaded.Wait(ctx); !errors.Is(err, store.err) {
+			t.Fatalf("waiting after lookup lost persistence error = %v", err)
 		}
 
 		if _, err := current.Wait(ctx); !errors.Is(err, store.err) {
@@ -517,7 +564,7 @@ func TestExecutionDoneWaitsForPersistence(t *testing.T) {
 
 	release()
 
-	if result, err := current.Wait(ctx); err != nil || result.Status != execution.Completed {
+	if result, err := current.Wait(ctx); err != nil || result != execution.Completed {
 		t.Fatalf("durable completion = %+v, %v", result, err)
 	}
 }
@@ -553,9 +600,9 @@ func TestExecutionLookupLeavesUnfinishedHistoryUntouched(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		finished, err := old.Wait(ctx)
-		if err != nil || finished.Status != execution.Completed {
-			t.Fatalf("old execution finish = %+v, %v", finished, err)
+		status, err := old.Wait(ctx)
+		if err != nil || status != execution.Completed {
+			t.Fatalf("old execution status = %q, %v", status, err)
 		}
 
 		entries, err := session.Entries(ctx, 0)
@@ -657,7 +704,7 @@ func TestExecuteDoesNotReloadExecutionState(t *testing.T) {
 	}
 }
 
-func TestExecutionRetainsFinishWhenItCannotBeCommitted(t *testing.T) {
+func TestExecutionRetainsStatusWhenCompletionCannotBeCommitted(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -680,11 +727,14 @@ func TestExecutionRetainsFinishWhenItCannotBeCommitted(t *testing.T) {
 		t.Fatalf("finish error = %v", err)
 	}
 
-	original := current.finished
-
 	for range 3 {
-		if _, err := opened.Execution(ctx, current.ID()); !errors.Is(err, ErrExecutionUnfinished) {
-			t.Fatalf("uncommitted execution lookup = %v", err)
+		loaded, err := opened.Execution(ctx, current.ID())
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := loaded.Status(); !errors.Is(err, event.ErrClosed) {
+			t.Fatalf("lookup lost finish error = %v", err)
 		}
 
 		if _, err := current.Wait(ctx); !errors.Is(err, event.ErrClosed) {
@@ -692,9 +742,8 @@ func TestExecutionRetainsFinishWhenItCannotBeCommitted(t *testing.T) {
 		}
 	}
 
-	if retained := current.finished; retained.Status != execution.Failed || retained.Error != workErr.Error() ||
-		!retained.EndedAt.Equal(original.EndedAt) {
-		t.Fatalf("execution finish changed after failed commit: %+v", retained)
+	if current.status != execution.Failed {
+		t.Fatalf("execution status changed after failed commit: %q", current.status)
 	}
 }
 

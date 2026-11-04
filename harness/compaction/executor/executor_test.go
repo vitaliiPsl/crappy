@@ -40,9 +40,9 @@ func TestExecutorPersistsCompaction(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	current, finished := execute(t, opened, execution.NewRequest(ExecutorName, nil))
-	if finished.Status != execution.Completed {
-		t.Fatalf("manual compaction = %+v", finished)
+	current, status := execute(t, opened, execution.NewRequest(ExecutorName, nil))
+	if status != execution.Completed {
+		t.Fatalf("manual compaction = %q", status)
 	}
 
 	stored, err := store.List(context.Background(), opened.ID(), 0)
@@ -81,7 +81,7 @@ func TestExecutorPersistsCompaction(t *testing.T) {
 	}
 
 	restored, err := reloaded.Wait(context.Background())
-	if err != nil || !reflect.DeepEqual(restored, finished) {
+	if err != nil || restored != status {
 		t.Fatalf("restored execution = %+v, err = %v", restored, err)
 	}
 
@@ -118,12 +118,12 @@ func TestManualAndAutomaticCompactionRecordToTheirExecutions(t *testing.T) {
 	)))
 	opened := newTestSession(t, store, registry)
 
-	agentExecution, finished := execute(t, opened, execution.NewRequest(
+	agentExecution, status := execute(t, opened, execution.NewRequest(
 		agent.ExecutorName,
 		kit.NewUserMessage(kit.NewTextContent("input longer than one token")),
 	))
-	if finished.Status != execution.Completed {
-		t.Fatalf("execution with compactions = %+v", finished)
+	if status != execution.Completed {
+		t.Fatalf("execution with compactions = %q", status)
 	}
 
 	compactionModel.AssertCallCount(t, 1)
@@ -132,9 +132,9 @@ func TestManualAndAutomaticCompactionRecordToTheirExecutions(t *testing.T) {
 		t.Fatalf("agent request message = %q, want %q", got, want)
 	}
 
-	manualExecution, finished := execute(t, opened, execution.NewRequest(ExecutorName, nil))
-	if finished.Status != execution.Completed {
-		t.Fatalf("manual compaction = %+v", finished)
+	manualExecution, status := execute(t, opened, execution.NewRequest(ExecutorName, nil))
+	if status != execution.Completed {
+		t.Fatalf("manual compaction = %q", status)
 	}
 
 	model.AssertCallCount(t, 1)
@@ -197,7 +197,7 @@ func newTestSession(t *testing.T, store entry.Store, executors execution.Resolve
 	return opened
 }
 
-func execute(t *testing.T, opened *session.Session, request execution.Request) (*session.Execution, execution.Finished) {
+func execute(t *testing.T, opened *session.Session, request execution.Request) (*session.Execution, execution.Status) {
 	t.Helper()
 
 	current, err := opened.Execute(context.Background(), request)
@@ -208,12 +208,12 @@ func execute(t *testing.T, opened *session.Session, request execution.Request) (
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	finished, err := current.Wait(ctx)
+	status, err := current.Wait(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	return current, finished
+	return current, status
 }
 
 func decode[T any](t *testing.T, payload json.RawMessage) T {

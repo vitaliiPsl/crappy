@@ -64,7 +64,7 @@ func TestExecuteAndCancelUseHarnessExecutionLifetime(t *testing.T) {
 
 	caller, disconnect := context.WithCancel(ctx)
 
-	current, err := app.Execute(caller, created.ID, kit.NewTextContent("hello"))
+	id, err := app.Execute(caller, created.ID, kit.NewTextContent("hello"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,31 +83,113 @@ func TestExecuteAndCancelUseHarnessExecutionLifetime(t *testing.T) {
 		t.Fatalf("disconnecting the caller stopped work: %v", err)
 	}
 
+	active, err := app.GetExecutionStatus(ctx, created.ID, id)
+	if err != nil || active != execution.Running {
+		t.Fatalf("active execution status = %q, error = %v", active, err)
+	}
+
+	waiter, stopWaiting := context.WithCancel(ctx)
+	stopWaiting()
+
+	if _, err := app.WaitExecution(waiter, created.ID, id); !errors.Is(err, context.Canceled) {
+		t.Fatalf("disconnected observation = %v", err)
+	}
+
 	if _, err := app.Execute(ctx, created.ID, kit.NewTextContent("second")); !errors.Is(err, session.ErrBusy) {
 		t.Fatalf("concurrent send error = %v", err)
 	}
 
-	if err := app.Cancel(ctx, created.ID, current.ID()); err != nil {
+	if err := app.Cancel(ctx, created.ID, id); err != nil {
 		t.Fatal(err)
 	}
 
-	finished, err := current.Wait(ctx)
-	if err != nil || finished.Status != execution.Cancelled {
-		t.Fatalf("finish = %+v, error = %v", finished, err)
+	status, err := app.WaitExecution(ctx, created.ID, id)
+	if err != nil || status != execution.Cancelled {
+		t.Fatalf("status = %q, error = %v", status, err)
 	}
 
-	loaded, err := app.Execution(ctx, created.ID, current.ID())
+	loaded, err := app.GetExecutionStatus(ctx, created.ID, id)
+	if err != nil || loaded != execution.Cancelled {
+		t.Fatalf("persisted execution status = %q, error = %v", loaded, err)
+	}
+
+	stored, err := app.WaitExecution(ctx, created.ID, id)
+	if err != nil || stored != execution.Cancelled {
+		t.Fatalf("persisted finish = %+v, error = %v", stored, err)
+	}
+
+	if err := app.Cancel(ctx, created.ID, id); err != nil {
+		t.Fatalf("cancelling settled work = %v", err)
+	}
+}
+
+func TestExecutionObservationRestoresOutcomeAfterRestart(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	root := t.TempDir()
+
+	storage, err := jsonl.Open(ctx, root)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	stored, err := loaded.Wait(ctx)
-	if err != nil || stored.Status != execution.Cancelled {
-		t.Fatalf("persisted finish = %+v, error = %v", stored, err)
+	h := harness.New(storage, harness.WithExecutor(agent.ExecutorName,
+		execution.Func(func(context.Context, execution.ExecuteParams) error {
+			return errors.New("work failed")
+		})))
+	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
+
+	app := New(config.Config{}, h, storage, nil, token.NewCharacterEstimator())
+
+	created, err := app.CreateSession(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	if err := app.Cancel(ctx, created.ID, current.ID()); err != nil {
-		t.Fatalf("cancelling settled work = %v", err)
+	id, err := app.Execute(ctx, created.ID, kit.NewTextContent("hello"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	status, err := app.WaitExecution(ctx, created.ID, id)
+	if err != nil || status != execution.Failed {
+		t.Fatalf("execution status = %q, error = %v", status, err)
+	}
+
+	before, err := app.GetExecutionStatus(ctx, created.ID, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := h.Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	storage, err = jsonl.Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	restarted := harness.New(storage)
+	t.Cleanup(func() { _ = restarted.Shutdown(context.Background()) })
+
+	app = New(config.Config{}, restarted, storage, nil, token.NewCharacterEstimator())
+
+	loaded, err := app.GetExecutionStatus(ctx, created.ID, id)
+	if err != nil || loaded != before {
+		t.Fatalf("restored execution = %+v, error = %v; want %+v", loaded, err, before)
+	}
+
+	stored, err := app.WaitExecution(ctx, created.ID, id)
+	if err != nil || stored != status {
+		t.Fatalf("restored status = %q, error = %v; want %q", stored, err, status)
+	}
+
+	if _, err := app.GetExecutionStatus(ctx, created.ID, "missing"); !errors.Is(err, session.ErrExecutionNotFound) {
+		t.Fatalf("unknown execution = %v", err)
 	}
 }
 
@@ -134,7 +216,12 @@ func TestOperationsRequireAnExistingSession(t *testing.T) {
 		},
 		func() error { return app.Cancel(ctx, "", "execution") },
 		func() error {
-			_, err := app.Execution(ctx, "", "execution")
+			_, err := app.GetExecutionStatus(ctx, "", "execution")
+
+			return err
+		},
+		func() error {
+			_, err := app.WaitExecution(ctx, "", "execution")
 
 			return err
 		},

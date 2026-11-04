@@ -25,34 +25,47 @@ type Execution struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 
-	finished execution.Finished
-	err      error
+	status execution.Status
+	err    error
 }
 
 func (e *Execution) ID() string {
 	return e.id
 }
 
+func (e *Execution) Status() (execution.Status, error) {
+	select {
+	case <-e.done:
+		if e.err != nil {
+			return "", e.err
+		}
+
+		return e.status, nil
+	default:
+		return execution.Running, nil
+	}
+}
+
 func (e *Execution) Done() <-chan struct{} {
 	return e.done
 }
 
-func (e *Execution) Wait(ctx context.Context) (execution.Finished, error) {
+func (e *Execution) Wait(ctx context.Context) (execution.Status, error) {
 	if err := ctx.Err(); err != nil {
-		return execution.Finished{}, err
+		return "", err
 	}
 
 	select {
 	case <-ctx.Done():
-		return execution.Finished{}, ctx.Err()
+		return "", ctx.Err()
 	case <-e.done:
 	}
 
 	if e.err != nil {
-		return execution.Finished{}, e.err
+		return "", e.err
 	}
 
-	return e.finished, nil
+	return e.status, nil
 }
 
 func (s *Session) Execute(ctx context.Context, request execution.Request) (*Execution, error) {
@@ -112,7 +125,7 @@ func (s *Session) Execution(ctx context.Context, id string) (*Execution, error) 
 		return nil, err
 	}
 
-	if s.current != nil && s.current.id == id {
+	if s.current != nil && s.current.ID() == id {
 		return s.current, nil
 	}
 
@@ -141,7 +154,11 @@ func (s *Session) Execution(ctx context.Context, id string) (*Execution, error) 
 			return nil, fmt.Errorf("decode execution %s finish: %w", id, err)
 		}
 
-		loaded := &Execution{id: id, done: make(chan struct{}), finished: finished}
+		loaded := &Execution{
+			id:     id,
+			done:   make(chan struct{}),
+			status: finished.Status,
+		}
 		close(loaded.done)
 
 		return loaded, nil
@@ -166,7 +183,7 @@ func (s *Session) Cancel(ctx context.Context, executionID string) error {
 		return ErrClosed
 	}
 
-	if s.current == nil || s.current.id != executionID {
+	if s.current == nil || s.current.ID() != executionID {
 		return ErrExecutionNotActive
 	}
 
@@ -180,7 +197,7 @@ func (s *Session) runExecution(ctx context.Context, executor execution.Executor,
 
 	runErr := executor.Execute(ctx, execution.ExecuteParams{
 		SessionID:   s.id,
-		ExecutionID: current.id,
+		ExecutionID: current.ID(),
 		Input:       input,
 		State:       s.state,
 		Entries:     s.entries,
@@ -207,19 +224,20 @@ func (s *Session) runExecution(ctx context.Context, executor execution.Executor,
 func (s *Session) finishExecution(ctx context.Context, finished execution.Finished) {
 	current := s.current
 
-	err := s.Commit(ctx, current.id, execution.FinishedEntryType, finished)
+	err := s.Commit(ctx, current.ID(), execution.FinishedEntryType, finished)
 	if err != nil {
-		err = fmt.Errorf("finish execution %s: %w", current.id, err)
+		err = fmt.Errorf("finish execution %s: %w", current.ID(), err)
 	}
 
-	current.finished = finished
-	current.err = err
-
-	s.current = nil
 	if err != nil {
 		s.closed = true
 		s.events.Close()
+	} else {
+		s.current = nil
 	}
+
+	current.status = finished.Status
+	current.err = err
 
 	close(current.done)
 }

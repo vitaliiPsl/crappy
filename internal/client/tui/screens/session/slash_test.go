@@ -302,8 +302,8 @@ func TestCompactCommandUsesNormalExecutionLifecycle(t *testing.T) {
 	close(release)
 	screen.Update(wait())
 
-	result, err := accepted.execution.Wait(ctx)
-	if err != nil || result.Status != execution.Completed {
+	result, err := app.WaitExecution(ctx, created.ID, accepted.executionID)
+	if err != nil || result != execution.Completed {
 		t.Fatalf("compaction result = %+v, error = %v", result, err)
 	}
 

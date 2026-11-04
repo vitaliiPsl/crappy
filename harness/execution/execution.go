@@ -13,6 +13,7 @@ const (
 type Status string
 
 const (
+	Running     Status = "running"
 	Completed   Status = "completed"
 	Failed      Status = "failed"
 	Cancelled   Status = "cancelled"

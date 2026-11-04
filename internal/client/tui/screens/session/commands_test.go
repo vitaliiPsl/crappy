@@ -172,7 +172,7 @@ func TestExecuteReportsTerminalPersistenceFailure(t *testing.T) {
 				t.Fatal(accepted.err)
 			}
 
-			started := executionEvent(t, execution.StartedEntryType, accepted.execution.ID(), execution.Started{})
+			started := executionEvent(t, execution.StartedEntryType, accepted.executionID, execution.Started{})
 			screen.applyEvent(started)
 
 			_, wait := screen.Update(accepted)
@@ -194,6 +194,10 @@ func TestExecuteReportsTerminalPersistenceFailure(t *testing.T) {
 
 			if !errors.Is(screen.terminalErr, failure) {
 				t.Fatalf("terminal error = %v, want %v", screen.terminalErr, failure)
+			}
+
+			if _, err := screen.assistant.GetExecutionStatus(ctx, opened.ID(), accepted.executionID); !errors.Is(err, failure) {
+				t.Fatalf("lookup lost terminal persistence failure: %v", err)
 			}
 
 			if screen.running() {
@@ -256,10 +260,9 @@ func TestWaitForExecutionStopsWhenScreenCloses(t *testing.T) {
 		t.Fatalf("detaching reported an execution failure: %v", screen.terminalErr)
 	}
 
-	select {
-	case <-accepted.execution.Done():
-		t.Fatal("detaching stopped the execution")
-	default:
+	status, err := screen.assistant.GetExecutionStatus(ctx, opened.ID(), accepted.executionID)
+	if err != nil || status != execution.Running {
+		t.Fatalf("detaching changed execution status: %q, %v", status, err)
 	}
 }
 

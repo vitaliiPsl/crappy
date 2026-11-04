@@ -148,7 +148,7 @@ func (m *Model) handleExecuteResult(message executeResultMsg) tea.Cmd {
 
 	m.composer.Reset()
 
-	return m.waitForExecution(message.execution)
+	return m.waitForExecution(message.executionID)
 }
 
 func (m *Model) handleExecutionWait(message executionWaitMsg) {

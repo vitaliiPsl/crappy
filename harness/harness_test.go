@@ -2,6 +2,7 @@ package harness
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"sync"
@@ -377,9 +378,9 @@ func TestSessionsRemainPersistentAcrossHosts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	original, err := current.Wait(context.Background())
-	if err != nil || original.Status != execution.Failed || original.Error != "saved failure" {
-		t.Fatalf("original execution = %+v, %v", original, err)
+	original := waitFinished(t, opened, current.ID())
+	if original.Status != execution.Failed || original.Error != "saved failure" {
+		t.Fatalf("original execution = %+v", original)
 	}
 
 	if err := first.Shutdown(context.Background()); err != nil {
@@ -408,8 +409,12 @@ func TestSessionsRemainPersistentAcrossHosts(t *testing.T) {
 	}
 
 	restored, err := attached.Wait(context.Background())
-	if err != nil || restored.Status != original.Status || restored.Error != original.Error || !restored.EndedAt.Equal(original.EndedAt) {
+	if err != nil || restored != original.Status {
 		t.Fatalf("restored execution = %+v, %v", restored, err)
+	}
+
+	if finished := waitFinished(t, reopened, current.ID()); finished != original {
+		t.Fatalf("restored finish = %+v; want %+v", finished, original)
 	}
 
 	sessions, err := store.SessionStore().Get(context.Background(), opened.ID())
@@ -462,7 +467,7 @@ func TestSessionStatePersistsAndReachesExecutors(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if result, err := current.Wait(ctx); err != nil || result.Status != execution.Completed {
+		if result, err := current.Wait(ctx); err != nil || result != execution.Completed {
 			t.Fatalf("execution result = %+v, error = %v", result, err)
 		}
 	}
@@ -549,8 +554,8 @@ func TestSessionInitializesBeforeReturning(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if finished, err := current.Wait(ctx); err != nil || finished.Status != execution.Completed {
-		t.Fatalf("new execution = %+v, error = %v", finished, err)
+	if status, err := current.Wait(ctx); err != nil || status != execution.Completed {
+		t.Fatalf("new execution status = %q, error = %v", status, err)
 	}
 }
 
@@ -592,7 +597,7 @@ func TestSessionAttachmentPreservesActiveExecution(t *testing.T) {
 
 	finish()
 
-	if result, err := current.Wait(ctx); err != nil || result.Status != execution.Completed {
+	if result, err := current.Wait(ctx); err != nil || result != execution.Completed {
 		t.Fatalf("active execution = %+v, error = %v", result, err)
 	}
 }
@@ -1179,10 +1184,29 @@ func waitFinished(t *testing.T, opened *session.Session, id string) execution.Fi
 		t.Fatal(err)
 	}
 
-	result, err := current.Wait(ctx)
+	if _, err := current.Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := opened.Entries(ctx, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	return result
+	for _, value := range entries {
+		if value.ExecutionID != id || value.Type != execution.FinishedEntryType {
+			continue
+		}
+
+		var finished execution.Finished
+		if err := json.Unmarshal(value.Payload, &finished); err != nil {
+			t.Fatal(err)
+		}
+
+		return finished
+	}
+
+	t.Fatalf("execution %s has no persisted finish", id)
+
+	return execution.Finished{}
 }

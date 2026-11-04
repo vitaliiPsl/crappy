@@ -12,22 +12,46 @@ import (
 	"github.com/vitaliipsl/crappy/harness/session"
 )
 
-func (a *Assistant) Execute(ctx context.Context, sessionID string, content ...kit.Content) (*session.Execution, error) {
+func (a *Assistant) Execute(ctx context.Context, sessionID string, content ...kit.Content) (string, error) {
 	opened, err := a.openSession(ctx, sessionID)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
-	return opened.Execute(ctx, execution.NewRequest(agent.ExecutorName, kit.NewUserMessage(content...)))
+	current, err := opened.Execute(ctx, execution.NewRequest(agent.ExecutorName, kit.NewUserMessage(content...)))
+	if err != nil {
+		return "", err
+	}
+
+	return current.ID(), nil
 }
 
-func (a *Assistant) Execution(ctx context.Context, sessionID, executionID string) (*session.Execution, error) {
+func (a *Assistant) GetExecutionStatus(ctx context.Context, sessionID, executionID string) (execution.Status, error) {
 	opened, err := a.openSession(ctx, sessionID)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
-	return opened.Execution(ctx, executionID)
+	current, err := opened.Execution(ctx, executionID)
+	if err != nil {
+		return "", err
+	}
+
+	return current.Status()
+}
+
+func (a *Assistant) WaitExecution(ctx context.Context, sessionID, executionID string) (execution.Status, error) {
+	opened, err := a.openSession(ctx, sessionID)
+	if err != nil {
+		return "", err
+	}
+
+	current, err := opened.Execution(ctx, executionID)
+	if err != nil {
+		return "", err
+	}
+
+	return current.Wait(ctx)
 }
 
 func (a *Assistant) Cancel(ctx context.Context, sessionID, executionID string) error {
@@ -43,11 +67,16 @@ func (a *Assistant) Cancel(ctx context.Context, sessionID, executionID string) e
 	return nil
 }
 
-func (a *Assistant) Compact(ctx context.Context, sessionID string) (*session.Execution, error) {
+func (a *Assistant) Compact(ctx context.Context, sessionID string) (string, error) {
 	opened, err := a.openSession(ctx, sessionID)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
-	return opened.Execute(ctx, execution.NewRequest(compactionexec.ExecutorName, nil))
+	current, err := opened.Execute(ctx, execution.NewRequest(compactionexec.ExecutorName, nil))
+	if err != nil {
+		return "", err
+	}
+
+	return current.ID(), nil
 }

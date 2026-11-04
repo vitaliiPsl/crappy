@@ -117,7 +117,7 @@ func (c *Client) Run(ctx context.Context) error {
 				return fmt.Errorf("execute: %w", err)
 			}
 
-			executionID = submitted.ID()
+			executionID = submitted
 			streamed = ""
 		case value, ok := <-events:
 			if !ok {
