@@ -103,7 +103,10 @@ func newAssistant(
 	}
 
 	agents := agent.New(config.AgentConfig(), modelResolver,
-		agent.WithToolMiddleware(tools.Timeout(settings.Tools)),
+		agent.WithToolMiddleware(
+			tools.OutputCap(settings.Tools, storage.PutBlob),
+			tools.Timeout(settings.Tools),
+		),
 		agent.WithContributors(
 			instructions.NewContributor(),
 			local.NewContributor(),

@@ -16,4 +16,8 @@ func TestDefaultConfig(t *testing.T) {
 	if got, want := config.MaxTimeout, 5*time.Minute; got != want {
 		t.Fatalf("MaxTimeout = %v, want %v", got, want)
 	}
+
+	if got, want := config.MaxOutputBytes, 64*1024; got != want {
+		t.Fatalf("MaxOutputBytes = %d, want %d", got, want)
+	}
 }

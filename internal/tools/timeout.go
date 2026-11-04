@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
+	"github.com/vitaliiPsl/crappy-adk/x/tool"
 
 	"github.com/vitaliipsl/crappy/harness/agent"
 )
@@ -15,16 +16,16 @@ import (
 const timeoutArgument = "timeout_seconds"
 
 func Timeout(config Config) agent.ToolMiddleware {
-	return func(_ agent.BuildContext, tool kit.Tool) (kit.Tool, error) {
-		arguments := []argument{{
-			name:   timeoutArgument,
-			schema: timeoutSchema(config),
+	return func(_ agent.BuildContext, underlying kit.Tool) (kit.Tool, error) {
+		arguments := []tool.Argument{{
+			Name:   timeoutArgument,
+			Schema: timeoutSchema(config),
 		}}
 
-		return wrap(tool, arguments, func(
+		return tool.Wrap(underlying, arguments, func(
 			run *kit.RunContext,
 			call kit.ToolCall,
-			next nextTool,
+			next tool.Next,
 		) (kit.ToolOutput, error) {
 			return executeWithTimeout(run, call, next, config)
 		})
@@ -34,7 +35,7 @@ func Timeout(config Config) agent.ToolMiddleware {
 func executeWithTimeout(
 	run *kit.RunContext,
 	call kit.ToolCall,
-	next nextTool,
+	next tool.Next,
 	config Config,
 ) (kit.ToolOutput, error) {
 	requested, err := parseTimeout(call.Arguments)

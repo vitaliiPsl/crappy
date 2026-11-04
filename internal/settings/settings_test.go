@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,6 +48,10 @@ func TestLoadFileSeedsDefaults(t *testing.T) {
 
 	if !strings.Contains(string(data), "timeout: 30s") {
 		t.Fatalf("seeded settings = %q, want tool timeout", data)
+	}
+
+	if !strings.Contains(string(data), "max_output_bytes: 65536") {
+		t.Fatalf("seeded settings = %q, want tool output limit", data)
 	}
 
 	if got, want := loaded.Retry, retry.DefaultConfig(); got != want {
@@ -160,6 +165,30 @@ providers:
 
 	if _, err := LoadFile(path); err == nil {
 		t.Fatal("LoadFile() error = nil, want invalid tool timeout error")
+	}
+}
+
+func TestLoadFileValidatesToolOutputLimit(t *testing.T) {
+	t.Parallel()
+
+	for _, limit := range []int{0, 1023, 1024, 4096} {
+		t.Run(fmt.Sprint(limit), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "settings.yaml")
+			writeSettings(t, path, fmt.Sprintf("tools:\n  max_output_bytes: %d\n", limit))
+
+			loaded, err := LoadFile(path)
+			if limit < 1024 {
+				if err == nil {
+					t.Fatal("LoadFile() accepted an output limit below 1024 bytes")
+				}
+
+				return
+			}
+
+			if err != nil || loaded.Tools.MaxOutputBytes != limit {
+				t.Fatalf("output limit = %d, error = %v; want %d", loaded.Tools.MaxOutputBytes, err, limit)
+			}
+		})
 	}
 }
 
