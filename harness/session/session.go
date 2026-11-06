@@ -94,7 +94,12 @@ func (s *Session) Commit(
 func (s *Session) Close() {
 	s.mu.Lock()
 	s.cancel()
+
 	current := s.current
+	if current != nil && current.record.Status != execution.Running {
+		current = nil
+	}
+
 	s.mu.Unlock()
 
 	if current != nil {

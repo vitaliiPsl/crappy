@@ -34,6 +34,16 @@ func (e *Executor) Execute(ctx context.Context, params execution.ExecuteParams) 
 		return fmt.Errorf("decode agent input: %w", err)
 	}
 
+	latest, found, err := params.Entries.Latest(ctx, params.SessionID, MessageEntryType)
+	if err != nil {
+		return fmt.Errorf("read execution history: %w", err)
+	}
+
+	inputs := []kit.Message{input}
+	if found && latest.ExecutionID == params.ExecutionID {
+		inputs = nil
+	}
+
 	history := NewHistory(params.SessionID, params.ExecutionID, params.Entries, params.Events)
 	if err := e.completeToolResults(ctx, history, params); err != nil {
 		return err
@@ -49,7 +59,7 @@ func (e *Executor) Execute(ctx context.Context, params execution.ExecuteParams) 
 		return fmt.Errorf("build agent: %w", err)
 	}
 
-	stream := built.Stream(ctx, input)
+	stream := built.Stream(ctx, inputs...)
 
 	var runErr error
 	for value := range stream.Iter() {

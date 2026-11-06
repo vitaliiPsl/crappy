@@ -11,10 +11,11 @@ import (
 )
 
 var (
-	ErrClosed              = errors.New("session is closed")
-	ErrExecutionNotActive  = errors.New("execution is not active")
-	ErrExecutionNotFound   = errors.New("execution not found")
-	ErrExecutionUnfinished = errors.New("execution is unfinished")
+	ErrClosed                = errors.New("session is closed")
+	ErrExecutionNotActive    = errors.New("execution is not active")
+	ErrExecutionNotFound     = errors.New("execution not found")
+	ErrExecutionUnfinished   = errors.New("execution is unfinished")
+	ErrExecutionNotResumable = errors.New("execution is not resumable")
 )
 
 type Execution struct {

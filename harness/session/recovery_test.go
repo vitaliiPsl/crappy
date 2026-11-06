@@ -35,7 +35,7 @@ func TestNewSettlesAbandonedExecutionBeforeReturning(t *testing.T) {
 			return err
 		}
 
-		if len(entries) != 4 || entries[1].ExecutionID != "unfinished" {
+		if len(entries) != 5 || entries[1].ExecutionID != "unfinished" {
 			t.Errorf("new work started before recovery: %+v", entries)
 		}
 
@@ -58,6 +58,13 @@ func TestNewSettlesAbandonedExecutionBeforeReturning(t *testing.T) {
 	store.failing.Store(false)
 
 	session := newExecutorSession(context.Background(), t, "session-1", store, "work", executor)
+	if resumed, err := session.Resume(context.Background()); resumed != nil || err == nil {
+		t.Fatalf("resume with a missing executor = %v, %v", resumed, err)
+	}
+
+	if err := session.Cancel(context.Background(), "unfinished"); err != nil {
+		t.Fatal(err)
+	}
 
 	current, err := session.Execute(context.Background(), execution.NewRequest("work", nil))
 	if err != nil {
@@ -67,7 +74,7 @@ func TestNewSettlesAbandonedExecutionBeforeReturning(t *testing.T) {
 	waitExecution(t, current)
 
 	entries, err := session.Entries(context.Background(), 0)
-	if err != nil || len(entries) != 5 {
+	if err != nil || len(entries) != 6 {
 		t.Fatalf("recovered journal = %+v, %v", entries, err)
 	}
 
@@ -111,7 +118,7 @@ func TestNewPreservesCompletedExecution(t *testing.T) {
 	}
 }
 
-func TestNewInterruptsQueuedExecutions(t *testing.T) {
+func TestNewRestoresQueueUntilExplicitResume(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -149,37 +156,182 @@ func TestNewInterruptsQueuedExecutions(t *testing.T) {
 	for range 2 {
 		opened := newExecutorSession(ctx, t, "session", store, "work", executor)
 
-		for _, id := range []string{"running", "second", "third"} {
-			interrupted, err := opened.Execution(ctx, id)
+		var restored []*Execution
+
+		for i, id := range []string{"running", "second", "third"} {
+			pending, err := opened.Execution(ctx, id)
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			if status, err := interrupted.Status(); err != nil || status != execution.Interrupted {
+			want := execution.Queued
+			if i == 0 {
+				want = execution.Interrupted
+			}
+
+			if status, err := pending.Status(); err != nil || status != want {
 				t.Fatalf("execution %s after restart = %q, %v", id, status, err)
 			}
+
+			restored = append(restored, pending)
 		}
 
 		opened.Close()
+
+		for _, pending := range restored {
+			if _, err := pending.Wait(ctx); !errors.Is(err, ErrClosed) {
+				t.Fatalf("closed runtime did not release execution %s: %v", pending.ID(), err)
+			}
+		}
 	}
 
 	entries, err := store.List(ctx, "session", 0)
-	if err != nil || len(entries) != 7 {
+	if err != nil || len(entries) != 5 {
 		t.Fatalf("repeated recovery changed the journal: %+v, %v", entries, err)
 	}
 
 	opened := newExecutorSession(ctx, t, "session", store, "work", executor)
+
+	interrupted, err := opened.Execution(ctx, "running")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-interrupted.Done():
+		t.Fatal("restored interrupted execution is already done")
+	default:
+	}
+
+	waited := make(chan error, 1)
+	go func() {
+		status, err := interrupted.Wait(ctx)
+		if err == nil && status != execution.Completed {
+			err = errors.New("restored execution waiter did not observe completion")
+		}
+
+		waited <- err
+	}()
 
 	current, err := opened.Execute(ctx, execution.NewRequest("work", "new"))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if status, err := current.Wait(ctx); err != nil || status != execution.Completed {
-		t.Fatalf("new execution after recovery = %q, %v", status, err)
+	if status, err := current.Status(); err != nil || status != execution.Queued {
+		t.Fatalf("new execution bypassed restored work = %q, %v", status, err)
 	}
 
-	if input := receiveStarted(ctx, t, started); input != "new" {
-		t.Fatalf("recovered work ran: %s", input)
+	select {
+	case input := <-started:
+		t.Fatalf("work started before resume: %s", input)
+	default:
 	}
+
+	resumed, err := opened.Resume(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if resumed != interrupted {
+		t.Fatal("resume replaced the restored execution handle")
+	}
+
+	for _, id := range []string{"running", "second", "third", current.ID()} {
+		pending, err := opened.Execution(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if status, err := pending.Wait(ctx); err != nil || status != execution.Completed {
+			t.Fatalf("resumed execution %s = %q, %v", id, status, err)
+		}
+	}
+
+	for _, want := range []string{"running", "second", "third", "new"} {
+		if input := receiveStarted(ctx, t, started); input != want {
+			t.Fatalf("execution order = %s, want %s", input, want)
+		}
+	}
+
+	select {
+	case err := <-waited:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal("restored execution waiter did not finish after resume")
+	}
+}
+
+func TestNewRetriesPartialRecovery(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	entries := entry.NewMemoryStore()
+	bus := event.NewBus("session", entries)
+
+	records := []execution.Record{
+		{ID: "first", Executor: "work", Input: json.RawMessage(`{"value":1}`), Status: execution.Running},
+		{ID: "second", Executor: "work", Input: json.RawMessage(`{"value":2}`), Status: execution.Running},
+	}
+	for _, record := range records {
+		if err := bus.Commit(ctx, record.ID, execution.EntryType, record); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	failure := errors.New("storage unavailable")
+	store := newRecoveryFailingStore(entries, 2, failure)
+
+	opened, err := New(ctx, "session", newSessionState(t, "session"), store, execution.NewRegistry())
+	if opened != nil || !errors.Is(err, failure) {
+		t.Fatalf("partial recovery = %v, %v", opened, err)
+	}
+
+	partial, err := entries.List(ctx, "session", 0)
+	if err != nil || len(partial) != 3 || partial[2].ExecutionID != "first" {
+		t.Fatalf("partial recovery journal = %+v, %v", partial, err)
+	}
+
+	for range 2 {
+		session := newSession(ctx, t, "session", store, execution.NewRegistry())
+		session.Close()
+	}
+
+	recovered, err := entries.List(ctx, "session", 0)
+	if err != nil || len(recovered) != 4 {
+		t.Fatalf("repeated recovery journal = %+v, %v", recovered, err)
+	}
+
+	for i, original := range records {
+		var record execution.Record
+		if err := json.Unmarshal(recovered[i+2].Payload, &record); err != nil {
+			t.Fatal(err)
+		}
+
+		if record.ID != original.ID || record.Executor != original.Executor || string(record.Input) != string(original.Input) || record.Status != execution.Interrupted || record.Error != "" {
+			t.Fatalf("recovered execution = %+v, original = %+v", record, original)
+		}
+	}
+}
+
+type recoveryFailingStore struct {
+	entry.Store
+	failOn  int
+	appends int
+	err     error
+}
+
+func newRecoveryFailingStore(store entry.Store, failOn int, err error) *recoveryFailingStore {
+	return &recoveryFailingStore{Store: store, failOn: failOn, err: err}
+}
+
+func (s *recoveryFailingStore) Append(ctx context.Context, sessionID string, entries ...entry.Entry) ([]entry.Entry, error) {
+	s.appends++
+	if s.appends == s.failOn {
+		return nil, s.err
+	}
+
+	return s.Store.Append(ctx, sessionID, entries...)
 }

@@ -56,7 +56,19 @@ func (s *Session) Cancel(ctx context.Context, id string) error {
 	}
 
 	if s.current != nil && s.current.ID() == id {
-		s.current.cancel()
+		if s.current.record.Status == execution.Running {
+			s.current.cancel()
+
+			return nil
+		}
+
+		if err := s.commitExecution(ctx, s.current, execution.Cancelled, ""); err != nil {
+			return err
+		}
+
+		s.current.stop(nil)
+		s.current = nil
+		s.startNext()
 
 		return nil
 	}
@@ -80,22 +92,66 @@ func (s *Session) Cancel(ctx context.Context, id string) error {
 	return ErrExecutionNotActive
 }
 
+func (s *Session) Resume(ctx context.Context) (*Execution, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	if s.ctx.Err() != nil {
+		return nil, ErrClosed
+	}
+
+	if s.current == nil || s.current.record.Status == execution.Running {
+		return nil, ErrExecutionNotResumable
+	}
+
+	if _, err := s.executors.Resolve(s.current.record.Executor); err != nil {
+		return nil, err
+	}
+
+	current := s.current
+	if err := s.startExecution(ctx, current); err != nil {
+		return nil, err
+	}
+
+	return current, nil
+}
+
 func (s *Session) startNext() {
 	if s.ctx.Err() != nil || s.current != nil || len(s.queue) == 0 {
 		return
 	}
 
 	next := s.queue[0]
-	if err := s.commitExecution(s.ctx, next, execution.Running, ""); err != nil {
+	if next.record.Status == execution.Interrupted {
+		s.current = next
+		s.queue = slices.Delete(s.queue, 0, 1)
+
+		return
+	}
+
+	if err := s.startExecution(s.ctx, next); err != nil {
 		s.halt(err)
 
 		return
 	}
 
-	ctx, cancel := context.WithCancel(s.ctx)
-	next.cancel = cancel
 	s.queue = slices.Delete(s.queue, 0, 1)
-	s.current = next
+}
 
-	go s.runExecution(ctx, next)
+func (s *Session) startExecution(ctx context.Context, current *Execution) error {
+	if err := s.commitExecution(ctx, current, execution.Running, ""); err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithCancel(s.ctx)
+	current.cancel = cancel
+	s.current = current
+
+	go s.runExecution(ctx, current)
+
+	return nil
 }

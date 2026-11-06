@@ -152,7 +152,7 @@ func (c *Client) Run(ctx context.Context) error {
 					return fmt.Errorf("decode execution: %w", err)
 				}
 
-				if !record.Status.Terminal() {
+				if !record.Status.Terminal() && record.Status != execution.Interrupted {
 					continue
 				}
 

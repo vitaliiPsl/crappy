@@ -282,6 +282,59 @@ func TestExecutorContinuesConversationAcrossExecutions(t *testing.T) {
 	}
 }
 
+func TestExecutorResumesWithoutDuplicatingInputOrCompletedTools(t *testing.T) {
+	t.Parallel()
+
+	call := kit.NewToolCall("call-1", "write", nil)
+	tool := kittest.NewTool(t, "write", "Write a file", kittest.ToolResult{Result: "written"})
+	model := kittest.NewModel(t,
+		kittest.ModelResult{Response: kit.ModelResponse{
+			Message: kit.NewModelMessage(kit.NewToolCallContent(call)), FinishReason: kit.FinishReasonToolCall,
+		}},
+		kittest.ModelResult{Error: context.Canceled},
+		kittest.ModelResult{Response: kit.ModelResponse{
+			Message: kit.NewModelMessage(kit.NewTextContent("done")), FinishReason: kit.FinishReasonStop,
+		}},
+	)
+	store := entry.NewMemoryStore()
+	bus := event.NewBus("session", store)
+	factory := New(kit.AgentConfig{}, staticModelResolver{model}, WithContributors(
+		ContributorFunc(func(context.Context, BuildContext) (Contribution, error) {
+			return Contribution{Tools: []kit.Tool{tool}}, nil
+		}),
+	))
+	params := execution.ExecuteParams{
+		SessionID: "session", ExecutionID: "work", Input: agentInput(t, "write the file"), Entries: store, Events: bus,
+	}
+
+	if err := NewExecutor(factory).Execute(context.Background(), params); !errors.Is(err, context.Canceled) {
+		t.Fatalf("interrupted execution = %v", err)
+	}
+
+	if err := NewExecutor(factory).Execute(context.Background(), params); err != nil {
+		t.Fatal(err)
+	}
+
+	tool.AssertCallCount(t, 1)
+	model.AssertCallCount(t, 3)
+
+	messages := model.CallAt(2).Messages
+	if len(messages) != 3 || messages[0].TextContent().Text != "write the file" || len(messages[2].ToolResults()) != 1 {
+		t.Fatalf("resumed model request = %+v", messages)
+	}
+
+	entries, err := store.List(context.Background(), "session", 0)
+	if err != nil || len(entries) != 4 {
+		t.Fatalf("resumed history = %+v, %v", entries, err)
+	}
+
+	for _, value := range entries {
+		if value.ExecutionID != params.ExecutionID || value.Type != MessageEntryType {
+			t.Fatalf("resumed history changed execution identity: %+v", value)
+		}
+	}
+}
+
 func TestExecutorPublishesAgentEvents(t *testing.T) {
 	t.Parallel()
 

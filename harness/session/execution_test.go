@@ -162,6 +162,10 @@ func TestSessionLifetimeInterruptsActiveExecution(t *testing.T) {
 	cancel()
 	waitExecution(t, current)
 
+	if status, err := current.Wait(context.Background()); err != nil || status != execution.Interrupted {
+		t.Fatalf("interrupted execution = %q, %v", status, err)
+	}
+
 	entries, err := session.Entries(context.Background(), 0)
 	if err != nil {
 		t.Fatalf("Entries() error = %v", err)
@@ -567,6 +571,7 @@ func TestExecutionLookupLeavesUnfinishedHistoryUntouched(t *testing.T) {
 		entry.Entry{ExecutionID: "old", Type: execution.EntryType, Payload: json.RawMessage(`{"id":"old","status":"running"}`)},
 		entry.Entry{ExecutionID: "old", Type: execution.EntryType, Payload: json.RawMessage(`{"status":"completed","id":"old"}`)},
 		entry.Entry{ExecutionID: "unfinished", Type: execution.EntryType, Payload: json.RawMessage(`{"id":"unfinished","status":"running"}`)},
+		entry.Entry{ExecutionID: "interrupted", Type: execution.EntryType, Payload: json.RawMessage(`{"id":"interrupted","status":"interrupted"}`)},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -580,6 +585,10 @@ func TestExecutionLookupLeavesUnfinishedHistoryUntouched(t *testing.T) {
 			t.Fatalf("unfinished execution = %v", err)
 		}
 
+		if _, err := session.Execution(ctx, "interrupted"); !errors.Is(err, ErrExecutionUnfinished) {
+			t.Fatalf("unmanaged interrupted execution = %v", err)
+		}
+
 		old, err := session.Execution(ctx, "old")
 		if err != nil {
 			t.Fatal(err)
@@ -590,7 +599,7 @@ func TestExecutionLookupLeavesUnfinishedHistoryUntouched(t *testing.T) {
 		}
 
 		entries, err := session.Entries(ctx, 0)
-		if err != nil || len(entries) != 3 {
+		if err != nil || len(entries) != 4 {
 			t.Fatalf("lookup changed history = %+v, %v", entries, err)
 		}
 	}
@@ -791,7 +800,7 @@ func (s *finishFailingStore) Append(
 				return nil, err
 			}
 
-			if !saved.Status.Terminal() {
+			if !saved.Status.Terminal() && saved.Status != execution.Interrupted {
 				continue
 			}
 
@@ -821,7 +830,7 @@ func (s *blockingFinishStore) Append(ctx context.Context, sessionID string, entr
 				return nil, err
 			}
 
-			if !saved.Status.Terminal() {
+			if !saved.Status.Terminal() && saved.Status != execution.Interrupted {
 				continue
 			}
 

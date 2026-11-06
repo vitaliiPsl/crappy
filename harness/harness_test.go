@@ -445,8 +445,8 @@ func TestShutdownOwnsSessionsAndRejectsFurtherOpens(t *testing.T) {
 
 	waitSignal(t, subscription.Done())
 
-	if finished := waitFinished(t, opened, current.ID()); finished.Status != execution.Interrupted {
-		t.Fatalf("execution status = %+v", finished)
+	if status, err := current.Wait(context.Background()); err != nil || status != execution.Interrupted {
+		t.Fatalf("execution status = %q, %v", status, err)
 	}
 
 	if _, err := h.CreateSession(context.Background(), nil); !errors.Is(err, ErrClosed) {
@@ -737,8 +737,17 @@ func TestSessionInitializesBeforeReturning(t *testing.T) {
 		}
 	}
 
-	if finished := waitFinished(t, opened, "unfinished"); finished.Status != execution.Interrupted {
-		t.Fatalf("previous status = %+v", finished)
+	recovered, err := opened.Execution(ctx, "unfinished")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if status, err := recovered.Status(); err != nil || status != execution.Interrupted {
+		t.Fatalf("previous execution status = %q, %v", status, err)
+	}
+
+	if err := opened.Cancel(ctx, "unfinished"); err != nil {
+		t.Fatal(err)
 	}
 
 	current, err := opened.Execute(ctx, execution.NewRequest("work", nil))
@@ -827,9 +836,13 @@ func TestSessionOpeningRetriesFailedInitialization(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	finished := waitFinished(t, opened, "unfinished")
-	if finished.Status != execution.Interrupted {
-		t.Fatalf("reconciled status = %+v", finished)
+	recovered, err := opened.Execution(ctx, "unfinished")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if status, err := recovered.Status(); err != nil || status != execution.Interrupted {
+		t.Fatalf("reconciled status = %q, %v", status, err)
 	}
 
 	stored, err := opened.Entries(ctx, 0)
@@ -1331,7 +1344,7 @@ func (s *failingEntryStore) Append(ctx context.Context, sessionID string, entrie
 				return nil, err
 			}
 
-			if saved.Status.Terminal() {
+			if saved.Status.Terminal() || saved.Status == execution.Interrupted {
 				return nil, s.failure
 			}
 		}

@@ -326,7 +326,7 @@ func (s finishFailureStore) Append(ctx context.Context, sessionID string, entrie
 				return nil, err
 			}
 
-			if record.Status.Terminal() {
+			if record.Status.Terminal() || record.Status == execution.Interrupted {
 				return nil, s.err
 			}
 		}

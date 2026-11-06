@@ -267,7 +267,7 @@ func TestOperationsRequireAnExistingSession(t *testing.T) {
 	}
 }
 
-func TestRestartInterruptsQueuedExecutions(t *testing.T) {
+func TestRestartRestoresQueueUntilResume(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -345,8 +345,13 @@ func TestRestartInterruptsQueuedExecutions(t *testing.T) {
 
 	app = New(config.Config{}, restarted, storage, nil, token.NewCharacterEstimator())
 
-	for _, id := range submitted {
-		if status, err := app.GetExecutionStatus(ctx, created.ID, id); err != nil || status != execution.Interrupted {
+	for i, id := range submitted {
+		want := execution.Queued
+		if i == 0 {
+			want = execution.Interrupted
+		}
+
+		if status, err := app.GetExecutionStatus(ctx, created.ID, id); err != nil || status != want {
 			t.Fatalf("execution %s after restart = %q, %v", id, status, err)
 		}
 	}
@@ -356,11 +361,33 @@ func TestRestartInterruptsQueuedExecutions(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if status, err := app.GetExecutionStatus(ctx, created.ID, fourth); err != nil || status != execution.Queued {
+		t.Fatalf("new work bypassed restored queue = %q, %v", status, err)
+	}
+
+	select {
+	case input := <-ran:
+		t.Fatalf("work ran before resume: %s", input)
+	default:
+	}
+
+	resumed, err := app.Resume(ctx, created.ID)
+	if err != nil || resumed != first {
+		t.Fatalf("resumed execution = %s, %v; want %s", resumed, err, first)
+	}
+
 	if status, err := app.WaitExecution(ctx, created.ID, fourth); err != nil || status != execution.Completed {
 		t.Fatalf("execution after restart = %q, %v", status, err)
 	}
 
-	if input := <-ran; input != "fourth" || len(ran) != 0 {
-		t.Fatalf("restart ran queued work: %s", input)
+	for _, want := range []string{"first", "second", "third", "fourth"} {
+		select {
+		case input := <-ran:
+			if input != want {
+				t.Fatalf("execution order = %s, want %s", input, want)
+			}
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
 	}
 }

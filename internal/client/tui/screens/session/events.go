@@ -68,7 +68,7 @@ func (m *Model) applyEvent(value event.Event) {
 			}
 
 			m.transcript.Start(value.ExecutionID)
-		case record.Status.Terminal():
+		case record.Status.Terminal() || record.Status == execution.Interrupted:
 			if value.ExecutionID == m.executionID {
 				m.executionID = ""
 			}

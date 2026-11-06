@@ -67,6 +67,20 @@ func (a *Assistant) Cancel(ctx context.Context, sessionID, executionID string) e
 	return nil
 }
 
+func (a *Assistant) Resume(ctx context.Context, sessionID string) (string, error) {
+	opened, err := a.harness.Session(ctx, sessionID)
+	if err != nil {
+		return "", err
+	}
+
+	current, err := opened.Resume(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	return current.ID(), nil
+}
+
 func (a *Assistant) Compact(ctx context.Context, sessionID string) (string, error) {
 	opened, err := a.harness.Session(ctx, sessionID)
 	if err != nil {

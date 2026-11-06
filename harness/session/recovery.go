@@ -36,10 +36,23 @@ func (s *Session) restore(ctx context.Context) error {
 	}
 
 	for _, id := range order {
-		if record := latest[id]; !record.Status.Terminal() {
-			if err := s.commitExecution(ctx, newExecution(record), execution.Interrupted, ""); err != nil {
-				return err
+		record := latest[id]
+		if record.Status.Terminal() {
+			continue
+		}
+
+		if record.Status == execution.Running {
+			record.Status, record.Error = execution.Interrupted, ""
+			if err := s.Commit(ctx, record.ID, execution.EntryType, record); err != nil {
+				return fmt.Errorf("recover execution %s: %w", record.ID, err)
 			}
+		}
+
+		pending := newExecution(record)
+		if s.current == nil {
+			s.current = pending
+		} else {
+			s.queue = append(s.queue, pending)
 		}
 	}
 

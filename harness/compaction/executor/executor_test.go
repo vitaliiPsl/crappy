@@ -14,6 +14,7 @@ import (
 	"github.com/vitaliipsl/crappy/harness/compaction"
 	"github.com/vitaliipsl/crappy/harness/compaction/automatic"
 	"github.com/vitaliipsl/crappy/harness/entry"
+	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/session"
 	"github.com/vitaliipsl/crappy/harness/session/state"
@@ -86,6 +87,36 @@ func TestExecutorPersistsCompaction(t *testing.T) {
 	}
 
 	model.AssertCallCount(t, 1)
+}
+
+func TestExecutorPreservesCompactionWhenResumedAfterCommit(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := entry.NewMemoryStore()
+
+	bus := event.NewBus("session", store)
+	if err := bus.Commit(ctx, "work", compaction.EntryType, compaction.Compaction{
+		Summary: compaction.Summary{Objective: "already compacted"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	model := kittest.NewModel(t)
+
+	executor := New(newCompactor(t, model))
+	if err := executor.Execute(ctx, execution.ExecuteParams{
+		SessionID: "session", ExecutionID: "work", Entries: store, Events: bus,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	model.AssertNeverCalled(t)
+
+	entries, err := store.List(ctx, "session", 0)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("resumed compaction journal = %+v, %v", entries, err)
+	}
 }
 
 func TestManualAndAutomaticCompactionRecordToTheirExecutions(t *testing.T) {

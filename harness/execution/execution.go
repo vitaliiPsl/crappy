@@ -17,7 +17,7 @@ const (
 
 func (s Status) Terminal() bool {
 	switch s {
-	case Completed, Failed, Cancelled, Interrupted:
+	case Completed, Failed, Cancelled:
 		return true
 	default:
 		return false
