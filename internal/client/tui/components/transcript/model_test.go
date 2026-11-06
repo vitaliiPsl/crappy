@@ -80,6 +80,38 @@ func TestActiveExecutionIsNotCached(t *testing.T) {
 	}
 }
 
+func TestResumedExecutionContinuesItsExistingBlock(t *testing.T) {
+	model := New()
+	model.SetSize(80, 20)
+	model.Start("work")
+	model.Append("work", kit.NewUserMessage(kit.NewTextContent("original task")))
+	model.Finish("work")
+	_ = model.View()
+
+	model.Start("work")
+	model.Apply("work", kit.NewAgentContentDeltaEvent(kit.NewTextContent("resumed response")))
+
+	view := model.View()
+	if len(model.blocks) != 1 || strings.Count(view, "original task") != 1 || !strings.Contains(view, "resumed response") {
+		t.Fatalf("resumed transcript = %q, blocks = %d", view, len(model.blocks))
+	}
+
+	model.Append("work", kit.NewModelMessage(kit.NewTextContent("resumed response")))
+	model.Finish("work")
+
+	if view := model.View(); !strings.Contains(view, "resumed response") {
+		t.Fatalf("completing resumed work hid its durable response: %q", view)
+	}
+
+	model.Start("next")
+	model.Append("next", kit.NewUserMessage(kit.NewTextContent("queued task")))
+
+	view = model.View()
+	if strings.Count(view, "original task") != 1 || strings.Count(view, "resumed response") != 1 || !strings.Contains(view, "queued task") {
+		t.Fatalf("advancing the queue changed the resumed transcript: %q", view)
+	}
+}
+
 func TestFinishDiscardsStreamedOutput(t *testing.T) {
 	model := New()
 	model.SetSize(80, 20)

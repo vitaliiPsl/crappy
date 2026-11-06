@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/vitaliipsl/crappy/harness/entry"
+	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/session"
 	"github.com/vitaliipsl/crappy/harness/session/state"
@@ -214,7 +215,9 @@ func (h *Harness) DeleteSession(ctx context.Context, sessionID string) error {
 }
 
 func (h *Harness) openSession(ctx context.Context, sessionID string) (*session.Session, error) {
-	opened, err := session.New(h.ctx, sessionID, state.New(h.sessions, sessionID), h.entries, h.executors)
+	events := event.NewBroker(sessionID, h.entries)
+
+	opened, err := session.New(h.ctx, sessionID, state.New(h.sessions, sessionID), h.entries, events, h.executors)
 	if err != nil {
 		if h.ctx.Err() != nil {
 			return nil, ErrClosed

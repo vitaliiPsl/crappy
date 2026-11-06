@@ -9,6 +9,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/internal/assistant"
 	"github.com/vitaliipsl/crappy/internal/client/tui/components/hints"
 )
@@ -17,6 +18,7 @@ const (
 	errorPrefix        = "Error: "
 	workingLabel       = "Working…"
 	interruptedLabel   = "Interrupted"
+	cancelledLabel     = "Cancelled"
 	sectionSeparator   = "\n"
 	minimumContentSize = 1
 )
@@ -27,9 +29,15 @@ func (m *Model) render() string {
 	shortcuts := m.shortcutsView()
 
 	m.composer.SetWidth(m.contentWidth())
-	m.transcript.SetSize(m.contentWidth(), m.transcriptHeight(header, status, shortcuts))
+	height := m.transcriptHeight(header, status, shortcuts)
+	m.transcript.SetSize(m.contentWidth(), height)
 
-	parts := []string{header, transcriptAreaStyle.Render(m.transcript.View())}
+	body := m.transcript.View()
+	if m.queueOpen {
+		body = m.queueView(height)
+	}
+
+	parts := []string{header, transcriptAreaStyle.Render(body)}
 	if status != "" {
 		parts = append(parts, status)
 	}
@@ -97,13 +105,19 @@ func (m *Model) usageLabel() string {
 }
 
 func (m *Model) shortcutsView() string {
+	if m.queueOpen {
+		return m.queueHints()
+	}
+
 	var values []hints.Hint
 
 	if m.terminalErr == nil {
-		if !m.running() {
-			values = append(values, hints.Hint{Key: "Enter", Label: "Send"})
+		label := "Send"
+		if len(m.pending) > 0 {
+			label = "Queue"
 		}
 
+		values = append(values, hints.Hint{Key: "Enter", Label: label})
 		values = append(values, hints.Hint{Key: "Shift+Enter", Label: "Newline"})
 	}
 
@@ -112,7 +126,7 @@ func (m *Model) shortcutsView() string {
 	)
 
 	if m.running() {
-		values = append(values, hints.Hint{Key: "Esc", Label: "Interrupt"})
+		values = append(values, hints.Hint{Key: "Esc", Label: "Cancel current"})
 	}
 
 	return hints.Render(m.contentWidth(), values...)
@@ -127,15 +141,39 @@ func (m *Model) statusView() string {
 		return errorStyle.Width(m.contentWidth()).Render(errorPrefix + m.notice.message)
 	}
 
+	label := ""
+	style := workingStyle
+
+	queued := m.queuedCount()
 	if m.running() {
-		return workingStyle.Width(m.contentWidth()).Render(workingLabel)
+		label = workingLabel
+		if queued > 0 {
+			label += fmt.Sprintf(" · %d queued", queued)
+		}
+	} else if len(m.pending) > 0 {
+		style = noticeStyle
+
+		if m.pending[0].Status == execution.Interrupted {
+			label = interruptedLabel
+			if queued > 0 {
+				label += fmt.Sprintf(" · %d queued", queued)
+			}
+
+			label += " · /resume to continue"
+		} else {
+			label = fmt.Sprintf("%d queued · /resume to start", queued)
+		}
 	}
 
-	if m.notice.kind == noticeInterrupted {
-		return noticeStyle.Width(m.contentWidth()).Render(interruptedLabel)
+	if label == "" && m.notice.kind == noticeCancelled {
+		label, style = cancelledLabel, noticeStyle
 	}
 
-	return ""
+	if label == "" {
+		return ""
+	}
+
+	return style.Width(m.contentWidth()).Render(ansi.Truncate(label, m.contentWidth(), "…"))
 }
 
 func (m *Model) contentWidth() int {

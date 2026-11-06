@@ -21,6 +21,9 @@ var (
 	errorStyle          = lipgloss.NewStyle().Foreground(theme.Default.Error)
 	workingStyle        = lipgloss.NewStyle().Foreground(theme.Default.Primary)
 	noticeStyle         = lipgloss.NewStyle().Foreground(theme.Default.Warning)
+	queueHeadingStyle   = lipgloss.NewStyle().Foreground(theme.Default.Primary).Bold(true)
+	queueTextStyle      = lipgloss.NewStyle().Foreground(theme.Default.Subtle)
+	queueSelectedStyle  = lipgloss.NewStyle().Foreground(theme.Default.Text).Bold(true)
 
 	contextHeadingStyle = lipgloss.NewStyle().Foreground(theme.Default.Primary).Bold(true)
 	contextValueStyle   = lipgloss.NewStyle().Foreground(theme.Default.Text).Bold(true)

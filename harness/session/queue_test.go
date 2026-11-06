@@ -555,8 +555,8 @@ func TestResumeRequiresDurableStart(t *testing.T) {
 
 	store := newQueueFailingStore(execution.Running)
 
-	bus := event.NewBus("session", store)
-	if err := bus.Commit(ctx, "work", execution.EntryType, execution.Record{
+	broker := event.NewBroker("session", store)
+	if err := broker.Commit(ctx, "work", execution.EntryType, execution.Record{
 		ID: "work", Executor: "work", Input: json.RawMessage(`null`), Status: execution.Interrupted,
 	}); err != nil {
 		t.Fatal(err)
@@ -639,12 +639,12 @@ func TestCancelInterruptedExecutionAdvancesQueueAfterCommit(t *testing.T) {
 
 	store := newQueueFailingStore(execution.Cancelled)
 
-	bus := event.NewBus("session", store)
+	broker := event.NewBroker("session", store)
 	for _, record := range []execution.Record{
 		{ID: "first", Executor: "work", Status: execution.Interrupted},
 		{ID: "second", Executor: "work", Status: execution.Queued},
 	} {
-		if err := bus.Commit(ctx, record.ID, execution.EntryType, record); err != nil {
+		if err := broker.Commit(ctx, record.ID, execution.EntryType, record); err != nil {
 			t.Fatal(err)
 		}
 	}

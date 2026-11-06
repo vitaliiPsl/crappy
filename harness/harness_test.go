@@ -335,8 +335,8 @@ func TestConcurrentSessionLookupInitializesOnce(t *testing.T) {
 
 	entries := newFailingEntryStore(nil)
 
-	bus := event.NewBus("shared", entries)
-	if err := bus.Commit(context.Background(), "unfinished", execution.EntryType, execution.Record{ID: "unfinished", Status: execution.Running}); err != nil {
+	broker := event.NewBroker("shared", entries)
+	if err := broker.Commit(context.Background(), "unfinished", execution.EntryType, execution.Record{ID: "unfinished", Status: execution.Running}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -706,8 +706,8 @@ func TestSessionInitializesBeforeReturning(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	bus := event.NewBus("persisted", store.entries)
-	if err := bus.Commit(context.Background(), "unfinished", execution.EntryType, execution.Record{ID: "unfinished", Status: execution.Running}); err != nil {
+	broker := event.NewBroker("persisted", store.entries)
+	if err := broker.Commit(context.Background(), "unfinished", execution.EntryType, execution.Record{ID: "unfinished", Status: execution.Running}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -816,8 +816,8 @@ func TestSessionOpeningRetriesFailedInitialization(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	bus := event.NewBus("persisted", entries)
-	if err := bus.Commit(ctx, "unfinished", execution.EntryType, execution.Record{ID: "unfinished", Status: execution.Running}); err != nil {
+	broker := event.NewBroker("persisted", entries)
+	if err := broker.Commit(ctx, "unfinished", execution.EntryType, execution.Record{ID: "unfinished", Status: execution.Running}); err != nil {
 		t.Fatal(err)
 	}
 

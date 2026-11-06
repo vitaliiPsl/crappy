@@ -78,7 +78,7 @@ func (m *Model) SetSize(width, height int) {
 }
 
 func (m *Model) Start(executionID string) {
-	m.execution(executionID)
+	m.execution(executionID).status = executionRunning
 }
 
 func (m *Model) Append(executionID string, message kit.Message) {

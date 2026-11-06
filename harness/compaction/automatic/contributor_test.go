@@ -121,7 +121,7 @@ func TestContributorUsesPreviousCompaction(t *testing.T) {
 		t.Run(fmt.Sprintf("overflow=%v", overflow), func(t *testing.T) {
 			ctx := context.Background()
 			store := entry.NewMemoryStore()
-			events := event.NewBus("session", store)
+			events := event.NewBroker("session", store)
 			retained := kit.NewModelMessage(kit.NewTextContent("retained evidence"))
 
 			previous := compaction.Compaction{
@@ -254,7 +254,7 @@ func TestContributorCompactsPreviousCompactionAgainOnOverflow(t *testing.T) {
 		}},
 	)
 	store := entry.NewMemoryStore()
-	events := event.NewBus("session", store)
+	events := event.NewBroker("session", store)
 	retainNothing := 0
 
 	compactor, err := compaction.NewCompactor(compaction.Config{RetainedTokens: &retainNothing}, staticModelResolver{summaryModel})
@@ -321,7 +321,7 @@ func TestContributorMeasuresPreviousExecutionBeforeFirstRequest(t *testing.T) {
 
 	ctx := context.Background()
 	store := entry.NewMemoryStore()
-	events := event.NewBus("session", store)
+	events := event.NewBroker("session", store)
 	answer := kit.NewModelMessage(kit.NewTextContent("previous answer"))
 	answer.Usage = kit.Usage{InputTokens: 90, OutputTokens: 5}
 
@@ -391,12 +391,12 @@ func TestContributorCompactsDuringAgentExecution(t *testing.T) {
 	}
 
 	store := entry.NewMemoryStore()
-	bus := event.NewBus("session-1", store)
+	broker := event.NewBroker("session-1", store)
 	executor := harnessagent.NewExecutor(harnessagent.New(
 		kit.AgentConfig{}, staticModelResolver{agentModel}, harnessagent.WithContributors(New(compactor)),
 	))
 
-	subscription, err := bus.Subscribe(context.Background(), 0)
+	subscription, err := broker.Subscribe(context.Background(), 0)
 	if err != nil {
 		t.Fatalf("Subscribe() error = %v", err)
 	}
@@ -406,7 +406,7 @@ func TestContributorCompactsDuringAgentExecution(t *testing.T) {
 	executionID := "execution-1"
 	done := make(chan error, 1)
 
-	params := execution.ExecuteParams{SessionID: "session-1", ExecutionID: executionID, Input: agentInput(t, "start"), Entries: store, Events: bus}
+	params := execution.ExecuteParams{SessionID: "session-1", ExecutionID: executionID, Input: agentInput(t, "start"), Entries: store, Events: broker}
 	go func() {
 		done <- executor.Execute(context.Background(), params)
 	}()
@@ -480,7 +480,7 @@ func TestContributorRetainsCurrentInput(t *testing.T) {
 	}
 
 	store := entry.NewMemoryStore()
-	if err := event.NewBus("session-1", store).Commit(
+	if err := event.NewBroker("session-1", store).Commit(
 		context.Background(), "", harnessagent.MessageEntryType,
 		kit.NewUserMessage(kit.NewTextContent("earlier")),
 		kit.NewModelMessage(kit.NewTextContent("earlier response")),
@@ -492,7 +492,7 @@ func TestContributorRetainsCurrentInput(t *testing.T) {
 		kit.AgentConfig{}, staticModelResolver{agentModel}, harnessagent.WithContributors(New(compactor)),
 	))
 	if err := executor.Execute(context.Background(), execution.ExecuteParams{
-		SessionID: "session-1", ExecutionID: "execution-1", Input: agentInput(t, "current"), Entries: store, Events: event.NewBus("session-1", store),
+		SessionID: "session-1", ExecutionID: "execution-1", Input: agentInput(t, "current"), Entries: store, Events: event.NewBroker("session-1", store),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -516,7 +516,7 @@ func TestContributorCommitFailureStopsRun(t *testing.T) {
 
 	failure := errors.New("cannot save compaction")
 	store := &compactionFailingStore{Store: entry.NewMemoryStore(), failure: failure}
-	bus := event.NewBus("session", store)
+	broker := event.NewBroker("session", store)
 	mainModel := kittest.NewModelWithConfig(t, kit.ModelConfig{InputLimit: 1})
 	summaryModel := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
 		Message:      kit.NewModelMessage(kit.NewTextContent(`{"objective":"summary"}`)),
@@ -532,7 +532,7 @@ func TestContributorCommitFailureStopsRun(t *testing.T) {
 
 	built, err := factory.Build(context.Background(), harnessagent.BuildRequest{
 		SessionID: "session", ExecutionID: "execution",
-		History: harnessagent.NewHistory("session", "execution", store, bus),
+		History: harnessagent.NewHistory("session", "execution", store, broker),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -544,7 +544,7 @@ func TestContributorCommitFailureStopsRun(t *testing.T) {
 
 	mainModel.AssertCallCount(t, 0)
 
-	messages, err := harnessagent.NewHistory("session", "execution", store, bus).Messages(context.Background())
+	messages, err := harnessagent.NewHistory("session", "execution", store, broker).Messages(context.Background())
 	if err != nil || len(messages) != 1 || messages[0].TextContent().Text != "original" {
 		t.Fatalf("failed compaction changed history: %+v, error = %v", messages, err)
 	}
@@ -559,7 +559,7 @@ func buildAgent(t *testing.T, model, compactionModel kit.Model, options ...Contr
 	}
 
 	store := entry.NewMemoryStore()
-	bus := event.NewBus("session-1", store)
+	broker := event.NewBroker("session-1", store)
 	factory := harnessagent.New(
 		kit.AgentConfig{},
 		staticModelResolver{model},
@@ -569,7 +569,7 @@ func buildAgent(t *testing.T, model, compactionModel kit.Model, options ...Contr
 	built, err := factory.Build(context.Background(), harnessagent.BuildRequest{
 		SessionID:   "session-1",
 		ExecutionID: "execution-1",
-		History:     harnessagent.NewHistory("session-1", "execution-1", store, bus),
+		History:     harnessagent.NewHistory("session-1", "execution-1", store, broker),
 	})
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
@@ -582,7 +582,7 @@ func compactionMessage(objective string) string {
 	return compaction.Compaction{Summary: compaction.Summary{Objective: objective}}.Message().TextContent().Text
 }
 
-func receiveEvent(t *testing.T, subscription *event.Subscription) event.Event {
+func receiveEvent(t *testing.T, subscription event.Subscription) event.Event {
 	t.Helper()
 
 	select {

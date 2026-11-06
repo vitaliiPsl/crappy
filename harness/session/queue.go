@@ -43,6 +43,34 @@ func (s *Session) Execute(ctx context.Context, request execution.Request) (*Exec
 	return queued, nil
 }
 
+func (s *Session) Resume(ctx context.Context) (*Execution, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	if s.ctx.Err() != nil {
+		return nil, ErrClosed
+	}
+
+	if s.current == nil || s.current.record.Status == execution.Running {
+		return nil, ErrExecutionNotResumable
+	}
+
+	if _, err := s.executors.Resolve(s.current.record.Executor); err != nil {
+		return nil, err
+	}
+
+	current := s.current
+	if err := s.startExecution(ctx, current); err != nil {
+		return nil, err
+	}
+
+	return current, nil
+}
+
 func (s *Session) Cancel(ctx context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -90,34 +118,6 @@ func (s *Session) Cancel(ctx context.Context, id string) error {
 	}
 
 	return ErrExecutionNotActive
-}
-
-func (s *Session) Resume(ctx context.Context) (*Execution, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-
-	if s.ctx.Err() != nil {
-		return nil, ErrClosed
-	}
-
-	if s.current == nil || s.current.record.Status == execution.Running {
-		return nil, ErrExecutionNotResumable
-	}
-
-	if _, err := s.executors.Resolve(s.current.record.Executor); err != nil {
-		return nil, err
-	}
-
-	current := s.current
-	if err := s.startExecution(ctx, current); err != nil {
-		return nil, err
-	}
-
-	return current, nil
 }
 
 func (s *Session) startNext() {

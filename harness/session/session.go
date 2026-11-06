@@ -18,7 +18,7 @@ type Session struct {
 
 	state     state.State
 	entries   entry.Store
-	events    *event.Bus
+	events    event.Broker
 	executors execution.Resolver
 
 	current *Execution
@@ -32,9 +32,12 @@ func New(
 	id string,
 	state state.State,
 	entries entry.Store,
+	events event.Broker,
 	executors execution.Resolver,
 ) (*Session, error) {
 	if err := ctx.Err(); err != nil {
+		events.Close()
+
 		return nil, err
 	}
 
@@ -45,7 +48,7 @@ func New(
 		id:        id,
 		state:     state,
 		entries:   entries,
-		events:    event.NewBus(id, entries),
+		events:    events,
 		executors: executors,
 	}
 
@@ -71,7 +74,7 @@ func (s *Session) Entries(ctx context.Context, afterID uint64) ([]entry.Entry, e
 	return s.entries.List(ctx, s.id, afterID)
 }
 
-func (s *Session) Subscribe(ctx context.Context, afterID uint64) (*event.Subscription, error) {
+func (s *Session) Subscribe(ctx context.Context, afterID uint64) (event.Subscription, error) {
 	return s.events.Subscribe(ctx, afterID)
 }
 

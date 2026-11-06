@@ -10,9 +10,18 @@ import (
 	"github.com/vitaliipsl/crappy/harness/entry"
 )
 
+var ErrSubscriptionLagged = errors.New("subscription lagged")
+
+type Subscription interface {
+	Events() <-chan Event
+	Done() <-chan struct{}
+	Err() error
+	Close()
+}
+
 const subscriptionBuffer = 64
 
-var ErrSubscriptionLagged = errors.New("subscription lagged")
+var _ Subscription = (*Stream)(nil)
 
 type replay struct {
 	afterID uint64
@@ -23,7 +32,7 @@ type terminalState struct {
 	err error
 }
 
-type Subscription struct {
+type Stream struct {
 	events chan Event
 	live   chan Event
 	start  chan replay
@@ -37,9 +46,9 @@ type Subscription struct {
 	terminal  atomic.Pointer[terminalState]
 }
 
-func NewSubscription(ctx context.Context) *Subscription {
+func NewSubscription(ctx context.Context) *Stream {
 	subscriptionContext, cancel := context.WithCancel(ctx)
-	subscription := &Subscription{
+	subscription := &Stream{
 		events: make(chan Event),
 		live:   make(chan Event, subscriptionBuffer),
 		start:  make(chan replay, 1),
@@ -53,7 +62,7 @@ func NewSubscription(ctx context.Context) *Subscription {
 	return subscription
 }
 
-func (s *Subscription) Start(afterID uint64, entries []entry.Entry) {
+func (s *Stream) Start(afterID uint64, entries []entry.Entry) {
 	s.startOnce.Do(func() {
 		events := make([]Event, len(entries))
 		for i := range entries {
@@ -68,7 +77,7 @@ func (s *Subscription) Start(afterID uint64, entries []entry.Entry) {
 	})
 }
 
-func (s *Subscription) Publish(event Event) bool {
+func (s *Stream) Publish(event Event) bool {
 	if s.ctx.Err() != nil {
 		return false
 	}
@@ -93,19 +102,19 @@ func (s *Subscription) Publish(event Event) bool {
 	}
 }
 
-func (s *Subscription) Events() <-chan Event {
+func (s *Stream) Events() <-chan Event {
 	return s.events
 }
 
-func (s *Subscription) Done() <-chan struct{} {
+func (s *Stream) Done() <-chan struct{} {
 	return s.done
 }
 
-func (s *Subscription) Close() {
+func (s *Stream) Close() {
 	s.stop(nil)
 }
 
-func (s *Subscription) Err() error {
+func (s *Stream) Err() error {
 	terminal := s.terminal.Load()
 	if terminal == nil {
 		return nil
@@ -114,7 +123,7 @@ func (s *Subscription) Err() error {
 	return terminal.err
 }
 
-func (s *Subscription) run() {
+func (s *Stream) run() {
 	defer close(s.done)
 	defer close(s.events)
 
@@ -154,7 +163,7 @@ func (s *Subscription) run() {
 	}
 }
 
-func (s *Subscription) send(event Event) bool {
+func (s *Stream) send(event Event) bool {
 	select {
 	case s.events <- event:
 		return true
@@ -163,7 +172,7 @@ func (s *Subscription) send(event Event) bool {
 	}
 }
 
-func (s *Subscription) stop(err error) {
+func (s *Stream) stop(err error) {
 	if s.terminal.CompareAndSwap(nil, &terminalState{err: err}) {
 		s.cancel()
 	}

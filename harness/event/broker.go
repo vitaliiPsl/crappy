@@ -10,27 +10,35 @@ import (
 	"github.com/vitaliipsl/crappy/harness/entry"
 )
 
-var ErrClosed = errors.New("event bus is closed")
+var ErrClosed = errors.New("event broker is closed")
 
-type Bus struct {
+type Broker interface {
+	Publisher
+	Subscribe(ctx context.Context, afterID uint64) (Subscription, error)
+	Close()
+}
+
+var _ Broker = (*Broadcaster)(nil)
+
+type Broadcaster struct {
 	sessionID string
 	entries   entry.Store
 
 	publishMu   sync.Mutex
 	mu          sync.Mutex
-	subscribers map[*Subscription]struct{}
+	subscribers map[*Stream]struct{}
 	closed      bool
 }
 
-func NewBus(sessionID string, entries entry.Store) *Bus {
-	return &Bus{
+func NewBroker(sessionID string, entries entry.Store) *Broadcaster {
+	return &Broadcaster{
 		sessionID:   sessionID,
 		entries:     entries,
-		subscribers: make(map[*Subscription]struct{}),
+		subscribers: make(map[*Stream]struct{}),
 	}
 }
 
-func (b *Bus) Subscribe(ctx context.Context, afterID uint64) (*Subscription, error) {
+func (b *Broadcaster) Subscribe(ctx context.Context, afterID uint64) (Subscription, error) {
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
@@ -60,7 +68,7 @@ func (b *Bus) Subscribe(ctx context.Context, afterID uint64) (*Subscription, err
 	return subscription, nil
 }
 
-func (b *Bus) Emit(
+func (b *Broadcaster) Emit(
 	ctx context.Context,
 	executionID, eventType string,
 	payload any,
@@ -79,7 +87,7 @@ func (b *Bus) Emit(
 	return nil
 }
 
-func (b *Bus) Commit(
+func (b *Broadcaster) Commit(
 	ctx context.Context,
 	executionID, entryType string,
 	payloads ...any,
@@ -130,7 +138,7 @@ func (b *Bus) Commit(
 	return nil
 }
 
-func (b *Bus) Close() {
+func (b *Broadcaster) Close() {
 	b.publishMu.Lock()
 	defer b.publishMu.Unlock()
 
@@ -150,7 +158,7 @@ func (b *Bus) Close() {
 	clear(b.subscribers)
 }
 
-func (b *Bus) encode(
+func (b *Broadcaster) encode(
 	ctx context.Context,
 	executionID, eventType string,
 	payloads ...any,
@@ -177,7 +185,7 @@ func (b *Bus) encode(
 	return events, nil
 }
 
-func (b *Bus) emit(event Event) {
+func (b *Broadcaster) emit(event Event) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -188,19 +196,19 @@ func (b *Bus) emit(event Event) {
 	}
 }
 
-func (b *Bus) isClosed() bool {
+func (b *Broadcaster) isClosed() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	return b.closed
 }
 
-func (b *Bus) removeWhenDone(subscription *Subscription) {
+func (b *Broadcaster) removeWhenDone(subscription *Stream) {
 	<-subscription.Done()
 	b.remove(subscription)
 }
 
-func (b *Bus) remove(subscription *Subscription) {
+func (b *Broadcaster) remove(subscription *Stream) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 

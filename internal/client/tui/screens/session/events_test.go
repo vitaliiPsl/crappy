@@ -2,8 +2,11 @@ package session
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
+
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
@@ -82,5 +85,50 @@ func TestUsageRebuildsFromJournal(t *testing.T) {
 		if want := (kit.Usage{InputTokens: 1950, OutputTokens: 310, CacheReadTokens: 100}); screen.sessionUsage != want {
 			t.Fatalf("session usage = %+v, want %+v", screen.sessionUsage, want)
 		}
+	}
+}
+
+func TestJournalReplayPreservesCompletedResumedResponse(t *testing.T) {
+	call := kit.NewToolCall("call-1", "bash", map[string]any{"command": "go test ./..."})
+	records := []struct {
+		id      string
+		kind    string
+		payload any
+	}{
+		{"analysis", execution.EntryType, execution.Record{Status: execution.Queued}},
+		{"analysis", execution.EntryType, execution.Record{Status: execution.Running}},
+		{"analysis", agent.MessageEntryType, kit.NewUserMessage(kit.NewTextContent("Analyze repository"))},
+		{"analysis", agent.MessageEntryType, kit.NewModelMessage(kit.NewToolCallContent(call))},
+		{"analysis", agent.MessageEntryType, kit.NewToolMessage(kit.NewToolResultContent(kit.NewToolResult(call, kit.ToolOutput{}, nil)))},
+		{"review", execution.EntryType, execution.Record{Status: execution.Queued}},
+		{"analysis", execution.EntryType, execution.Record{Status: execution.Interrupted}},
+		{"analysis", execution.EntryType, execution.Record{Status: execution.Running}},
+		{"analysis", agent.MessageEntryType, kit.NewModelMessage(kit.NewTextContent("Repository analysis response"))},
+		{"analysis", execution.EntryType, execution.Record{Status: execution.Completed}},
+		{"review", execution.EntryType, execution.Record{Status: execution.Running}},
+		{"review", agent.MessageEntryType, kit.NewUserMessage(kit.NewTextContent("Review core instructions"))},
+		{"review", agent.MessageEntryType, kit.NewModelMessage(kit.NewTextContent("Instructions review response"))},
+		{"review", execution.EntryType, execution.Record{Status: execution.Completed}},
+	}
+
+	for range 2 {
+		screen := New(context.Background(), nil, "session")
+		screen.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+
+		for _, record := range records {
+			screen.applyEvent(executionEvent(t, record.kind, record.id, record.payload))
+			_ = screen.View()
+		}
+
+		view := screen.View().Content
+		tool := strings.Index(view, "go test ./...")
+		response := strings.Index(view, "Repository analysis response")
+		next := strings.Index(view, "Review core instructions")
+
+		if tool < 0 || response <= tool || next <= response || strings.Count(view, "Repository analysis response") != 1 {
+			t.Fatalf("reopening lost or reordered the resumed response: %q", view)
+		}
+
+		screen.Close()
 	}
 }

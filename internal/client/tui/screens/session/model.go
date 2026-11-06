@@ -8,6 +8,7 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
 	"github.com/vitaliipsl/crappy/harness/event"
+	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/internal/assistant"
 	"github.com/vitaliipsl/crappy/internal/client/tui/commands"
 	"github.com/vitaliipsl/crappy/internal/client/tui/components/composer"
@@ -19,12 +20,13 @@ type Model struct {
 	cancel context.CancelFunc
 
 	assistant    *assistant.Assistant
-	subscription *event.Subscription
+	subscription event.Subscription
 	commands     *commands.Registry
 
 	sessionID      string
 	workdir        string
-	executionID    string
+	pending        []execution.Record
+	submission     string
 	contextLoading bool
 	notice         notice
 	terminalErr    error
@@ -36,6 +38,10 @@ type Model struct {
 	composer   composer.Model
 	width      int
 	height     int
+
+	queueOpen     bool
+	queueSelected int
+	queueOffset   int
 }
 
 func New(ctx context.Context, app *assistant.Assistant, sessionID string) *Model {
@@ -98,12 +104,31 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 		return m, nil
 	case composer.Submit:
+		if m.queueOpen {
+			return m, nil
+		}
+
 		return m, m.submit(message.Text)
 	case tea.MouseWheelMsg:
+		if m.queueOpen {
+			switch message.Button {
+			case tea.MouseWheelUp:
+				m.moveQueue(-1)
+			case tea.MouseWheelDown:
+				m.moveQueue(1)
+			}
+
+			return m, nil
+		}
+
 		return m, m.transcript.Update(message)
 	case tea.KeyPressMsg:
+		if m.queueOpen {
+			return m, m.handleQueueKey(message.String())
+		}
+
 		if message.String() == cancelKey && m.running() {
-			return m, m.cancelExecution(m.executionID)
+			return m, m.cancelExecution(m.pending[0].ID)
 		}
 
 		if isTranscriptKey(message.String()) {
@@ -127,5 +152,5 @@ func (m *Model) Close() {
 }
 
 func (m *Model) running() bool {
-	return m.executionID != "" && m.terminalErr == nil
+	return len(m.pending) > 0 && m.pending[0].Status == execution.Running && m.terminalErr == nil
 }

@@ -455,6 +455,6 @@ func testBuildRequestOn(store entry.Store) BuildRequest {
 	return BuildRequest{
 		SessionID:   "session-1",
 		ExecutionID: "execution-1",
-		History:     NewHistory("session-1", "execution-1", store, event.NewBus("session-1", store)),
+		History:     NewHistory("session-1", "execution-1", store, event.NewBroker("session-1", store)),
 	}
 }

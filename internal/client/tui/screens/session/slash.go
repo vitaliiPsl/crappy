@@ -16,6 +16,8 @@ func (m *Model) newCommands() *commands.Registry {
 		commands.Command{Name: "sessions", Description: "Browse sessions", Run: m.showSessions},
 		commands.Command{Name: "compact", Description: "Compact the conversation", Run: m.compact},
 		commands.Command{Name: "context", Description: "Inspect current agent context", Run: m.showContext},
+		commands.Command{Name: "queue", Description: "Inspect and cancel pending work", Run: m.showQueue},
+		commands.Command{Name: "resume", Description: "Continue restored work", Run: m.resume},
 	)
 }
 
@@ -56,7 +58,7 @@ func (m *Model) showContext() tea.Cmd {
 }
 
 func (m *Model) compact() tea.Cmd {
-	if m.running() || m.terminalErr != nil {
+	if m.terminalErr != nil {
 		return nil
 	}
 
@@ -64,6 +66,20 @@ func (m *Model) compact() tea.Cmd {
 
 	return func() tea.Msg {
 		id, err := m.assistant.Compact(m.ctx, sessionID)
+
+		return executeResultMsg{target: m, executionID: id, err: err}
+	}
+}
+
+func (m *Model) resume() tea.Cmd {
+	if m.terminalErr != nil {
+		return nil
+	}
+
+	sessionID := m.sessionID
+
+	return func() tea.Msg {
+		id, err := m.assistant.Resume(m.ctx, sessionID)
 
 		return executeResultMsg{target: m, executionID: id, err: err}
 	}

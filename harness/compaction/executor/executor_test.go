@@ -69,7 +69,7 @@ func TestExecutorPersistsCompaction(t *testing.T) {
 		t.Fatalf("compaction = %+v", generated)
 	}
 
-	reopened, err := session.New(context.Background(), opened.ID(), opened.State(), store, execution.NewRegistry())
+	reopened, err := session.New(context.Background(), opened.ID(), opened.State(), store, event.NewBroker(opened.ID(), store), execution.NewRegistry())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,8 +95,8 @@ func TestExecutorPreservesCompactionWhenResumedAfterCommit(t *testing.T) {
 	ctx := context.Background()
 	store := entry.NewMemoryStore()
 
-	bus := event.NewBus("session", store)
-	if err := bus.Commit(ctx, "work", compaction.EntryType, compaction.Compaction{
+	broker := event.NewBroker("session", store)
+	if err := broker.Commit(ctx, "work", compaction.EntryType, compaction.Compaction{
 		Summary: compaction.Summary{Objective: "already compacted"},
 	}); err != nil {
 		t.Fatal(err)
@@ -106,7 +106,7 @@ func TestExecutorPreservesCompactionWhenResumedAfterCommit(t *testing.T) {
 
 	executor := New(newCompactor(t, model))
 	if err := executor.Execute(ctx, execution.ExecuteParams{
-		SessionID: "session", ExecutionID: "work", Entries: store, Events: bus,
+		SessionID: "session", ExecutionID: "work", Entries: store, Events: broker,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +223,7 @@ func newTestSession(t *testing.T, store entry.Store, executors execution.Resolve
 		t.Fatal(err)
 	}
 
-	opened, err := session.New(context.Background(), "session", state.New(sessions, "session"), store, executors)
+	opened, err := session.New(context.Background(), "session", state.New(sessions, "session"), store, event.NewBroker("session", store), executors)
 	if err != nil {
 		t.Fatal(err)
 	}

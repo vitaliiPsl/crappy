@@ -63,7 +63,7 @@ func TestExecutorCompletesMissingToolResults(t *testing.T) {
 		t.Fatalf("Append() error = %v", err)
 	}
 
-	params := execution.ExecuteParams{SessionID: "session-1", ExecutionID: "execution-1", Entries: store, Events: event.NewBus("session-1", store)}
+	params := execution.ExecuteParams{SessionID: "session-1", ExecutionID: "execution-1", Entries: store, Events: event.NewBroker("session-1", store)}
 	history := NewHistory(params.SessionID, params.ExecutionID, params.Entries, params.Events)
 
 	if err := (NewExecutor(nil)).completeToolResults(context.Background(), history, params); err != nil {
@@ -163,7 +163,7 @@ func TestExecutorRepairsToolHistoryBeforeBuilding(t *testing.T) {
 	t.Parallel()
 
 	store := &failingStore{Store: entry.NewMemoryStore(), failingType: MessageEntryType, failure: errors.New("storage unavailable")}
-	bus := event.NewBus("session-1", store)
+	broker := event.NewBroker("session-1", store)
 	call := kit.NewToolCall("call-1", "write", nil)
 
 	payload, err := json.Marshal(kit.NewModelMessage(kit.NewToolCallContent(call)))
@@ -190,7 +190,7 @@ func TestExecutorRepairsToolHistoryBeforeBuilding(t *testing.T) {
 		}),
 	)))
 
-	params := execution.ExecuteParams{SessionID: "session-1", ExecutionID: "next", Input: agentInput(t, "continue"), Entries: store, Events: bus}
+	params := execution.ExecuteParams{SessionID: "session-1", ExecutionID: "next", Input: agentInput(t, "continue"), Entries: store, Events: broker}
 	if err := configured.Execute(context.Background(), params); !errors.Is(err, store.failure) {
 		t.Fatalf("failed history repair = %v", err)
 	}
@@ -243,12 +243,12 @@ func TestExecutorContinuesConversationAcrossExecutions(t *testing.T) {
 		}},
 	)
 	store := entry.NewMemoryStore()
-	bus := event.NewBus("session-1", store)
+	broker := event.NewBroker("session-1", store)
 	executor := NewExecutor(New(kit.AgentConfig{}, staticModelResolver{model}))
 
 	executionIDs := []string{"execution-1", "execution-2"}
 	for i, input := range []string{"first input", "second input"} {
-		params := execution.ExecuteParams{SessionID: "session-1", ExecutionID: executionIDs[i], Input: agentInput(t, input), Entries: store, Events: bus}
+		params := execution.ExecuteParams{SessionID: "session-1", ExecutionID: executionIDs[i], Input: agentInput(t, input), Entries: store, Events: broker}
 		if err := executor.Execute(context.Background(), params); err != nil {
 			t.Fatal(err)
 		}
@@ -297,14 +297,14 @@ func TestExecutorResumesWithoutDuplicatingInputOrCompletedTools(t *testing.T) {
 		}},
 	)
 	store := entry.NewMemoryStore()
-	bus := event.NewBus("session", store)
+	broker := event.NewBroker("session", store)
 	factory := New(kit.AgentConfig{}, staticModelResolver{model}, WithContributors(
 		ContributorFunc(func(context.Context, BuildContext) (Contribution, error) {
 			return Contribution{Tools: []kit.Tool{tool}}, nil
 		}),
 	))
 	params := execution.ExecuteParams{
-		SessionID: "session", ExecutionID: "work", Input: agentInput(t, "write the file"), Entries: store, Events: bus,
+		SessionID: "session", ExecutionID: "work", Input: agentInput(t, "write the file"), Entries: store, Events: broker,
 	}
 
 	if err := NewExecutor(factory).Execute(context.Background(), params); !errors.Is(err, context.Canceled) {
@@ -346,16 +346,16 @@ func TestExecutorPublishesAgentEvents(t *testing.T) {
 		},
 	})
 	store := entry.NewMemoryStore()
-	bus := event.NewBus("session-1", store)
+	broker := event.NewBroker("session-1", store)
 
-	subscription, err := bus.Subscribe(context.Background(), 0)
+	subscription, err := broker.Subscribe(context.Background(), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	t.Cleanup(subscription.Close)
 
-	params := execution.ExecuteParams{SessionID: "session-1", ExecutionID: "execution-1", Input: agentInput(t, "hi"), Entries: store, Events: bus}
+	params := execution.ExecuteParams{SessionID: "session-1", ExecutionID: "execution-1", Input: agentInput(t, "hi"), Entries: store, Events: broker}
 	if err := NewExecutor(New(kit.AgentConfig{}, staticModelResolver{model})).Execute(context.Background(), params); err != nil {
 		t.Fatal(err)
 	}

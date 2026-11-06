@@ -80,6 +80,7 @@ func (e *execution) appendCompaction(generated compaction.Compaction) {
 func (e *execution) finish() {
 	e.stream.reset()
 	e.status = executionFinished
+	e.width = 0
 }
 
 func (e *execution) newItem(message kit.Message) (item, bool) {

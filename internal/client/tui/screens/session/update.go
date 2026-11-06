@@ -2,6 +2,7 @@ package session
 
 import (
 	"errors"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -66,11 +67,12 @@ func (m *Model) submit(text string) tea.Cmd {
 		return command
 	}
 
-	if m.running() || m.terminalErr != nil {
+	if m.submission != "" || m.terminalErr != nil {
 		return nil
 	}
 
 	m.notice = notice{}
+	m.submission = text
 	input := kit.NewUserMessage(kit.NewTextContent(text))
 
 	if m.sessionID == "" {
@@ -86,6 +88,7 @@ func (m *Model) handleCreated(message createdMsg) tea.Cmd {
 	}
 
 	if message.err != nil {
+		m.submission = ""
 		m.notice = errorNotice(message.err)
 
 		return nil
@@ -119,8 +122,8 @@ func (m *Model) handleEvent(message eventMsg) tea.Cmd {
 
 	if !message.open {
 		m.subscription = nil
-		if errors.Is(message.err, event.ErrClosed) {
-			m.executionID = ""
+		if errors.Is(message.err, event.ErrClosed) && m.terminalErr == nil {
+			m.terminalErr = message.err
 		}
 
 		if message.err != nil {
@@ -140,13 +143,18 @@ func (m *Model) handleExecuteResult(message executeResultMsg) tea.Cmd {
 		return nil
 	}
 
+	if message.input != "" {
+		m.submission = ""
+		if message.err == nil && strings.TrimSpace(m.composer.Value()) == message.input {
+			m.composer.Reset()
+		}
+	}
+
 	if message.err != nil {
 		m.notice = errorNotice(message.err)
 
 		return nil
 	}
-
-	m.composer.Reset()
 
 	return m.waitForExecution(message.executionID)
 }
@@ -156,7 +164,6 @@ func (m *Model) handleExecutionWait(message executionWaitMsg) {
 		return
 	}
 
-	m.executionID = ""
 	m.terminalErr = message.err
 }
 

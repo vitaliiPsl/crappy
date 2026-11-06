@@ -18,8 +18,8 @@ func TestNewSettlesAbandonedExecutionBeforeReturning(t *testing.T) {
 
 	store := newFinishFailingStore(errors.New("storage unavailable"))
 
-	bus := event.NewBus("session-1", store)
-	if err := bus.Commit(context.Background(), "unfinished", execution.EntryType, execution.Record{
+	broker := event.NewBroker("session-1", store)
+	if err := broker.Commit(context.Background(), "unfinished", execution.EntryType, execution.Record{
 		ID: "unfinished", Executor: "removed-executor", Input: json.RawMessage(`{"value":1}`), Status: execution.Running,
 	}); err != nil {
 		t.Fatal(err)
@@ -45,7 +45,7 @@ func TestNewSettlesAbandonedExecutionBeforeReturning(t *testing.T) {
 	store.failing.Store(true)
 
 	for range 2 {
-		opened, err := New(context.Background(), "session-1", newSessionState(t, "session-1"), store, execution.NewRegistry())
+		opened, err := New(context.Background(), "session-1", newSessionState(t, "session-1"), store, event.NewBroker("session-1", store), execution.NewRegistry())
 		if opened != nil || !errors.Is(err, store.err) {
 			t.Fatalf("failed construction = %v, error = %v", opened, err)
 		}
@@ -93,12 +93,12 @@ func TestNewPreservesCompletedExecution(t *testing.T) {
 
 	store := entry.NewMemoryStore()
 
-	bus := event.NewBus("session-1", store)
-	if err := bus.Commit(context.Background(), "completed", execution.EntryType, execution.Record{ID: "completed", Status: execution.Running}); err != nil {
+	broker := event.NewBroker("session-1", store)
+	if err := broker.Commit(context.Background(), "completed", execution.EntryType, execution.Record{ID: "completed", Status: execution.Running}); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := bus.Commit(context.Background(), "completed", execution.EntryType, execution.Record{ID: "completed", Status: execution.Completed}); err != nil {
+	if err := broker.Commit(context.Background(), "completed", execution.EntryType, execution.Record{ID: "completed", Status: execution.Completed}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -126,16 +126,16 @@ func TestNewRestoresQueueUntilExplicitResume(t *testing.T) {
 
 	store := entry.NewMemoryStore()
 
-	bus := event.NewBus("session", store)
+	broker := event.NewBroker("session", store)
 	for _, id := range []string{"running", "second", "third"} {
-		if err := bus.Commit(ctx, id, execution.EntryType, execution.Record{
+		if err := broker.Commit(ctx, id, execution.EntryType, execution.Record{
 			ID: id, Executor: "work", Input: json.RawMessage(`"` + id + `"`), Status: execution.Queued,
 		}); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	if err := bus.Commit(ctx, "running", execution.EntryType, execution.Record{
+	if err := broker.Commit(ctx, "running", execution.EntryType, execution.Record{
 		ID: "running", Executor: "work", Input: json.RawMessage(`"running"`), Status: execution.Running,
 	}); err != nil {
 		t.Fatal(err)
@@ -269,14 +269,14 @@ func TestNewRetriesPartialRecovery(t *testing.T) {
 
 	ctx := context.Background()
 	entries := entry.NewMemoryStore()
-	bus := event.NewBus("session", entries)
+	broker := event.NewBroker("session", entries)
 
 	records := []execution.Record{
 		{ID: "first", Executor: "work", Input: json.RawMessage(`{"value":1}`), Status: execution.Running},
 		{ID: "second", Executor: "work", Input: json.RawMessage(`{"value":2}`), Status: execution.Running},
 	}
 	for _, record := range records {
-		if err := bus.Commit(ctx, record.ID, execution.EntryType, record); err != nil {
+		if err := broker.Commit(ctx, record.ID, execution.EntryType, record); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -284,9 +284,15 @@ func TestNewRetriesPartialRecovery(t *testing.T) {
 	failure := errors.New("storage unavailable")
 	store := newRecoveryFailingStore(entries, 2, failure)
 
-	opened, err := New(ctx, "session", newSessionState(t, "session"), store, execution.NewRegistry())
+	events := event.NewBroker("session", store)
+
+	opened, err := New(ctx, "session", newSessionState(t, "session"), store, events, execution.NewRegistry())
 	if opened != nil || !errors.Is(err, failure) {
 		t.Fatalf("partial recovery = %v, %v", opened, err)
+	}
+
+	if _, err := events.Subscribe(ctx, 0); !errors.Is(err, event.ErrClosed) {
+		t.Fatalf("failed restoration left event broker open: %v", err)
 	}
 
 	partial, err := entries.List(ctx, "session", 0)

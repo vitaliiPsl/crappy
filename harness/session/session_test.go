@@ -122,7 +122,7 @@ func TestEmitReachesEverySubscriber(t *testing.T) {
 		t.Fatalf("Emit() error = %v", err)
 	}
 
-	for _, subscription := range []*event.Subscription{first, second} {
+	for _, subscription := range []event.Subscription{first, second} {
 		received := receiveEvent(t, subscription)
 		if received.SessionID != "session-1" {
 			t.Fatalf("SessionID = %q, want %q", received.SessionID, "session-1")
@@ -197,10 +197,17 @@ func TestNewUsesContextForConstructionAndLifetime(t *testing.T) {
 				cancel()
 			}
 
-			opened, err := New(ctx, "session-1", newSessionState(t, "session-1"), entry.NewMemoryStore(), execution.NewRegistry())
+			entries := entry.NewMemoryStore()
+			events := event.NewBroker("session-1", entries)
+
+			opened, err := New(ctx, "session-1", newSessionState(t, "session-1"), entries, events, execution.NewRegistry())
 			if test.cancelled {
 				if opened != nil || !errors.Is(err, context.Canceled) {
 					t.Fatalf("cancelled construction = %v, error = %v", opened, err)
+				}
+
+				if _, err := events.Subscribe(context.Background(), 0); !errors.Is(err, event.ErrClosed) {
+					t.Fatalf("failed construction left event broker open: %v", err)
 				}
 
 				return
@@ -218,6 +225,71 @@ func TestNewUsesContextForConstructionAndLifetime(t *testing.T) {
 				t.Fatalf("session after context cancelled = %v", err)
 			}
 		})
+	}
+}
+
+func TestNewUsesInjectedEventBroker(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	entries := entry.NewMemoryStore()
+	events := newWrappedEventBroker("session", entries)
+	executors := execution.NewRegistry()
+	executors.Register("work", execution.Func(func(ctx context.Context, params execution.ExecuteParams) error {
+		if params.Events != events {
+			return errors.New("executor received a different publisher")
+		}
+
+		if err := params.Events.Emit(ctx, params.ExecutionID, "work.progress", "working"); err != nil {
+			return err
+		}
+
+		return params.Events.Commit(ctx, params.ExecutionID, "work.output", "done")
+	}))
+
+	opened, err := New(ctx, "session", newSessionState(t, "session"), entries, events, executors)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer opened.Close()
+
+	subscription, err := opened.Subscribe(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer subscription.Close()
+
+	if _, ok := subscription.(*wrappedSubscription); !ok {
+		t.Fatal("session replaced the custom subscription")
+	}
+
+	current, err := opened.Execute(ctx, execution.NewRequest("work", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if status, err := current.Wait(ctx); err != nil || status != execution.Completed {
+		t.Fatalf("execution = %q, %v", status, err)
+	}
+
+	for _, want := range []string{execution.EntryType, execution.EntryType, "work.progress", "work.output", execution.EntryType} {
+		value := receiveEvent(t, subscription)
+		if value.Type != want || value.SessionID != opened.ID() || value.ExecutionID != current.ID() {
+			t.Fatalf("event = %+v, want %s for current execution", value, want)
+		}
+	}
+
+	stored, err := opened.Entries(ctx, 0)
+	if err != nil || len(stored) != 4 || stored[2].Type != "work.output" {
+		t.Fatalf("broker commits and session reads used different journals: %+v, %v", stored, err)
+	}
+
+	opened.Close()
+
+	if _, err := events.Subscribe(ctx, 0); !errors.Is(err, event.ErrClosed) {
+		t.Fatalf("session left injected broker open: %v", err)
 	}
 }
 
@@ -340,7 +412,7 @@ func TestCloseInterruptsActiveExecution(t *testing.T) {
 	}
 }
 
-func receiveEvent(t *testing.T, subscription *event.Subscription) event.Event {
+func receiveEvent(t *testing.T, subscription event.Subscription) event.Event {
 	t.Helper()
 
 	select {
@@ -369,7 +441,7 @@ func newExecutorSession(ctx context.Context, t *testing.T, id string, entries en
 func newSession(ctx context.Context, t *testing.T, id string, entries entry.Store, executors execution.Resolver) *Session {
 	t.Helper()
 
-	opened, err := New(ctx, id, newSessionState(t, id), entries, executors)
+	opened, err := New(ctx, id, newSessionState(t, id), entries, event.NewBroker(id, entries), executors)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -388,4 +460,29 @@ func newSessionState(t *testing.T, id string) state.State {
 	}
 
 	return state.New(store, id)
+}
+
+type wrappedEventBroker struct {
+	event.Broker
+}
+
+func newWrappedEventBroker(sessionID string, entries entry.Store) *wrappedEventBroker {
+	return &wrappedEventBroker{Broker: event.NewBroker(sessionID, entries)}
+}
+
+func (b *wrappedEventBroker) Subscribe(ctx context.Context, afterID uint64) (event.Subscription, error) {
+	subscription, err := b.Broker.Subscribe(ctx, afterID)
+	if err != nil {
+		return nil, err
+	}
+
+	return newWrappedSubscription(subscription), nil
+}
+
+type wrappedSubscription struct {
+	event.Subscription
+}
+
+func newWrappedSubscription(subscription event.Subscription) *wrappedSubscription {
+	return &wrappedSubscription{Subscription: subscription}
 }

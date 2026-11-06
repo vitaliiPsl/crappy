@@ -7,7 +7,7 @@ type noticeKind uint8
 const (
 	noticeNone noticeKind = iota
 	noticeError
-	noticeInterrupted
+	noticeCancelled
 )
 
 type notice struct {
@@ -23,8 +23,8 @@ func executionNotice(record execution.Record) notice {
 	switch record.Status {
 	case execution.Failed:
 		return notice{kind: noticeError, message: record.Error}
-	case execution.Cancelled, execution.Interrupted:
-		return notice{kind: noticeInterrupted}
+	case execution.Cancelled:
+		return notice{kind: noticeCancelled}
 	}
 
 	return notice{}

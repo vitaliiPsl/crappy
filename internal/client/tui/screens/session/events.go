@@ -60,21 +60,7 @@ func (m *Model) applyEvent(value event.Event) {
 			return
 		}
 
-		switch {
-		case record.Status == execution.Running:
-			if m.terminalErr == nil {
-				m.executionID = value.ExecutionID
-				m.notice = notice{}
-			}
-
-			m.transcript.Start(value.ExecutionID)
-		case record.Status.Terminal() || record.Status == execution.Interrupted:
-			if value.ExecutionID == m.executionID {
-				m.executionID = ""
-			}
-
-			m.transcript.Finish(value.ExecutionID)
-			m.notice = executionNotice(record)
-		}
+		record.ID = value.ExecutionID
+		m.applyExecution(record)
 	}
 }

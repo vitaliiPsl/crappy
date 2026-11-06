@@ -40,7 +40,7 @@ func TestUsageReadsPersistedFactsWithoutChangingHistory(t *testing.T) {
 
 	app := New(config.Config{}, h, storage, nil, token.NewCharacterEstimator())
 
-	events := event.NewBus(sessionID, storage.EntryStore())
+	events := event.NewBroker(sessionID, storage.EntryStore())
 	defer events.Close()
 
 	if err := events.Commit(ctx, "unfinished", execution.EntryType, execution.Record{ID: "unfinished", Status: execution.Running}); err != nil {

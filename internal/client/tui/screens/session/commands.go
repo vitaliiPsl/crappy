@@ -43,7 +43,7 @@ func (contextMsg) Broadcast() {}
 
 type subscribedMsg struct {
 	target       *Model
-	subscription *event.Subscription
+	subscription event.Subscription
 	err          error
 }
 
@@ -70,6 +70,7 @@ func (createdMsg) Broadcast() {}
 type executeResultMsg struct {
 	target      *Model
 	executionID string
+	input       string
 	err         error
 }
 
@@ -160,10 +161,13 @@ func (m *Model) create(input kit.Message) tea.Cmd {
 }
 
 func (m *Model) execute(input kit.Message) tea.Cmd {
-	return func() tea.Msg {
-		id, err := m.assistant.Execute(m.ctx, m.sessionID, input.Content...)
+	sessionID := m.sessionID
+	text := kit.ContentsText(input.Content)
 
-		return executeResultMsg{target: m, executionID: id, err: err}
+	return func() tea.Msg {
+		id, err := m.assistant.Execute(m.ctx, sessionID, input.Content...)
+
+		return executeResultMsg{target: m, executionID: id, input: text, err: err}
 	}
 }
 

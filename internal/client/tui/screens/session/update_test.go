@@ -28,7 +28,7 @@ func TestSubscriptionFailureIsVisibleWhileExecutionIsActive(t *testing.T) {
 	}
 }
 
-func TestClosedEventBusClearsActiveExecution(t *testing.T) {
+func TestClosedEventBrokerClearsActiveExecution(t *testing.T) {
 	screen := New(context.Background(), nil, "session-1")
 	defer screen.Close()
 

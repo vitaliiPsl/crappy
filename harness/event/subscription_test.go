@@ -85,7 +85,7 @@ func TestSubscriptionClosesWhenDurableBufferFills(t *testing.T) {
 	}
 }
 
-func receiveEvent(t *testing.T, subscription *Subscription) Event {
+func receiveEvent(t *testing.T, subscription Subscription) Event {
 	t.Helper()
 
 	select {

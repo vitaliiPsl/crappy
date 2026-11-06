@@ -33,12 +33,13 @@ func TestHelpCommandWorksWhileExecutionIsActive(t *testing.T) {
 
 	screen.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	screen.executionID = "running"
+	screen.applyExecution(execution.Record{ID: "running", Status: execution.Running})
+
 	if command := screen.submit("/help"); command != nil {
 		t.Fatal("help submitted application work")
 	}
 
-	for _, name := range []string{"/help", "/new", "/sessions", "/compact", "/context"} {
+	for _, name := range []string{"/help", "/new", "/sessions", "/compact", "/context", "/queue", "/resume"} {
 		if !strings.Contains(screen.View().Content, name) {
 			t.Fatalf("help omitted %s: %q", name, screen.View().Content)
 		}
@@ -65,7 +66,7 @@ func TestNavigationCommandsWorkWhileExecutionIsActive(t *testing.T) {
 			screen := New(context.Background(), nil, "session-1")
 			defer screen.Close()
 
-			screen.executionID = "running"
+			screen.applyExecution(execution.Record{ID: "running", Status: execution.Running})
 
 			command := screen.submit(test.command)
 			if command == nil {
@@ -141,7 +142,7 @@ func TestContextCommandShowsLocalSnapshotsWhileExecutionIsActive(t *testing.T) {
 	defer screen.Close()
 
 	screen.Update(tea.WindowSizeMsg{Width: 100, Height: 60})
-	screen.executionID = "running"
+	screen.applyExecution(execution.Record{ID: "running", Status: execution.Running})
 
 	load := screen.submit("/context")
 	if load == nil {
@@ -290,8 +291,13 @@ func TestCompactCommandUsesNormalExecutionLifecycle(t *testing.T) {
 
 	screen.applyEvent(executionEvent(t, execution.EntryType, accepted.executionID, execution.Record{Status: execution.Running}))
 
-	if command := screen.submit("/compact"); command != nil {
-		t.Fatal("compaction submitted work while an execution was running")
+	queued := screen.submit("/compact")().(executeResultMsg)
+	if queued.err != nil {
+		t.Fatal(queued.err)
+	}
+
+	if status, err := app.GetExecutionStatus(ctx, created.ID, queued.executionID); err != nil || status != execution.Queued {
+		t.Fatalf("compaction was not queued: %s, %v", status, err)
 	}
 
 	_, wait := screen.Update(accepted)
@@ -307,16 +313,20 @@ func TestCompactCommandUsesNormalExecutionLifecycle(t *testing.T) {
 		t.Fatalf("compaction result = %+v, error = %v", result, err)
 	}
 
+	if status, err := app.WaitExecution(ctx, created.ID, queued.executionID); err != nil || status != execution.Completed {
+		t.Fatalf("queued compaction = %s, %v", status, err)
+	}
+
 	entries, err := opened.Entries(ctx, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if len(entries) != 3 {
+	if len(entries) != 6 {
 		t.Fatalf("unexpected compaction journal: %+v", entries)
 	}
 
-	for i, status := range []execution.Status{execution.Queued, execution.Running, execution.Completed} {
+	for i, status := range []execution.Status{execution.Queued, execution.Running, execution.Queued, execution.Completed, execution.Running, execution.Completed} {
 		if entries[i].Type != execution.EntryType {
 			t.Fatalf("unexpected compaction entry: %+v", entries[i])
 		}

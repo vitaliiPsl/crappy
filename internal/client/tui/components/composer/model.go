@@ -10,7 +10,7 @@ import (
 
 const (
 	composerPrompt      = "> "
-	composerPlaceholder = "Type a message or /help… Enter to send"
+	composerPlaceholder = "Type a message or /help…"
 	composerMinHeight   = 1
 	composerMaxHeight   = 8
 	composerPaddingX    = 1
@@ -47,7 +47,19 @@ func New() Model {
 }
 
 func (m *Model) Init() tea.Cmd {
+	return m.Focus()
+}
+
+func (m *Model) Focus() tea.Cmd {
 	return m.input.Focus()
+}
+
+func (m *Model) Blur() {
+	m.input.Blur()
+}
+
+func (m *Model) Value() string {
+	return m.input.Value()
 }
 
 func (m *Model) Update(message tea.Msg) tea.Cmd {

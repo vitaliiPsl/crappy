@@ -152,14 +152,19 @@ func TestInterruptedExecutionIsSurfaced(t *testing.T) {
 				execution.Record{Status: status},
 			))
 
-			if !strings.Contains(model.View().Content, interruptedLabel) {
-				t.Fatalf("view = %q, want %q", model.View().Content, interruptedLabel)
+			label := interruptedLabel
+			if status == execution.Cancelled {
+				label = cancelledLabel
+			}
+
+			if !strings.Contains(model.View().Content, label) {
+				t.Fatalf("view = %q, want %q", model.View().Content, label)
 			}
 		})
 	}
 }
 
-func TestSubmitIsIgnoredWhileBusy(t *testing.T) {
+func TestSubmitQueuesWhileBusyAndWaitsForAdmission(t *testing.T) {
 	model := New(context.Background(), nil, "session-1")
 	model.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
 
@@ -170,8 +175,12 @@ func TestSubmitIsIgnoredWhileBusy(t *testing.T) {
 		execution.Record{Status: execution.Running},
 	))
 
-	if command := model.submit("second message"); command != nil {
-		t.Fatal("submit() returned a command while busy")
+	if command := model.submit("second message"); command == nil {
+		t.Fatal("submit() did not queue work while busy")
+	}
+
+	if command := model.submit("duplicate"); command != nil {
+		t.Fatal("submit() accepted another request before admission completed")
 	}
 }
 

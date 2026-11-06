@@ -10,19 +10,19 @@ import (
 	"github.com/vitaliipsl/crappy/harness/entry"
 )
 
-func TestBusEmitReachesEverySubscriber(t *testing.T) {
+func TestBrokerEmitReachesEverySubscriber(t *testing.T) {
 	t.Parallel()
 
-	bus := NewBus("session-1", entry.NewMemoryStore())
+	broker := NewBroker("session-1", entry.NewMemoryStore())
 
-	first, err := bus.Subscribe(context.Background(), 0)
+	first, err := broker.Subscribe(context.Background(), 0)
 	if err != nil {
 		t.Fatalf("first Subscribe() error = %v", err)
 	}
 
 	t.Cleanup(first.Close)
 
-	second, err := bus.Subscribe(context.Background(), 0)
+	second, err := broker.Subscribe(context.Background(), 0)
 	if err != nil {
 		t.Fatalf("second Subscribe() error = %v", err)
 	}
@@ -34,7 +34,7 @@ func TestBusEmitReachesEverySubscriber(t *testing.T) {
 	}{
 		Value: 1,
 	}
-	if err := bus.Emit(
+	if err := broker.Emit(
 		context.Background(),
 		"execution-1",
 		"test.event",
@@ -43,7 +43,7 @@ func TestBusEmitReachesEverySubscriber(t *testing.T) {
 		t.Fatalf("Emit() error = %v", err)
 	}
 
-	for _, subscription := range []*Subscription{first, second} {
+	for _, subscription := range []Subscription{first, second} {
 		got := receiveEvent(t, subscription)
 		if got.SessionID != "session-1" {
 			t.Fatalf("SessionID = %q, want session-1", got.SessionID)
@@ -59,20 +59,20 @@ func TestBusEmitReachesEverySubscriber(t *testing.T) {
 	}
 }
 
-func TestBusCommitAppendsAndEmits(t *testing.T) {
+func TestBrokerCommitAppendsAndEmits(t *testing.T) {
 	t.Parallel()
 
 	entries := entry.NewMemoryStore()
-	bus := NewBus("session-1", entries)
+	broker := NewBroker("session-1", entries)
 
-	subscription, err := bus.Subscribe(context.Background(), 0)
+	subscription, err := broker.Subscribe(context.Background(), 0)
 	if err != nil {
 		t.Fatalf("Subscribe() error = %v", err)
 	}
 
 	t.Cleanup(subscription.Close)
 
-	if err := bus.Commit(
+	if err := broker.Commit(
 		context.Background(),
 		"execution-1",
 		"test.entry",
@@ -96,7 +96,7 @@ func TestBusCommitAppendsAndEmits(t *testing.T) {
 	}
 }
 
-func TestBusSubscribeReplaysEntries(t *testing.T) {
+func TestBrokerSubscribeReplaysEntries(t *testing.T) {
 	t.Parallel()
 
 	entries := entry.NewMemoryStore()
@@ -109,9 +109,9 @@ func TestBusSubscribeReplaysEntries(t *testing.T) {
 		t.Fatalf("Append() error = %v", err)
 	}
 
-	bus := NewBus("session-1", entries)
+	broker := NewBroker("session-1", entries)
 
-	subscription, err := bus.Subscribe(context.Background(), 0)
+	subscription, err := broker.Subscribe(context.Background(), 0)
 	if err != nil {
 		t.Fatalf("Subscribe() error = %v", err)
 	}
@@ -124,18 +124,18 @@ func TestBusSubscribeReplaysEntries(t *testing.T) {
 	}
 }
 
-func TestBusCloseStopsSubscribers(t *testing.T) {
+func TestBrokerCloseStopsSubscribers(t *testing.T) {
 	t.Parallel()
 
-	bus := NewBus("session-1", entry.NewMemoryStore())
+	broker := NewBroker("session-1", entry.NewMemoryStore())
 
-	subscription, err := bus.Subscribe(context.Background(), 0)
+	subscription, err := broker.Subscribe(context.Background(), 0)
 	if err != nil {
 		t.Fatalf("Subscribe() error = %v", err)
 	}
 
-	bus.Close()
-	bus.Close()
+	broker.Close()
+	broker.Close()
 
 	select {
 	case <-subscription.Done():
@@ -148,22 +148,22 @@ func TestBusCloseStopsSubscribers(t *testing.T) {
 	}
 }
 
-func TestBusRejectsUseAfterClose(t *testing.T) {
+func TestBrokerRejectsUseAfterClose(t *testing.T) {
 	t.Parallel()
 
 	entries := entry.NewMemoryStore()
-	bus := NewBus("session-1", entries)
-	bus.Close()
+	broker := NewBroker("session-1", entries)
+	broker.Close()
 
-	if _, err := bus.Subscribe(context.Background(), 0); !errors.Is(err, ErrClosed) {
+	if _, err := broker.Subscribe(context.Background(), 0); !errors.Is(err, ErrClosed) {
 		t.Fatalf("Subscribe() error = %v, want ErrClosed", err)
 	}
 
-	if err := bus.Emit(context.Background(), "execution-1", "test.event", 1); !errors.Is(err, ErrClosed) {
+	if err := broker.Emit(context.Background(), "execution-1", "test.event", 1); !errors.Is(err, ErrClosed) {
 		t.Fatalf("Emit() error = %v, want ErrClosed", err)
 	}
 
-	if err := bus.Commit(context.Background(), "execution-1", "test.entry", 1); !errors.Is(err, ErrClosed) {
+	if err := broker.Commit(context.Background(), "execution-1", "test.entry", 1); !errors.Is(err, ErrClosed) {
 		t.Fatalf("Commit() error = %v, want ErrClosed", err)
 	}
 

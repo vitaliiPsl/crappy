@@ -51,7 +51,7 @@ func (a *Assistant) DeleteSession(ctx context.Context, sessionID string) error {
 	return a.harness.DeleteSession(ctx, sessionID)
 }
 
-func (a *Assistant) Subscribe(ctx context.Context, sessionID string, afterID uint64) (*event.Subscription, error) {
+func (a *Assistant) Subscribe(ctx context.Context, sessionID string, afterID uint64) (event.Subscription, error) {
 	opened, err := a.harness.Session(ctx, sessionID)
 	if err != nil {
 		return nil, err

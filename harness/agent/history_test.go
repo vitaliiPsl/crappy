@@ -24,7 +24,7 @@ func TestHistoryAppendRecordsExecutionAttribution(t *testing.T) {
 	ctx := context.Background()
 	store := entry.NewMemoryStore()
 
-	history := NewHistory("session", "execution", store, event.NewBus("session", store))
+	history := NewHistory("session", "execution", store, event.NewBroker("session", store))
 	if err := history.Append(ctx, kit.NewUserMessage(kit.NewTextContent("hello")), kit.NewModelMessage(kit.NewTextContent("hi"))); err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestHistoryMessagesProjectsLatestCompaction(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			messages, err := NewHistory("session", "execution", store, event.NewBus("session", store)).Messages(ctx)
+			messages, err := NewHistory("session", "execution", store, event.NewBroker("session", store)).Messages(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -102,7 +102,7 @@ func TestHistoryMessagesReturnsFreshValues(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	history := NewHistory("session", "execution", store, event.NewBus("session", store))
+	history := NewHistory("session", "execution", store, event.NewBroker("session", store))
 
 	messages, err := history.Messages(ctx)
 	if err != nil {
@@ -136,7 +136,7 @@ func TestHistoryMessagesRejectsMalformedRecords(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		_, err := NewHistory("session", "execution", store, event.NewBus("session", store)).Messages(ctx)
+		_, err := NewHistory("session", "execution", store, event.NewBroker("session", store)).Messages(ctx)
 		if err == nil || !strings.Contains(err.Error(), "entry 1") {
 			t.Fatalf("%s %s: error = %v", value.Type, value.Payload, err)
 		}
@@ -169,7 +169,7 @@ func TestHistoryReconstructsCompactedMessagesAfterReopen(t *testing.T) {
 
 	store := reopened.EntryStore()
 
-	messages, err := NewHistory("session", "next", store, event.NewBus("session", store)).Messages(ctx)
+	messages, err := NewHistory("session", "next", store, event.NewBroker("session", store)).Messages(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,17 +185,17 @@ func TestHistoryCompactCommitsCompactionForExecution(t *testing.T) {
 
 	ctx := context.Background()
 	store := entry.NewMemoryStore()
-	bus := event.NewBus("session", store)
+	broker := event.NewBroker("session", store)
 	original := []kit.Message{
 		kit.NewUserMessage(kit.NewTextContent("older work")),
 		kit.NewModelMessage(kit.NewTextContent("recent reply")),
 	}
 
-	if err := bus.Commit(ctx, "previous", MessageEntryType, original[0], original[1]); err != nil {
+	if err := broker.Commit(ctx, "previous", MessageEntryType, original[0], original[1]); err != nil {
 		t.Fatal(err)
 	}
 
-	subscription, err := bus.Subscribe(ctx, 2)
+	subscription, err := broker.Subscribe(ctx, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +208,7 @@ func TestHistoryCompactCommitsCompactionForExecution(t *testing.T) {
 		FinishReason: kit.FinishReasonStop,
 		Usage:        usage,
 	}})
-	history := NewHistory("session", "execution", store, bus)
+	history := NewHistory("session", "execution", store, broker)
 
 	if compacted, err := history.Compact(ctx, newCompactor(t, model)); err != nil || !compacted {
 		t.Fatalf("Compact() = %v, error = %v", compacted, err)
@@ -246,7 +246,7 @@ func TestHistoryCompactSkipsEmptyHistory(t *testing.T) {
 	model := kittest.NewModel(t)
 	store := entry.NewMemoryStore()
 
-	compacted, err := NewHistory("session", "execution", store, event.NewBus("session", store)).Compact(ctx, newCompactor(t, model))
+	compacted, err := NewHistory("session", "execution", store, event.NewBroker("session", store)).Compact(ctx, newCompactor(t, model))
 	if err != nil || compacted {
 		t.Fatalf("Compact() = %v, error = %v", compacted, err)
 	}
@@ -281,7 +281,7 @@ func TestHistoryCompactKeepsHistoryOnFailure(t *testing.T) {
 				store.failingType = compaction.EntryType
 			}
 
-			history := NewHistory("session", "execution", store, event.NewBus("session", store))
+			history := NewHistory("session", "execution", store, event.NewBroker("session", store))
 
 			original := kit.NewUserMessage(kit.NewTextContent("original work"))
 			if err := history.Append(ctx, original); err != nil {
@@ -314,7 +314,7 @@ func newCompactor(t *testing.T, model kit.Model) *compaction.Compactor {
 	return compactor
 }
 
-func receiveEvent(t *testing.T, subscription *event.Subscription) event.Event {
+func receiveEvent(t *testing.T, subscription event.Subscription) event.Event {
 	t.Helper()
 
 	select {
