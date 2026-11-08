@@ -76,6 +76,11 @@ func loadFile(path string) (Settings, error) {
 		return Settings{}, fmt.Errorf("resolve sessions path: %w", err)
 	}
 
+	value.MemoryPath, err = utils.ResolvePathFromFile(path, value.MemoryPath)
+	if err != nil {
+		return Settings{}, fmt.Errorf("resolve memory path: %w", err)
+	}
+
 	return value, nil
 }
 

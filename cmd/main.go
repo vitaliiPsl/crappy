@@ -19,11 +19,14 @@ import (
 	"github.com/vitaliipsl/crappy/internal/client/tui"
 	"github.com/vitaliipsl/crappy/internal/config"
 	"github.com/vitaliipsl/crappy/internal/instructions"
+	"github.com/vitaliipsl/crappy/internal/memory"
 	"github.com/vitaliipsl/crappy/internal/model"
 	"github.com/vitaliipsl/crappy/internal/settings"
 	"github.com/vitaliipsl/crappy/internal/storage/jsonl"
 	"github.com/vitaliipsl/crappy/internal/tools"
 	"github.com/vitaliipsl/crappy/internal/tools/local"
+	corememory "github.com/vitaliipsl/crappy/memory"
+	jsonstore "github.com/vitaliipsl/crappy/memory/json"
 )
 
 func main() {
@@ -102,6 +105,11 @@ func newAssistant(
 		return nil, nil, fmt.Errorf("open session storage: %w", err)
 	}
 
+	memoryStore, err := jsonstore.New(settings.MemoryPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open memory storage: %w", err)
+	}
+
 	agents := agent.New(config.AgentConfig(), modelResolver,
 		agent.WithToolMiddleware(
 			tools.OutputCap(settings.Tools, storage.PutBlob),
@@ -110,6 +118,7 @@ func newAssistant(
 		agent.WithContributors(
 			instructions.NewContributor(),
 			local.NewContributor(),
+			memory.NewContributor(corememory.New(memoryStore)),
 			automatic.New(compactor,
 				automatic.WithEstimator(estimator),
 				automatic.WithTrigger(
