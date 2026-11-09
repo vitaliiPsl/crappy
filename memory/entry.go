@@ -1,7 +1,6 @@
 package memory
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -18,95 +17,47 @@ type Entry struct {
 	Version   uint64                     `json:"version"`
 }
 
-type EntryOption func(*entryOptions) error
-
-type entryOptions struct {
-	source   *string
-	metadata map[string]json.RawMessage
-}
+type EntryOption func(*Entry) error
 
 func WithSource(reference string) EntryOption {
-	return func(options *entryOptions) error {
-		options.source = &reference
+	return func(entry *Entry) error {
+		entry.Source = reference
 
 		return nil
 	}
 }
 
 func WithMetadata(key string, value any) EntryOption {
-	return func(options *entryOptions) error {
+	return func(entry *Entry) error {
 		data, err := json.Marshal(value)
 		if err != nil {
 			return fmt.Errorf("encode metadata %q: %w", key, err)
-		}
-
-		if options.metadata == nil {
-			options.metadata = make(map[string]json.RawMessage)
-		}
-
-		options.metadata[key] = data
-
-		return nil
-	}
-}
-
-func WithoutMetadata(key string) EntryOption {
-	return func(options *entryOptions) error {
-		if options.metadata == nil {
-			options.metadata = make(map[string]json.RawMessage)
-		}
-
-		options.metadata[key] = nil
-
-		return nil
-	}
-}
-
-func applyEntryOptions(entry Entry, options []EntryOption) (Entry, error) {
-	var configured entryOptions
-	for _, option := range options {
-		if err := option(&configured); err != nil {
-			return Entry{}, err
-		}
-	}
-
-	entry = copyEntry(entry)
-	if configured.source != nil {
-		entry.Source = *configured.source
-	}
-
-	for key, value := range configured.metadata {
-		if value == nil {
-			delete(entry.Metadata, key)
-
-			continue
 		}
 
 		if entry.Metadata == nil {
 			entry.Metadata = make(map[string]json.RawMessage)
 		}
 
-		entry.Metadata[key] = value
-	}
+		entry.Metadata[key] = data
 
-	if len(entry.Metadata) == 0 {
-		entry.Metadata = nil
+		return nil
 	}
-
-	return entry, nil
 }
 
-func copyEntry(entry Entry) Entry {
-	if entry.Metadata == nil {
-		return entry
+func WithoutMetadata(key string) EntryOption {
+	return func(entry *Entry) error {
+		delete(entry.Metadata, key)
+
+		return nil
+	}
+}
+
+func applyEntryOptions(entry *Entry, options []EntryOption) error {
+	for _, option := range options {
+		if err := option(entry); err != nil {
+			return err
+		}
 	}
 
-	metadata := make(map[string]json.RawMessage, len(entry.Metadata))
-	for key, value := range entry.Metadata {
-		metadata[key] = bytes.Clone(value)
-	}
-
-	entry.Metadata = metadata
-
-	return entry
+	return nil
 }
