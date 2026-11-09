@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"slices"
 	"strings"
@@ -19,11 +20,30 @@ var (
 )
 
 const (
-	k1 = 1.2
-	b  = 0.75
+	defaultSaturation          = 1.2
+	defaultLengthNormalization = 0.75
 )
 
+type Option func(*Index)
+
+// WithSaturation sets k1; zero makes repeated occurrences contribute no extra weight.
+func WithSaturation(k1 float64) Option {
+	return func(index *Index) {
+		index.k1 = k1
+	}
+}
+
+// WithLengthNormalization sets b in [0, 1]; zero disables length normalization.
+func WithLengthNormalization(b float64) Option {
+	return func(index *Index) {
+		index.b = b
+	}
+}
+
 type Index struct {
+	k1 float64
+	b  float64
+
 	mu          sync.RWMutex
 	documents   map[string]document
 	postings    map[string]map[string]struct{}
@@ -38,11 +58,49 @@ type document struct {
 	length  int
 }
 
-func New() *Index {
-	return &Index{
+func New(ctx context.Context, store memory.Store, options ...Option) (*Index, error) {
+	index := &Index{
+		k1:        defaultSaturation,
+		b:         defaultLengthNormalization,
 		documents: make(map[string]document),
 		postings:  make(map[string]map[string]struct{}),
 		removed:   make(map[string]uint64),
+	}
+	for _, option := range options {
+		option(index)
+	}
+
+	if math.IsNaN(index.k1) || math.IsInf(index.k1, 0) || index.k1 < 0 {
+		return nil, fmt.Errorf("BM25 saturation must be finite and non-negative: %g", index.k1)
+	}
+
+	if math.IsNaN(index.b) || index.b < 0 || index.b > 1 {
+		return nil, fmt.Errorf("BM25 length normalization must be in [0, 1]: %g", index.b)
+	}
+
+	filter := memory.Filter{Limit: memory.DefaultPageSize}
+
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
+		page, err := store.List(ctx, filter)
+		if err != nil {
+			return nil, fmt.Errorf("load BM25 entries: %w", err)
+		}
+
+		for _, entry := range page.Entries {
+			if err := index.Upsert(ctx, entry); err != nil {
+				return nil, fmt.Errorf("index entry %q: %w", entry.ID, err)
+			}
+		}
+
+		if page.NextID == "" {
+			return index, nil
+		}
+
+		filter.AfterID = page.NextID
 	}
 }
 
@@ -140,6 +198,9 @@ func (i *Index) Retrieve(ctx context.Context, query memory.Query) ([]memory.Cand
 	documentCount := float64(len(i.documents))
 	averageLength := float64(i.totalLength) / documentCount
 
+	frequencyWeight := 1 / (i.k1 + 1)
+	normalizationWeight := i.k1 / (i.k1 + 1)
+
 	scores := make(map[string]float64)
 	for _, term := range terms {
 		postings := i.postings[term]
@@ -157,9 +218,9 @@ func (i *Index) Retrieve(ctx context.Context, query memory.Query) ([]memory.Cand
 				continue
 			}
 
-			normalization := k1 * (1 - b + b*float64(doc.length)/averageLength)
+			normalization := 1 - i.b + i.b*float64(doc.length)/averageLength
 			tf := float64(doc.terms[term])
-			scores[id] += idf * tf * (k1 + 1) / (tf + normalization)
+			scores[id] += idf * (tf / (tf*frequencyWeight + normalizationWeight*normalization))
 		}
 	}
 

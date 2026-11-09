@@ -11,6 +11,7 @@ import (
 	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/session/state"
 	"github.com/vitaliipsl/crappy/internal/workdir"
+	corememory "github.com/vitaliipsl/crappy/memory"
 )
 
 func TestContributorUsesCurrentWorkdirWithoutWriting(t *testing.T) {
@@ -91,5 +92,10 @@ func TestContributorUsesCurrentWorkdirWithoutWriting(t *testing.T) {
 	page := decodeOutput[catalogPage](t, executeTool(t, firstBuild.Tools, "memory_list", map[string]any{"scope": ScopeWorkdir}))
 	if len(page.Entries) != 1 || page.Entries[0].ID != local.ID {
 		t.Fatalf("existing execution tools changed workdir: %+v", page)
+	}
+
+	results := decodeOutput[[]corememory.SearchResult](t, executeTool(t, firstBuild.Tools, "memory_search", map[string]any{"query": "conventions"}))
+	if len(results) != 1 || results[0].Entry.ID != local.ID {
+		t.Fatalf("existing search tool changed workdir: %+v", results)
 	}
 }

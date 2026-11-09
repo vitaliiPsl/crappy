@@ -13,7 +13,13 @@ type listInput struct {
 }
 
 type getInput struct {
-	ID string `json:"id" jsonschema:"Memory entry ID from the catalog"`
+	ID string `json:"id" jsonschema:"Memory entry ID from the catalog or search results"`
+}
+
+type searchInput struct {
+	Query string `json:"query" jsonschema:"Keywords describing the information to recall"`
+	Scope string `json:"scope,omitempty" jsonschema:"Optional namespace: personal or workdir; omitted searches both"`
+	Limit int    `json:"limit,omitempty" jsonschema:"Maximum number of results; defaults to 10"`
 }
 
 type createInput struct {
@@ -23,17 +29,31 @@ type createInput struct {
 
 type updateInput struct {
 	ID              string `json:"id" jsonschema:"Memory entry ID"`
-	ExpectedVersion uint64 `json:"expected_version" jsonschema:"Current version returned by memory_get"`
+	ExpectedVersion uint64 `json:"expected_version" jsonschema:"Current version returned by memory_get or memory_search"`
 	Content         string `json:"content" jsonschema:"Complete replacement content"`
 }
 
 type deleteInput struct {
 	ID              string `json:"id" jsonschema:"Memory entry ID"`
-	ExpectedVersion uint64 `json:"expected_version" jsonschema:"Current version returned by memory_get"`
+	ExpectedVersion uint64 `json:"expected_version" jsonschema:"Current version returned by memory_get or memory_search"`
 }
 
 func NewTools(memory *corememory.Memory, directory, source string) []kit.Tool {
 	return []kit.Tool{
+		tool.MustNew("memory_search", "Find relevant durable memories and return ranked entries with full content, current versions, and scores.",
+			func(run *kit.RunContext, input searchInput) ([]corememory.SearchResult, error) {
+				scopes := []string{ScopePersonal, workdirScope(directory)}
+				if input.Scope != "" {
+					scope, err := resolveScope(input.Scope, directory)
+					if err != nil {
+						return nil, err
+					}
+
+					scopes = []string{scope}
+				}
+
+				return memory.Search(run.Context, input.Query, corememory.WithScopes(scopes...), corememory.WithLimit(input.Limit))
+			}),
 		tool.MustNew("memory_list", "Browse a page of memory previews in ID order. Follow next_id with after_id to continue; use memory_get for full contents.",
 			func(run *kit.RunContext, input listInput) (catalogPage, error) {
 				scope, err := resolveScope(input.Scope, directory)
@@ -56,11 +76,11 @@ func NewTools(memory *corememory.Memory, directory, source string) []kit.Tool {
 
 				return memory.Create(run.Context, scope, input.Content, corememory.WithSource(source))
 			}),
-		tool.MustNew("memory_update", "Correct an existing memory using the version read by memory_get. Read again on a version conflict.",
+		tool.MustNew("memory_update", "Correct an existing memory using its current version. Read again on a version conflict.",
 			func(run *kit.RunContext, input updateInput) (corememory.Entry, error) {
 				return memory.Update(run.Context, input.ID, input.ExpectedVersion, input.Content, corememory.WithSource(source))
 			}),
-		tool.MustNew("memory_delete", "Forget a memory using the version read by memory_get. Read again on a version conflict.",
+		tool.MustNew("memory_delete", "Forget a memory using its current version. Read again on a version conflict.",
 			func(run *kit.RunContext, input deleteInput) (string, error) {
 				if err := memory.Delete(run.Context, input.ID, input.ExpectedVersion); err != nil {
 					return "", err

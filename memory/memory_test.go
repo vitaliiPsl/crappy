@@ -292,8 +292,9 @@ func TestMemorySearchTracksEntryLifecycle(t *testing.T) {
 	t.Parallel()
 
 	ctx := t.Context()
-	index := bm25.New()
-	mem := memory.New(openJSONStore(t, filepath.Join(t.TempDir(), "entries.json")),
+	store := openJSONStore(t, filepath.Join(t.TempDir(), "entries.json"))
+	index := newBM25Index(t, store)
+	mem := memory.New(store,
 		memory.WithIndexer(index, func(_ context.Context, err error) { t.Error(err) }),
 		memory.WithRetriever(index),
 	)
@@ -559,7 +560,7 @@ func TestMemoryReportsIndexFailuresWithoutFailingCanonicalWrites(t *testing.T) {
 			return failure
 		},
 	)
-	healthy := bm25.New()
+	healthy := newBM25Index(t, store)
 	mem := memory.New(store,
 		memory.WithIndexer(broken, func(_ context.Context, err error) { failures = append(failures, err) }),
 		memory.WithIndexer(healthy, func(_ context.Context, err error) { t.Error(err) }),
@@ -666,7 +667,8 @@ func TestMemoryRepeatedDeleteRetriesIndexRemoval(t *testing.T) {
 	t.Parallel()
 
 	ctx := t.Context()
-	index := bm25.New()
+	store := openJSONStore(t, filepath.Join(t.TempDir(), "entries.json"))
+	index := newBM25Index(t, store)
 	failure := errors.New("temporary removal failure")
 	attempts := 0
 	retrying := newTestIndexer(index.Upsert, func(ctx context.Context, id string, version uint64) error {
@@ -677,7 +679,7 @@ func TestMemoryRepeatedDeleteRetriesIndexRemoval(t *testing.T) {
 
 		return index.Remove(ctx, id, version)
 	})
-	mem := memory.New(openJSONStore(t, filepath.Join(t.TempDir(), "entries.json")),
+	mem := memory.New(store,
 		memory.WithIndexer(retrying, func(_ context.Context, err error) {
 			if !errors.Is(err, failure) {
 				t.Error(err)
@@ -746,4 +748,15 @@ func openJSONStore(t *testing.T, path string) memory.Store {
 	}
 
 	return store
+}
+
+func newBM25Index(t *testing.T, store memory.Store) *bm25.Index {
+	t.Helper()
+
+	index, err := bm25.New(t.Context(), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return index
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
 	corememory "github.com/vitaliipsl/crappy/memory"
+	"github.com/vitaliipsl/crappy/memory/bm25"
 	jsonstore "github.com/vitaliipsl/crappy/memory/json"
 )
 
@@ -36,6 +37,11 @@ func TestToolsPersistRecallCorrectAndForget(t *testing.T) {
 		t.Fatalf("catalog after restart = %+v", page)
 	}
 
+	results := decodeOutput[[]corememory.SearchResult](t, executeTool(t, tools, "memory_search", map[string]any{"query": "tests"}))
+	if len(results) != 1 || results[0].Entry.ID != created.ID || results[0].Entry.Content != created.Content || results[0].Score <= 0 {
+		t.Fatalf("search after restart = %+v", results)
+	}
+
 	read := decodeOutput[corememory.Entry](t, executeTool(t, tools, "memory_get", map[string]any{"id": created.ID}))
 	if read.Content != created.Content || read.Version != created.Version {
 		t.Fatalf("recalled entry = %+v, want %+v", read, created)
@@ -46,6 +52,11 @@ func TestToolsPersistRecallCorrectAndForget(t *testing.T) {
 	}))
 	if updated.Version != 2 || updated.Content == read.Content || updated.Source != "session:second/execution:correct" {
 		t.Fatalf("corrected entry = %+v", updated)
+	}
+
+	results = decodeOutput[[]corememory.SearchResult](t, executeTool(t, tools, "memory_search", map[string]any{"query": "race"}))
+	if len(results) != 1 || results[0].Entry.ID != updated.ID || results[0].Entry.Version != updated.Version {
+		t.Fatalf("search after correction = %+v", results)
 	}
 
 	for _, name := range []string{"memory_update", "memory_delete"} {
@@ -68,6 +79,11 @@ func TestToolsPersistRecallCorrectAndForget(t *testing.T) {
 	}
 
 	executeTool(t, tools, "memory_delete", map[string]any{"id": read.ID, "expected_version": read.Version})
+
+	results = decodeOutput[[]corememory.SearchResult](t, executeTool(t, tools, "memory_search", map[string]any{"query": "race"}))
+	if len(results) != 0 {
+		t.Fatalf("deleted memory remained searchable: %+v", results)
+	}
 
 	if _, err := openMemory(t, path).Get(ctx, read.ID); !errors.Is(err, corememory.ErrNotFound) {
 		t.Fatalf("forgotten entry after restart: %v", err)
@@ -109,12 +125,49 @@ func TestToolsSelectNamespaces(t *testing.T) {
 		if len(page.Entries) != 1 || page.Entries[0].Preview != "Prefer concise answers" {
 			t.Fatalf("personal catalog = %+v", page)
 		}
+
+		results := decodeOutput[[]corememory.SearchResult](t, executeTool(t, test.tools, "memory_search", map[string]any{"query": "answers conventions"}))
+		if len(results) != 2 {
+			t.Fatalf("combined search = %+v, want personal and current workdir memories", results)
+		}
+
+		for _, result := range results {
+			if result.Entry.Content != test.want && result.Entry.Content != "Prefer concise answers" {
+				t.Fatalf("search returned another workdir's memory: %+v", result)
+			}
+		}
+
+		for _, scope := range []string{ScopePersonal, ScopeWorkdir} {
+			results = decodeOutput[[]corememory.SearchResult](t, executeTool(t, test.tools, "memory_search", map[string]any{
+				"query": "answers conventions", "scope": scope,
+			}))
+
+			want := test.want
+			if scope == ScopePersonal {
+				want = "Prefer concise answers"
+			}
+
+			if len(results) != 1 || results[0].Entry.Content != want {
+				t.Fatalf("search in %s = %+v, want %q", scope, results, want)
+			}
+		}
+
+		results = decodeOutput[[]corememory.SearchResult](t, executeTool(t, test.tools, "memory_search", map[string]any{
+			"query": "answers conventions", "limit": 1,
+		}))
+		if len(results) != 1 {
+			t.Fatalf("search ignored the result limit: %+v", results)
+		}
 	}
 
-	for _, name := range []string{"memory_list", "memory_create"} {
+	for _, name := range []string{"memory_list", "memory_create", "memory_search"} {
 		args := map[string]any{"scope": "unknown"}
 		if name == "memory_create" {
 			args["content"] = "must not be saved"
+		}
+
+		if name == "memory_search" {
+			args["query"] = "conventions"
 		}
 
 		_, err := findTool(t, first, name).Execute(kit.NewRunContext(context.Background()), kit.NewToolCall("invalid", name, args))
@@ -132,7 +185,15 @@ func openMemory(t *testing.T, path string) *corememory.Memory {
 		t.Fatal(err)
 	}
 
-	return corememory.New(store)
+	index, err := bm25.New(t.Context(), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return corememory.New(store,
+		corememory.WithIndexer(index, func(_ context.Context, err error) { t.Error(err) }),
+		corememory.WithRetriever(index),
+	)
 }
 
 func findTool(t *testing.T, tools []kit.Tool, name string) kit.Tool {

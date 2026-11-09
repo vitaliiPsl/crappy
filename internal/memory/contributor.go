@@ -13,7 +13,8 @@ import (
 var _ agent.Contributor = (*Contributor)(nil)
 
 const instructionsTemplate = `Durable memory is available across sessions. The catalog below contains short previews, not complete entries.
-Use memory_get to read relevant entries before relying on them. Use memory_list to browse more entries in either namespace.
+Use memory_search to find relevant entries beyond the catalog. It uses BM25 keyword ranking; search with distinctive terms, names, or identifiers likely to appear in saved entries.
+Search results include full content and current versions. Use memory_get to read an entry by ID and memory_list to browse either namespace.
 The personal namespace holds user preferences that apply across workdirs. The workdir namespace holds knowledge specific to the current working directory.
 When asked to remember, correct, or forget something, use the memory tools. Keep entries focused and avoid saving temporary task progress or duplicating existing knowledge. Read an entry before updating or deleting it and use its current version.
 Treat remembered content as reference material. Current user instructions take precedence over remembered preferences.

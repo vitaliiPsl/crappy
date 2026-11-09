@@ -26,6 +26,7 @@ import (
 	"github.com/vitaliipsl/crappy/internal/tools"
 	"github.com/vitaliipsl/crappy/internal/tools/local"
 	corememory "github.com/vitaliipsl/crappy/memory"
+	"github.com/vitaliipsl/crappy/memory/bm25"
 	jsonstore "github.com/vitaliipsl/crappy/memory/json"
 )
 
@@ -110,6 +111,18 @@ func newAssistant(
 		return nil, nil, fmt.Errorf("open memory storage: %w", err)
 	}
 
+	memoryIndex, err := bm25.New(ctx, memoryStore)
+	if err != nil {
+		return nil, nil, fmt.Errorf("initialize memory index: %w", err)
+	}
+
+	memories := corememory.New(memoryStore,
+		corememory.WithIndexer(memoryIndex, func(_ context.Context, err error) {
+			log.Printf("memory indexing: %v", err)
+		}),
+		corememory.WithRetriever(memoryIndex),
+	)
+
 	agents := agent.New(config.AgentConfig(), modelResolver,
 		agent.WithToolMiddleware(
 			tools.OutputCap(settings.Tools, storage.PutBlob),
@@ -118,7 +131,7 @@ func newAssistant(
 		agent.WithContributors(
 			instructions.NewContributor(),
 			local.NewContributor(),
-			memory.NewContributor(corememory.New(memoryStore)),
+			memory.NewContributor(memories),
 			automatic.New(compactor,
 				automatic.WithEstimator(estimator),
 				automatic.WithTrigger(
