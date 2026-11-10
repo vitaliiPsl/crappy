@@ -6,12 +6,21 @@ import (
 	"slices"
 )
 
-const (
-	DefaultSearchLimit    = 10
-	DefaultCandidateLimit = 100
-)
+const DefaultSearchLimit = 10
 
-var ErrRetrieverRequired = errors.New("memory search requires a retriever")
+var ErrPipelineRequired = errors.New("memory search requires a pipeline")
+
+type Retriever interface {
+	Retrieve(ctx context.Context, query Query) ([]Candidate, error)
+}
+
+type Pipeline interface {
+	Search(ctx context.Context, query Query) ([]SearchResult, error)
+}
+
+type Merger interface {
+	Merge(ctx context.Context, lists [][]SearchResult) ([]SearchResult, error)
+}
 
 type Query struct {
 	Text   string   `json:"text"`
@@ -67,8 +76,4 @@ type Candidate struct {
 type SearchResult struct {
 	Entry Entry   `json:"entry"`
 	Score float64 `json:"score"`
-}
-
-type Retriever interface {
-	Retrieve(ctx context.Context, query Query) ([]Candidate, error)
 }

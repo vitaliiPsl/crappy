@@ -12,6 +12,7 @@ import (
 	corememory "github.com/vitaliipsl/crappy/memory"
 	"github.com/vitaliipsl/crappy/memory/bm25"
 	jsonstore "github.com/vitaliipsl/crappy/memory/json"
+	"github.com/vitaliipsl/crappy/memory/pipeline"
 )
 
 func TestToolsPersistRecallCorrectAndForget(t *testing.T) {
@@ -190,9 +191,14 @@ func openMemory(t *testing.T, path string) *corememory.Memory {
 		t.Fatal(err)
 	}
 
+	search, err := pipeline.New(store, pipeline.WithRetrievers(index))
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	return corememory.New(store,
 		corememory.WithIndexer(index, func(_ context.Context, err error) { t.Error(err) }),
-		corememory.WithRetriever(index),
+		corememory.WithPipeline(search),
 	)
 }
 

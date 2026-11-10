@@ -28,6 +28,7 @@ import (
 	corememory "github.com/vitaliipsl/crappy/memory"
 	"github.com/vitaliipsl/crappy/memory/bm25"
 	jsonstore "github.com/vitaliipsl/crappy/memory/json"
+	"github.com/vitaliipsl/crappy/memory/pipeline"
 )
 
 func main() {
@@ -116,11 +117,16 @@ func newAssistant(
 		return nil, nil, fmt.Errorf("initialize memory index: %w", err)
 	}
 
+	memoryPipeline, err := pipeline.New(memoryStore, pipeline.WithRetrievers(memoryIndex))
+	if err != nil {
+		return nil, nil, fmt.Errorf("create memory pipeline: %w", err)
+	}
+
 	memories := corememory.New(memoryStore,
 		corememory.WithIndexer(memoryIndex, func(_ context.Context, err error) {
 			log.Printf("memory indexing: %v", err)
 		}),
-		corememory.WithRetriever(memoryIndex),
+		corememory.WithPipeline(memoryPipeline),
 	)
 
 	agents := agent.New(config.AgentConfig(), modelResolver,

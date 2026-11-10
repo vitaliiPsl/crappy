@@ -12,6 +12,7 @@ import (
 	"github.com/vitaliipsl/crappy/memory"
 	"github.com/vitaliipsl/crappy/memory/bm25"
 	jsonstore "github.com/vitaliipsl/crappy/memory/json"
+	"github.com/vitaliipsl/crappy/memory/pipeline"
 )
 
 func TestMemoryEntryLifecycle(t *testing.T) {
@@ -294,9 +295,15 @@ func TestMemorySearchTracksEntryLifecycle(t *testing.T) {
 	ctx := t.Context()
 	store := openJSONStore(t, filepath.Join(t.TempDir(), "entries.json"))
 	index := newBM25Index(t, store)
+
+	search, err := pipeline.New(store, pipeline.WithRetrievers(index))
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	mem := memory.New(store,
 		memory.WithIndexer(index, func(_ context.Context, err error) { t.Error(err) }),
-		memory.WithRetriever(index),
+		memory.WithPipeline(search),
 	)
 
 	created, err := mem.Create(ctx, "personal", "Use Go for tools")
@@ -338,200 +345,48 @@ func TestMemorySearchTracksEntryLifecycle(t *testing.T) {
 	}
 }
 
-func TestMemorySearchResolvesAndFiltersCandidates(t *testing.T) {
+func TestMemorySearchRequiresPipeline(t *testing.T) {
 	t.Parallel()
 
-	ctx := t.Context()
 	store := openJSONStore(t, filepath.Join(t.TempDir(), "entries.json"))
-	owner := memory.New(store)
-
-	var entries []memory.Entry
-	for _, scope := range []string{"selected", "selected", "selected/child", "selected", "selected"} {
-		entry, err := owner.Create(ctx, scope, "canonical content", memory.WithSource("original"), memory.WithMetadata("kind", "note"))
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		entries = append(entries, entry)
-	}
-
-	first, second, wrongScope, excluded, stale := entries[0], entries[1], entries[2], entries[3], entries[4]
-	if _, err := owner.Update(ctx, stale.ID, stale.Version, "newer content"); err != nil {
-		t.Fatal(err)
-	}
-
-	ids := []string{first.ID, second.ID, wrongScope.ID, stale.ID}
-	candidates := []memory.Candidate{
-		{ID: "deleted", Version: 1, Score: 100},
-		{ID: wrongScope.ID, Version: wrongScope.Version, Score: 90},
-		{ID: stale.ID, Version: stale.Version, Score: 80},
-		{ID: excluded.ID, Version: excluded.Version, Score: 70},
-		{ID: first.ID, Version: first.Version + 1, Score: 60},
-		{ID: first.ID, Version: first.Version, Score: 5},
-		{ID: first.ID, Version: first.Version, Score: 4},
-		{ID: second.ID, Score: 2},
-	}
-	retriever := retrieverFunc(func(_ context.Context, query memory.Query) ([]memory.Candidate, error) {
-		if query.Text != "query" || !slices.Equal(query.Scopes, []string{"selected"}) || !slices.Equal(query.IDs, ids) || query.Limit != 12 {
-			t.Fatalf("retriever query = %+v", query)
-		}
-
-		return candidates[:min(query.Limit, len(candidates))], nil
-	})
-	mem := memory.New(store, memory.WithRetriever(retriever), memory.WithCandidateLimit(12))
-
-	results, err := mem.Search(ctx, "query", memory.WithScopes("selected"), memory.WithIDs(ids...), memory.WithLimit(2))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if len(results) != 2 || results[0].Score != 5 || results[1].Score != 2 {
-		t.Fatalf("filtered ranked results = %+v", results)
-	}
-
-	assertEntry(t, results[0].Entry, first)
-	assertEntry(t, results[1].Entry, second)
-}
-
-func TestMemorySearchSeparatesCandidateAndResultLimits(t *testing.T) {
-	t.Parallel()
-
-	ctx := t.Context()
-	store := openJSONStore(t, filepath.Join(t.TempDir(), "entries.json"))
-	owner := memory.New(store)
-
-	var candidates []memory.Candidate
-	for range 12 {
-		entry, err := owner.Create(ctx, "personal", "note")
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		candidates = append(candidates, memory.Candidate{ID: entry.ID, Version: entry.Version})
-	}
-
-	for _, test := range []struct {
-		name           string
-		resultLimit    int
-		candidateLimit int
-		requested      int
-		returned       int
-	}{
-		{name: "default results", resultLimit: 0, candidateLimit: 2, requested: 10, returned: 10},
-		{name: "larger results", resultLimit: 12, candidateLimit: 2, requested: 12, returned: 12},
-		{name: "larger candidates", resultLimit: 2, candidateLimit: 5, requested: 5, returned: 2},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			retriever := retrieverFunc(func(_ context.Context, query memory.Query) ([]memory.Candidate, error) {
-				if query.Limit != test.requested {
-					t.Fatalf("candidate request limit = %d, want %d", query.Limit, test.requested)
-				}
-
-				return candidates[:min(query.Limit, len(candidates))], nil
-			})
-			mem := memory.New(store, memory.WithRetriever(retriever), memory.WithCandidateLimit(test.candidateLimit))
-
-			results, err := mem.Search(ctx, "note", memory.WithLimit(test.resultLimit))
-			if err != nil || len(results) != test.returned {
-				t.Fatalf("results = %+v, %v; want %d entries", results, err, test.returned)
-			}
-		})
-	}
-}
-
-func TestMemorySearchRequiresRetrieverAndValidLimits(t *testing.T) {
-	t.Parallel()
-
-	ctx := t.Context()
-
-	store := openJSONStore(t, filepath.Join(t.TempDir(), "entries.json"))
-	if results, err := memory.New(store).Search(ctx, "query"); !errors.Is(err, memory.ErrRetrieverRequired) || results != nil {
+	if results, err := memory.New(store).Search(t.Context(), "query"); !errors.Is(err, memory.ErrPipelineRequired) || results != nil {
 		t.Fatalf("unconfigured search = %+v, %v", results, err)
 	}
-
-	retriever := retrieverFunc(func(context.Context, memory.Query) ([]memory.Candidate, error) {
-		t.Fatal("invalid search called the retriever")
-
-		return nil, nil
-	})
-	for _, test := range []struct {
-		resultLimit    int
-		candidateLimit int
-	}{
-		{resultLimit: -1, candidateLimit: 10},
-		{resultLimit: 1, candidateLimit: 0},
-		{resultLimit: 1, candidateLimit: -1},
-	} {
-		mem := memory.New(store, memory.WithRetriever(retriever), memory.WithCandidateLimit(test.candidateLimit))
-		if results, err := mem.Search(ctx, "query", memory.WithLimit(test.resultLimit)); err == nil || results != nil {
-			t.Fatalf("invalid search limits %+v: %+v, %v", test, results, err)
-		}
-	}
-
-	canceled, cancel := context.WithCancel(ctx)
-	cancel()
-
-	mem := memory.New(store, memory.WithRetriever(retriever))
-	if results, err := mem.Search(canceled, "query"); !errors.Is(err, context.Canceled) || results != nil {
-		t.Fatalf("canceled search = %+v, %v", results, err)
-	}
 }
 
-func TestMemorySearchPropagatesFailuresWithoutPartialResults(t *testing.T) {
+func TestMemorySearchDelegatesToPipeline(t *testing.T) {
 	t.Parallel()
-
 	ctx := t.Context()
 	store := openJSONStore(t, filepath.Join(t.TempDir(), "entries.json"))
+	want := []memory.SearchResult{{Entry: memory.Entry{ID: "entry", Content: "canonical"}, Score: 3}}
+	search := pipelineFunc(func(received context.Context, query memory.Query) ([]memory.SearchResult, error) {
+		if received != ctx || query.Text != "question" || query.Limit != 2 || !slices.Equal(query.Scopes, []string{"personal"}) || !slices.Equal(query.IDs, []string{"entry"}) {
+			t.Fatalf("pipeline request = %+v", query)
+		}
 
-	entry, err := memory.New(store).Create(ctx, "personal", "canonical content")
-	if err != nil {
-		t.Fatal(err)
+		return want, nil
+	})
+	mem := memory.New(store, memory.WithPipeline(search))
+
+	results, err := mem.Search(ctx, "question", memory.WithScopes("personal"), memory.WithIDs("entry"), memory.WithLimit(2))
+	if err != nil || len(results) != 1 || results[0].Entry.ID != "entry" || results[0].Score != 3 {
+		t.Fatalf("pipeline results = %+v, %v", results, err)
 	}
 
-	failure := errors.New("retriever unavailable")
-	retriever := retrieverFunc(func(context.Context, memory.Query) ([]memory.Candidate, error) {
-		return []memory.Candidate{{ID: entry.ID}}, failure
-	})
+	failure := errors.New("pipeline unavailable")
 
-	mem := memory.New(store, memory.WithRetriever(retriever))
-	if results, err := mem.Search(ctx, "query"); !errors.Is(err, failure) || results != nil {
-		t.Fatalf("failed retrieval = %+v, %v", results, err)
-	}
-
-	failure = errors.New("store unavailable")
-	broken := newFailingReadStore(store, "unreadable", failure)
-	retriever = retrieverFunc(func(context.Context, memory.Query) ([]memory.Candidate, error) {
-		return []memory.Candidate{{ID: entry.ID}, {ID: "unreadable"}}, nil
-	})
-
-	mem = memory.New(broken, memory.WithRetriever(retriever))
-	if results, err := mem.Search(ctx, "query"); !errors.Is(err, failure) || results != nil {
-		t.Fatalf("failed canonical read returned partial results: %+v, %v", results, err)
+	mem = memory.New(store, memory.WithPipeline(pipelineFunc(func(context.Context, memory.Query) ([]memory.SearchResult, error) {
+		return nil, failure
+	})))
+	if results, err := mem.Search(ctx, "question"); !errors.Is(err, failure) || results != nil {
+		t.Fatalf("pipeline failure = %+v, %v", results, err)
 	}
 }
 
-type retrieverFunc func(context.Context, memory.Query) ([]memory.Candidate, error)
+type pipelineFunc func(context.Context, memory.Query) ([]memory.SearchResult, error)
 
-func (fn retrieverFunc) Retrieve(ctx context.Context, query memory.Query) ([]memory.Candidate, error) {
+func (fn pipelineFunc) Search(ctx context.Context, query memory.Query) ([]memory.SearchResult, error) {
 	return fn(ctx, query)
-}
-
-type failingReadStore struct {
-	memory.Store
-	id  string
-	err error
-}
-
-func newFailingReadStore(store memory.Store, id string, err error) *failingReadStore {
-	return &failingReadStore{Store: store, id: id, err: err}
-}
-
-func (s *failingReadStore) Get(ctx context.Context, id string) (memory.Entry, error) {
-	if id == s.id {
-		return memory.Entry{}, s.err
-	}
-
-	return s.Store.Get(ctx, id)
 }
 
 func TestMemoryReportsIndexFailuresWithoutFailingCanonicalWrites(t *testing.T) {

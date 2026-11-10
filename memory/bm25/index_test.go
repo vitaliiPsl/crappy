@@ -12,6 +12,7 @@ import (
 	"github.com/vitaliipsl/crappy/memory"
 	"github.com/vitaliipsl/crappy/memory/bm25"
 	jsonstore "github.com/vitaliipsl/crappy/memory/json"
+	"github.com/vitaliipsl/crappy/memory/pipeline"
 )
 
 func TestIndexRanksTermsAndReturnsVersionedCandidates(t *testing.T) {
@@ -400,9 +401,14 @@ func TestNewRestoresCurrentEntriesAfterRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	search, err := pipeline.New(store, pipeline.WithRetrievers(index))
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	mem := memory.New(store,
 		memory.WithIndexer(index, func(_ context.Context, err error) { t.Error(err) }),
-		memory.WithRetriever(index),
+		memory.WithPipeline(search),
 	)
 
 	original, err := mem.Create(ctx, "personal", "obsolete")
@@ -438,7 +444,12 @@ func TestNewRestoresCurrentEntriesAfterRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mem = memory.New(reopened, memory.WithRetriever(restored))
+	search, err = pipeline.New(reopened, pipeline.WithRetrievers(restored))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mem = memory.New(reopened, memory.WithPipeline(search))
 
 	results, err := mem.Search(ctx, "current")
 	if err != nil || len(results) != 1 || results[0].Entry.ID != updated.ID || results[0].Entry.Version != updated.Version {

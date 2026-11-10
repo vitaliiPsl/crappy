@@ -12,6 +12,7 @@ import (
 
 	"github.com/vitaliipsl/crappy/memory"
 	jsonstore "github.com/vitaliipsl/crappy/memory/json"
+	"github.com/vitaliipsl/crappy/memory/pipeline"
 	"github.com/vitaliipsl/crappy/memory/vector"
 	"github.com/vitaliipsl/crappy/memory/vector/inmemory"
 )
@@ -83,7 +84,12 @@ func TestNewReconcilesVectorsAndReusesCurrentEmbeddings(t *testing.T) {
 		}
 	}
 
-	mem := memory.New(entries, memory.WithRetriever(index))
+	search, err := pipeline.New(entries, pipeline.WithRetrievers(index))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mem := memory.New(entries, memory.WithPipeline(search))
 
 	results, err := mem.Search(ctx, "semantic query", memory.WithScopes("project"), memory.WithIDs("b"), memory.WithLimit(1))
 	if err != nil || len(results) != 1 || results[0].Entry.ID != "b" || results[0].Entry.Version != 2 || results[0].Entry.Content != "corrected" || results[0].Score != 1 {
@@ -274,9 +280,14 @@ func TestIndexTracksCanonicalLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	search, err := pipeline.New(entries, pipeline.WithRetrievers(index))
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	mem := memory.New(entries,
 		memory.WithIndexer(index, func(_ context.Context, err error) { t.Error(err) }),
-		memory.WithRetriever(index),
+		memory.WithPipeline(search),
 	)
 
 	created, err := mem.Create(ctx, "personal", "Prefer brief answers")
