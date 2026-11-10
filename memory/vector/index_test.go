@@ -8,13 +8,13 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
-	"time"
 
 	"github.com/vitaliipsl/crappy/memory"
 	jsonstore "github.com/vitaliipsl/crappy/memory/json"
 	"github.com/vitaliipsl/crappy/memory/pipeline"
 	"github.com/vitaliipsl/crappy/memory/vector"
 	"github.com/vitaliipsl/crappy/memory/vector/inmemory"
+	sqlitestore "github.com/vitaliipsl/crappy/memory/vector/sqlite"
 )
 
 func TestNewReconcilesVectorsAndReusesCurrentEmbeddings(t *testing.T) {
@@ -305,10 +305,6 @@ func TestIndexTracksCanonicalLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := index.Upsert(ctx, created); err != nil {
-		t.Fatal(err)
-	}
-
 	results, err = mem.Search(ctx, "long explanations")
 	if err != nil || len(results) != 1 || results[0].Entry.Version != updated.Version || results[0].Score != 1 {
 		t.Fatalf("updated semantic recall = %+v, %v", results, err)
@@ -321,73 +317,6 @@ func TestIndexTracksCanonicalLifecycle(t *testing.T) {
 	results, err = mem.Search(ctx, "long explanations")
 	if err != nil || len(results) != 0 {
 		t.Fatalf("deleted semantic memory = %+v, %v", results, err)
-	}
-}
-
-func TestIndexDelayedEmbeddingsCannotOverwriteNewerState(t *testing.T) {
-	t.Parallel()
-
-	for _, deletion := range []bool{false, true} {
-		t.Run(fmt.Sprintf("deletion=%t", deletion), func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-			defer cancel()
-
-			started, release := make(chan struct{}), make(chan struct{})
-			embedder := newEmbedder("test-space", func(ctx context.Context, texts []string) ([]vector.Embedding, error) {
-				if texts[0] == "slow" {
-					close(started)
-
-					select {
-					case <-release:
-						return []vector.Embedding{{Values: []float32{1, 0}}}, nil
-					case <-ctx.Done():
-						return nil, ctx.Err()
-					}
-				}
-
-				return []vector.Embedding{{Values: []float32{0, 1}}}, nil
-			}, nil)
-			store := inmemory.New()
-
-			index, err := vector.New(ctx, newEntryStore(t), store, embedder)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			finished := make(chan error, 1)
-			go func() { finished <- index.Upsert(ctx, memory.Entry{ID: "note", Content: "slow", Version: 2}) }()
-
-			select {
-			case <-started:
-			case <-ctx.Done():
-				t.Fatal(ctx.Err())
-			}
-
-			if deletion {
-				err = index.Remove(ctx, "note", 3)
-			} else {
-				err = index.Upsert(ctx, memory.Entry{ID: "note", Content: "fast", Version: 3})
-			}
-
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			close(release)
-
-			if err := <-finished; err != nil {
-				t.Fatal(err)
-			}
-
-			record, err := store.Get(ctx, "note")
-			if deletion {
-				if !errors.Is(err, vector.ErrNotFound) {
-					t.Fatalf("late embedding resurrected removed entry: %+v, %v", record, err)
-				}
-			} else if err != nil || record.Version != 3 || !slices.Equal(record.Values, []float32{0, 1}) {
-				t.Fatalf("late embedding replaced newer state: %+v, %v", record, err)
-			}
-		})
 	}
 }
 
@@ -449,7 +378,7 @@ func TestIndexPropagatesEmbeddingFailures(t *testing.T) {
 	}
 }
 
-func TestNewRejectsUnreadableAndAheadState(t *testing.T) {
+func TestNewPropagatesCanonicalReadErrors(t *testing.T) {
 	t.Parallel()
 
 	ctx := t.Context()
@@ -467,6 +396,13 @@ func TestNewRejectsUnreadableAndAheadState(t *testing.T) {
 	if index, err := vector.New(ctx, source, store, embedder); index != nil || !errors.Is(err, failure) {
 		t.Fatalf("canonical loading failure = %v, %v", index, err)
 	}
+}
+
+func TestNewRefreshesAnyVersionMismatch(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	store := inmemory.New()
 
 	entries := newEntryStore(t)
 	if err := entries.Create(ctx, memory.Entry{ID: "note", Content: "canonical", Version: 1}); err != nil {
@@ -477,9 +413,234 @@ func TestNewRejectsUnreadableAndAheadState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if index, err := vector.New(ctx, entries, store, embedder); index != nil || err == nil {
-		t.Fatalf("index ahead of canonical state was accepted: %v, %v", index, err)
+	embedder := newEmbedder("test-space", func(_ context.Context, texts []string) ([]vector.Embedding, error) {
+		if !slices.Equal(texts, []string{"canonical"}) {
+			t.Fatalf("version mismatch embedded %v", texts)
+		}
+
+		return []vector.Embedding{{Values: []float32{0, 1}}}, nil
+	}, nil)
+	if _, err := vector.New(ctx, entries, store, embedder); err != nil {
+		t.Fatal(err)
 	}
+
+	record, err := store.Get(ctx, "note")
+	if err != nil || record.Version != 1 || !slices.Equal(record.Values, []float32{0, 1}) {
+		t.Fatalf("version mismatch was not reconciled: %+v, %v", record, err)
+	}
+}
+
+func TestNewReconcilesPersistedVectorsAfterRestart(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	directory := t.TempDir()
+	entryPath := filepath.Join(directory, "entries.json")
+	vectorPath := filepath.Join(directory, "vectors.db")
+
+	entries, err := jsonstore.New(entryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, entry := range []memory.Entry{
+		{ID: "a", Scope: "personal", Content: "unchanged", Version: 1},
+		{ID: "b", Scope: "personal", Content: "original", Version: 1},
+		{ID: "c", Scope: "personal", Content: "deleted later", Version: 1},
+	} {
+		if err := entries.Create(ctx, entry); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	embedder := newEmbedder("space", func(_ context.Context, texts []string) ([]vector.Embedding, error) {
+		embeddings := make([]vector.Embedding, len(texts))
+		for position := range embeddings {
+			embeddings[position] = vector.Embedding{Values: []float32{1, 0}}
+		}
+
+		return embeddings, nil
+	}, nil)
+
+	store := newVectorStore(t, vectorPath)
+	if _, err := vector.New(ctx, entries, store, embedder); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err = jsonstore.New(entryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store = newVectorStore(t, vectorPath)
+	embedder = newEmbedder("space", func(context.Context, []string) ([]vector.Embedding, error) {
+		t.Fatal("unchanged restart requested document embeddings")
+
+		return nil, nil
+	}, func(context.Context, string) (vector.Embedding, error) {
+		return vector.Embedding{Values: []float32{1, 0}}, nil
+	})
+
+	index, err := vector.New(ctx, entries, store, embedder)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	candidates, err := index.Retrieve(ctx, memory.NewQuery("query"))
+	if err != nil || len(candidates) != 3 || candidates[0].ID != "a" || candidates[0].Score != 1 {
+		t.Fatalf("restarted search = %+v, %v", candidates, err)
+	}
+
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := entries.Update(ctx, memory.Entry{ID: "b", Scope: "project", Content: "corrected", Version: 2}, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := entries.Delete(ctx, "c", 1); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := entries.Create(ctx, memory.Entry{ID: "d", Scope: "personal", Content: "new", Version: 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	store = newVectorStore(t, vectorPath)
+	documentCalls := 0
+
+	embedder = newEmbedder("space", func(_ context.Context, texts []string) ([]vector.Embedding, error) {
+		documentCalls++
+
+		if !slices.Equal(texts, []string{"corrected", "new"}) {
+			t.Fatalf("restart reconciliation embedded %v", texts)
+		}
+
+		return []vector.Embedding{{Values: []float32{0, 1}}, {Values: []float32{-1, 0}}}, nil
+	}, nil)
+
+	if _, err := vector.New(ctx, entries, store, embedder); err != nil {
+		t.Fatal(err)
+	}
+
+	if documentCalls != 1 {
+		t.Fatalf("reconciliation document calls = %d, want 1", documentCalls)
+	}
+
+	if _, err := store.Get(ctx, "c"); !errors.Is(err, vector.ErrNotFound) {
+		t.Fatalf("restart retained an orphaned vector: %v", err)
+	}
+
+	record, err := store.Get(ctx, "b")
+	if err != nil || record.Version != 2 || record.Scope != "project" || !slices.Equal(record.Values, []float32{0, 1}) {
+		t.Fatalf("restart retained stale vector data: %+v, %v", record, err)
+	}
+
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store = newVectorStore(t, vectorPath)
+	embedder = newEmbedder("new-space", func(_ context.Context, texts []string) ([]vector.Embedding, error) {
+		if !slices.Equal(texts, []string{"unchanged", "corrected", "new"}) {
+			t.Fatalf("space replacement embedded %v", texts)
+		}
+
+		return []vector.Embedding{{Values: []float32{1, 0, 0}}, {Values: []float32{0, 1, 0}}, {Values: []float32{0, 0, 1}}}, nil
+	}, nil)
+
+	if _, err := vector.New(ctx, entries, store, embedder); err != nil {
+		t.Fatal(err)
+	}
+
+	for id, version := range map[string]uint64{"a": 1, "b": 2, "d": 1} {
+		record, err := store.Get(ctx, id)
+		if err != nil || record.Space != "new-space" || record.Version != version || len(record.Values) != 3 {
+			t.Fatalf("persistent space replacement = %+v, %v", record, err)
+		}
+	}
+}
+
+func TestNewReusesCommittedBatchesAfterInterruptedInitialization(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	entries := newEntryStore(t)
+
+	for position := 0; position <= memory.DefaultPageSize; position++ {
+		id := fmt.Sprintf("entry-%03d", position)
+		if err := entries.Create(ctx, memory.Entry{ID: id, Content: id, Version: 1}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	path := filepath.Join(t.TempDir(), "vectors.db")
+	store := newVectorStore(t, path)
+	calls := 0
+	wantErr := errors.New("embedding unavailable")
+
+	embedder := newEmbedder("space", func(_ context.Context, texts []string) ([]vector.Embedding, error) {
+		calls++
+		if calls == 2 {
+			return nil, wantErr
+		}
+
+		embeddings := make([]vector.Embedding, len(texts))
+		for position := range embeddings {
+			embeddings[position] = vector.Embedding{Values: []float32{1}}
+		}
+
+		return embeddings, nil
+	}, nil)
+	if index, err := vector.New(ctx, entries, store, embedder); index != nil || !errors.Is(err, wantErr) {
+		t.Fatalf("interrupted initialization = %v, %v", index, err)
+	}
+
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store = newVectorStore(t, path)
+	calls = 0
+
+	embedder = newEmbedder("space", func(_ context.Context, texts []string) ([]vector.Embedding, error) {
+		calls++
+
+		if !slices.Equal(texts, []string{fmt.Sprintf("entry-%03d", memory.DefaultPageSize)}) {
+			t.Fatalf("retried already committed embeddings: %v", texts)
+		}
+
+		return []vector.Embedding{{Values: []float32{1}}}, nil
+	}, nil)
+	if _, err := vector.New(ctx, entries, store, embedder); err != nil {
+		t.Fatal(err)
+	}
+
+	if calls != 1 {
+		t.Fatalf("remaining embedding batches = %d, want 1", calls)
+	}
+}
+
+func newVectorStore(t *testing.T, path string) *sqlitestore.Store {
+	t.Helper()
+
+	store, err := sqlitestore.New(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+
+	return store
 }
 
 type testEmbedder struct {

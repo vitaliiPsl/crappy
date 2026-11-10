@@ -47,7 +47,6 @@ type Index struct {
 	mu          sync.RWMutex
 	documents   map[string]document
 	postings    map[string]map[string]struct{}
-	removed     map[string]uint64
 	totalLength int
 }
 
@@ -64,7 +63,6 @@ func New(ctx context.Context, store memory.Store, options ...Option) (*Index, er
 		b:         defaultLengthNormalization,
 		documents: make(map[string]document),
 		postings:  make(map[string]map[string]struct{}),
-		removed:   make(map[string]uint64),
 	}
 	for _, option := range options {
 		option(index)
@@ -129,11 +127,6 @@ func (i *Index) Upsert(ctx context.Context, entry memory.Entry) error {
 		return err
 	}
 
-	previous := i.documents[entry.ID]
-	if entry.Version <= i.removed[entry.ID] || entry.Version <= previous.version {
-		return nil
-	}
-
 	i.removeDocument(entry.ID)
 	i.documents[entry.ID] = doc
 	i.totalLength += doc.length
@@ -149,9 +142,9 @@ func (i *Index) Upsert(ctx context.Context, entry memory.Entry) error {
 	return nil
 }
 
-func (i *Index) Remove(ctx context.Context, id string, throughVersion uint64) error {
-	if id == "" || throughVersion == 0 {
-		return errors.New("removed entry ID and version are required")
+func (i *Index) Remove(ctx context.Context, id string) error {
+	if id == "" {
+		return errors.New("removed entry ID is required")
 	}
 
 	i.mu.Lock()
@@ -161,10 +154,7 @@ func (i *Index) Remove(ctx context.Context, id string, throughVersion uint64) er
 		return err
 	}
 
-	i.removed[id] = max(i.removed[id], throughVersion)
-	if i.documents[id].version <= throughVersion {
-		i.removeDocument(id)
-	}
+	i.removeDocument(id)
 
 	return nil
 }

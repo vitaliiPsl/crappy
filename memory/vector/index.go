@@ -48,8 +48,8 @@ func (i *Index) Upsert(ctx context.Context, entry memory.Entry) error {
 	return i.upsert(ctx, []memory.Entry{entry})
 }
 
-func (i *Index) Remove(ctx context.Context, id string, throughVersion uint64) error {
-	return i.store.Remove(ctx, id, throughVersion)
+func (i *Index) Remove(ctx context.Context, id string) error {
+	return i.store.Remove(ctx, id)
 }
 
 func (i *Index) Retrieve(ctx context.Context, query memory.Query) ([]memory.Candidate, error) {
@@ -86,9 +86,9 @@ func (i *Index) reconcile(ctx context.Context, entries memory.Store) error {
 		}
 
 		for _, record := range page.Records {
-			entry, err := entries.Get(ctx, record.ID)
+			_, err := entries.Get(ctx, record.ID)
 			if errors.Is(err, memory.ErrNotFound) {
-				if err := i.store.Remove(ctx, record.ID, record.Version); err != nil {
+				if err := i.store.Remove(ctx, record.ID); err != nil {
 					return fmt.Errorf("remove orphaned vector %q: %w", record.ID, err)
 				}
 
@@ -97,10 +97,6 @@ func (i *Index) reconcile(ctx context.Context, entries memory.Store) error {
 
 			if err != nil {
 				return fmt.Errorf("load indexed entry %q: %w", record.ID, err)
-			}
-
-			if record.Version > entry.Version {
-				return fmt.Errorf("vector %q version %d exceeds canonical version %d", record.ID, record.Version, entry.Version)
 			}
 		}
 
@@ -150,7 +146,7 @@ func (i *Index) upsert(ctx context.Context, entries []memory.Entry) error {
 			return fmt.Errorf("load vector %q: %w", entry.ID, err)
 		}
 
-		if err == nil && (record.Version > entry.Version || (record.Version == entry.Version && record.Space == i.space)) {
+		if err == nil && record.Version == entry.Version && record.Space == i.space {
 			continue
 		}
 

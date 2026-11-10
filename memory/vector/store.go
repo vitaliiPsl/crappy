@@ -36,6 +36,6 @@ type Store interface {
 	Get(ctx context.Context, id string) (Record, error)
 	List(ctx context.Context, filter memory.Filter) (Page, error)
 	Upsert(ctx context.Context, records []Record) error
-	Remove(ctx context.Context, id string, throughVersion uint64) error
+	Remove(ctx context.Context, id string) error
 	Search(ctx context.Context, query Query) ([]memory.Candidate, error)
 }

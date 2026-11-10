@@ -111,8 +111,8 @@ func (m *Memory) Delete(ctx context.Context, id string, expectedVersion uint64) 
 	}
 
 	for _, indexer := range m.indexers {
-		if err := indexer.index.Remove(ctx, id, expectedVersion); err != nil {
-			indexer.onError(ctx, fmt.Errorf("remove memory %q through version %d from %T: %w", id, expectedVersion, indexer.index, err))
+		if err := indexer.index.Remove(ctx, id); err != nil {
+			indexer.onError(ctx, fmt.Errorf("remove memory %q from %T: %w", id, indexer.index, err))
 		}
 	}
 

@@ -71,7 +71,7 @@ func TestStoreChecksDimensionsBeforeScoring(t *testing.T) {
 
 		calls++
 
-		return inmemory.Cosine(query, document)
+		return vector.Cosine(query, document)
 	}))
 	if err := store.Upsert(ctx, []vector.Record{
 		{ID: "two", Scope: "one", Version: 1, Space: "shared", Values: []float32{1, 0}},
@@ -113,7 +113,7 @@ func TestStoreRanksWithCustomSimilarity(t *testing.T) {
 
 	for _, test := range []struct {
 		name       string
-		similarity inmemory.Similarity
+		similarity vector.Similarity
 		wantID     string
 		wantScore  float64
 	}{
@@ -189,48 +189,38 @@ func TestStoreRejectsNonFiniteSimilarityScores(t *testing.T) {
 	}
 }
 
-func TestStorePreservesVersionsAndRemovalMarkers(t *testing.T) {
+func TestStoreReplacesRecordsAndRemovesIdempotently(t *testing.T) {
 	t.Parallel()
 
 	ctx := t.Context()
 
 	store := inmemory.New()
 	if err := store.Upsert(ctx, []vector.Record{
-		{ID: "note", Version: 3, Space: "test-space", Values: []float32{1, 0}},
-		{ID: "note", Version: 2, Space: "test-space", Values: []float32{0, 1}},
-		{ID: "note", Version: 3, Space: "test-space", Values: []float32{0, 1}},
+		{ID: "note", Scope: "old", Version: 1, Space: "space", Values: []float32{1, 0}},
+		{ID: "note", Scope: "new", Version: 2, Space: "space", Values: []float32{0, 1}},
+		{ID: "other", Version: 1, Space: "space", Values: []float32{1, 0}},
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := store.Remove(ctx, "note", 2); err != nil {
-		t.Fatal(err)
-	}
-
 	record, err := store.Get(ctx, "note")
-	if err != nil || record.Version != 3 || !slices.Equal(record.Values, []float32{1, 0}) {
-		t.Fatalf("older or repeated change replaced current vector: %+v, %v", record, err)
+	if err != nil || record.Version != 2 || record.Scope != "new" || !slices.Equal(record.Values, []float32{0, 1}) {
+		t.Fatalf("replacement lost current data: %+v, %v", record, err)
 	}
 
-	if err := store.Remove(ctx, "note", 3); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := store.Upsert(ctx, []vector.Record{{ID: "note", Version: 3, Space: "test-space", Values: []float32{1, 0}}}); err != nil {
-		t.Fatal(err)
+	for _, id := range []string{"note", "note", "missing"} {
+		if err := store.Remove(ctx, id); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	if _, err := store.Get(ctx, "note"); !errors.Is(err, vector.ErrNotFound) {
-		t.Fatalf("late upsert resurrected removal: %v", err)
+		t.Fatalf("removed record was retained: %v", err)
 	}
 
-	if err := store.Upsert(ctx, []vector.Record{{ID: "note", Version: 4, Space: "test-space", Values: []float32{0, 1}}}); err != nil {
-		t.Fatal(err)
-	}
-
-	record, err = store.Get(ctx, "note")
-	if err != nil || record.Version != 4 {
-		t.Fatalf("newer vector was rejected: %+v, %v", record, err)
+	page, err := store.List(ctx, memory.Filter{})
+	if err != nil || len(page.Records) != 1 || page.Records[0].ID != "other" {
+		t.Fatalf("idempotent removal changed another record: %+v, %v", page, err)
 	}
 }
 
@@ -383,7 +373,7 @@ func TestStoreHonorsCancellation(t *testing.T) {
 		t.Fatalf("canceled upsert = %v", err)
 	}
 
-	if err := store.Remove(ctx, "note", 1); !errors.Is(err, context.Canceled) {
+	if err := store.Remove(ctx, "note"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled removal = %v", err)
 	}
 

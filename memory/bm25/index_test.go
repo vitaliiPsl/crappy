@@ -6,7 +6,6 @@ import (
 	"math"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/vitaliipsl/crappy/memory"
@@ -215,64 +214,46 @@ func TestIndexFiltersScopesAndIDsBeforeLimiting(t *testing.T) {
 	}
 }
 
-func TestIndexIgnoresRepeatedAndOutOfOrderChanges(t *testing.T) {
+func TestIndexReplacesEntriesAndRemovesIdempotently(t *testing.T) {
 	t.Parallel()
 
 	ctx := t.Context()
 
 	index := newIndex(t)
 	for _, entry := range []memory.Entry{
-		{ID: "note", Content: "current", Version: 2},
-		{ID: "note", Content: "stale", Version: 1},
-		{ID: "note", Content: "duplicate", Version: 2},
+		{ID: "note", Scope: "personal", Content: "original", Version: 1},
+		{ID: "note", Scope: "personal", Content: "original", Version: 1},
+		{ID: "other", Scope: "personal", Content: "original", Version: 1},
+		{ID: "note", Scope: "project", Content: "replacement", Version: 2},
 	} {
 		if err := index.Upsert(ctx, entry); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	if err := index.Remove(ctx, "note", 1); err != nil {
-		t.Fatal(err)
+	candidates, err := index.Retrieve(ctx, memory.NewQuery("original"))
+	if err != nil || len(candidates) != 1 || candidates[0].ID != "other" {
+		t.Fatalf("replacement retained old terms: %+v, %v", candidates, err)
 	}
 
-	candidates, err := index.Retrieve(ctx, memory.NewQuery("current stale duplicate"))
-	if err != nil || len(candidates) != 1 || candidates[0].Version != 2 {
-		t.Fatalf("older change replaced the current entry: %+v, %v", candidates, err)
+	candidates, err = index.Retrieve(ctx, memory.NewQuery("replacement", memory.WithScopes("project")))
+	if err != nil || len(candidates) != 1 || candidates[0].ID != "note" || candidates[0].Version != 2 {
+		t.Fatalf("replacement lost current data: %+v, %v", candidates, err)
 	}
 
-	if err := index.Remove(ctx, "note", 2); err != nil {
-		t.Fatal(err)
+	if math.Abs(candidates[0].Score-math.Log(2)) > 1e-12 {
+		t.Fatalf("repeated upsert changed corpus statistics: %+v", candidates)
 	}
 
-	if err := index.Upsert(ctx, memory.Entry{ID: "note", Content: "current", Version: 2}); err != nil {
-		t.Fatal(err)
+	for _, id := range []string{"note", "note", "missing"} {
+		if err := index.Remove(ctx, id); err != nil {
+			t.Fatal(err)
+		}
 	}
 
-	candidates, err = index.Retrieve(ctx, memory.NewQuery("current"))
-	if err != nil || len(candidates) != 0 {
-		t.Fatalf("delayed upsert resurrected a removed version: %+v, %v", candidates, err)
-	}
-
-	if err := index.Remove(ctx, "unseen", 4); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := index.Upsert(ctx, memory.Entry{ID: "unseen", Content: "late", Version: 3}); err != nil {
-		t.Fatal(err)
-	}
-
-	candidates, err = index.Retrieve(ctx, memory.NewQuery("late"))
-	if err != nil || len(candidates) != 0 {
-		t.Fatalf("upsert older than an unseen removal was indexed: %+v, %v", candidates, err)
-	}
-
-	if err := index.Upsert(ctx, memory.Entry{ID: "note", Content: "newer", Version: 3}); err != nil {
-		t.Fatal(err)
-	}
-
-	candidates, err = index.Retrieve(ctx, memory.NewQuery("newer"))
-	if err != nil || len(candidates) != 1 || candidates[0].Version != 3 {
-		t.Fatalf("newer version was lost: %+v, %v", candidates, err)
+	candidates, err = index.Retrieve(ctx, memory.NewQuery("original replacement"))
+	if err != nil || len(candidates) != 1 || candidates[0].ID != "other" {
+		t.Fatalf("idempotent removal changed another entry: %+v, %v", candidates, err)
 	}
 }
 
@@ -293,7 +274,7 @@ func TestIndexCanceledOperationsPreserveState(t *testing.T) {
 		t.Fatalf("canceled upsert: %v", err)
 	}
 
-	if err := index.Remove(ctx, entry.ID, entry.Version); !errors.Is(err, context.Canceled) {
+	if err := index.Remove(ctx, entry.ID); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled remove: %v", err)
 	}
 
@@ -304,33 +285,6 @@ func TestIndexCanceledOperationsPreserveState(t *testing.T) {
 	candidates, err := index.Retrieve(t.Context(), memory.NewQuery("original changed"))
 	if err != nil || len(candidates) != 1 || candidates[0].Version != 1 {
 		t.Fatalf("canceled operations changed the index: %+v, %v", candidates, err)
-	}
-}
-
-func TestIndexConcurrentUpdatesKeepNewestVersion(t *testing.T) {
-	t.Parallel()
-
-	ctx := t.Context()
-	index := newIndex(t)
-
-	var wg sync.WaitGroup
-	for version := uint64(1); version <= 20; version++ {
-		wg.Go(func() {
-			if err := index.Upsert(ctx, memory.Entry{ID: "note", Content: "shared", Version: version}); err != nil {
-				t.Error(err)
-			}
-
-			if _, err := index.Retrieve(ctx, memory.NewQuery("shared")); err != nil {
-				t.Error(err)
-			}
-		})
-	}
-
-	wg.Wait()
-
-	candidates, err := index.Retrieve(ctx, memory.NewQuery("shared"))
-	if err != nil || len(candidates) != 1 || candidates[0].Version != 20 {
-		t.Fatalf("newest version was lost: %+v, %v", candidates, err)
 	}
 }
 
@@ -437,10 +391,6 @@ func TestNewRestoresCurrentEntriesAfterRestart(t *testing.T) {
 
 	restored, err := bm25.New(ctx, reopened)
 	if err != nil {
-		t.Fatal(err)
-	}
-
-	if err := restored.Upsert(ctx, original); err != nil {
 		t.Fatal(err)
 	}
 

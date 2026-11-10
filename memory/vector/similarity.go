@@ -1,4 +1,4 @@
-package inmemory
+package vector
 
 import "math"
 

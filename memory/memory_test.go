@@ -407,7 +407,7 @@ func TestMemoryReportsIndexFailuresWithoutFailingCanonicalWrites(t *testing.T) {
 
 			return failure
 		},
-		func(ctx context.Context, id string, _ uint64) error {
+		func(ctx context.Context, id string) error {
 			if _, err := store.Get(ctx, id); !errors.Is(err, memory.ErrNotFound) {
 				t.Fatalf("index removal ran before deletion: %v", err)
 			}
@@ -482,7 +482,7 @@ func TestMemoryDoesNotIndexFailedCanonicalWrites(t *testing.T) {
 
 			return nil
 		},
-		func(context.Context, string, uint64) error {
+		func(context.Context, string) error {
 			notifications++
 
 			return nil
@@ -526,13 +526,13 @@ func TestMemoryRepeatedDeleteRetriesIndexRemoval(t *testing.T) {
 	index := newBM25Index(t, store)
 	failure := errors.New("temporary removal failure")
 	attempts := 0
-	retrying := newTestIndexer(index.Upsert, func(ctx context.Context, id string, version uint64) error {
+	retrying := newTestIndexer(index.Upsert, func(ctx context.Context, id string) error {
 		attempts++
 		if attempts == 1 {
 			return failure
 		}
 
-		return index.Remove(ctx, id, version)
+		return index.Remove(ctx, id)
 	})
 	mem := memory.New(store,
 		memory.WithIndexer(retrying, func(_ context.Context, err error) {
@@ -561,10 +561,10 @@ func TestMemoryRepeatedDeleteRetriesIndexRemoval(t *testing.T) {
 
 type testIndexer struct {
 	upsert func(context.Context, memory.Entry) error
-	remove func(context.Context, string, uint64) error
+	remove func(context.Context, string) error
 }
 
-func newTestIndexer(upsert func(context.Context, memory.Entry) error, remove func(context.Context, string, uint64) error) *testIndexer {
+func newTestIndexer(upsert func(context.Context, memory.Entry) error, remove func(context.Context, string) error) *testIndexer {
 	return &testIndexer{upsert: upsert, remove: remove}
 }
 
@@ -572,8 +572,8 @@ func (i *testIndexer) Upsert(ctx context.Context, entry memory.Entry) error {
 	return i.upsert(ctx, entry)
 }
 
-func (i *testIndexer) Remove(ctx context.Context, id string, throughVersion uint64) error {
-	return i.remove(ctx, id, throughVersion)
+func (i *testIndexer) Remove(ctx context.Context, id string) error {
+	return i.remove(ctx, id)
 }
 
 func assertEntry(t *testing.T, got, want memory.Entry) {

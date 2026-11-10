@@ -21,25 +21,23 @@ var _ vector.Store = (*Store)(nil)
 
 type Option func(*Store)
 
-func WithSimilarity(similarity Similarity) Option {
+func WithSimilarity(similarity vector.Similarity) Option {
 	return func(store *Store) {
 		store.similarity = similarity
 	}
 }
 
 type Store struct {
-	similarity Similarity
+	similarity vector.Similarity
 
 	mu      sync.RWMutex
 	records map[string]vector.Record
-	removed map[string]uint64
 }
 
 func New(options ...Option) *Store {
 	store := &Store{
-		similarity: Cosine,
+		similarity: vector.Cosine,
 		records:    make(map[string]vector.Record),
-		removed:    make(map[string]uint64),
 	}
 	for _, option := range options {
 		option(store)
@@ -142,21 +140,15 @@ func (s *Store) Upsert(ctx context.Context, records []vector.Record) error {
 	}
 
 	for _, record := range prepared {
-		current := s.records[record.ID]
-		if record.Version <= s.removed[record.ID] || record.Version < current.Version ||
-			(record.Version == current.Version && record.Space == current.Space) {
-			continue
-		}
-
 		s.records[record.ID] = record
 	}
 
 	return nil
 }
 
-func (s *Store) Remove(ctx context.Context, id string, throughVersion uint64) error {
-	if id == "" || throughVersion == 0 {
-		return errors.New("removed vector ID and version are required")
+func (s *Store) Remove(ctx context.Context, id string) error {
+	if id == "" {
+		return errors.New("removed vector ID is required")
 	}
 
 	s.mu.Lock()
@@ -166,10 +158,7 @@ func (s *Store) Remove(ctx context.Context, id string, throughVersion uint64) er
 		return err
 	}
 
-	s.removed[id] = max(s.removed[id], throughVersion)
-	if s.records[id].Version <= throughVersion {
-		delete(s.records, id)
-	}
+	delete(s.records, id)
 
 	return nil
 }
