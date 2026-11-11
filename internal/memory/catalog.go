@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	corememory "github.com/vitaliipsl/crappy/memory"
+	corememory "github.com/vitaliipsl/crappy-memory/memory"
 )
 
 const (

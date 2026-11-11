@@ -4,7 +4,7 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kit"
 	"github.com/vitaliiPsl/crappy-adk/x/tool"
 
-	corememory "github.com/vitaliipsl/crappy/memory"
+	corememory "github.com/vitaliipsl/crappy-memory/memory"
 )
 
 type listInput struct {

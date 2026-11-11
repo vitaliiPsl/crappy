@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	corememory "github.com/vitaliipsl/crappy-memory/memory"
 	"github.com/vitaliipsl/crappy/harness"
 	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/compaction"
@@ -25,7 +26,6 @@ import (
 	"github.com/vitaliipsl/crappy/internal/storage/jsonl"
 	"github.com/vitaliipsl/crappy/internal/tools"
 	"github.com/vitaliipsl/crappy/internal/tools/local"
-	corememory "github.com/vitaliipsl/crappy/memory"
 )
 
 func main() {

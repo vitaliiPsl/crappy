@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"log"
 
-	corememory "github.com/vitaliipsl/crappy/memory"
-	"github.com/vitaliipsl/crappy/memory/bm25"
-	jsonstore "github.com/vitaliipsl/crappy/memory/json"
-	"github.com/vitaliipsl/crappy/memory/pipeline"
+	"github.com/vitaliipsl/crappy-memory/index/bm25"
+	corememory "github.com/vitaliipsl/crappy-memory/memory"
+	"github.com/vitaliipsl/crappy-memory/pipeline"
+	jsonstore "github.com/vitaliipsl/crappy-memory/storage/json"
 )
 
 func Open(ctx context.Context, config Config) (*corememory.Memory, error) {

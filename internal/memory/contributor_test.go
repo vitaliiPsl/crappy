@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	corememory "github.com/vitaliipsl/crappy-memory/memory"
 	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/session/state"
 	"github.com/vitaliipsl/crappy/internal/workdir"
-	corememory "github.com/vitaliipsl/crappy/memory"
 )
 
 func TestContributorUsesCurrentWorkdirWithoutWriting(t *testing.T) {

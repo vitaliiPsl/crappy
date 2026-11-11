@@ -16,6 +16,8 @@ import (
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
+	corememory "github.com/vitaliipsl/crappy-memory/memory"
+	jsonstore "github.com/vitaliipsl/crappy-memory/storage/json"
 	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/token"
 	"github.com/vitaliipsl/crappy/internal/config"
@@ -23,8 +25,6 @@ import (
 	"github.com/vitaliipsl/crappy/internal/model"
 	"github.com/vitaliipsl/crappy/internal/settings"
 	"github.com/vitaliipsl/crappy/internal/tools"
-	corememory "github.com/vitaliipsl/crappy/memory"
-	jsonstore "github.com/vitaliipsl/crappy/memory/json"
 )
 
 func TestNewAssistantLoadsMemoryAcrossFreshSessionsAndRestarts(t *testing.T) {

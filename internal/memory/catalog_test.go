@@ -7,7 +7,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	corememory "github.com/vitaliipsl/crappy/memory"
+	corememory "github.com/vitaliipsl/crappy-memory/memory"
 )
 
 func TestCatalogBoundsPreviewsAndPaginatesWithinScope(t *testing.T) {

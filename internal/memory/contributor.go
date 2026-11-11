@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 
+	corememory "github.com/vitaliipsl/crappy-memory/memory"
 	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/internal/workdir"
-	corememory "github.com/vitaliipsl/crappy/memory"
 )
 
 var _ agent.Contributor = (*Contributor)(nil)
