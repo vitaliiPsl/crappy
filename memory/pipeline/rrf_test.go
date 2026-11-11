@@ -13,7 +13,7 @@ import (
 func TestRRFCombinesRankings(t *testing.T) {
 	t.Parallel()
 
-	fusion, err := pipeline.NewRRF(60)
+	fusion, err := pipeline.NewRRF()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func TestRRFCombinesRankings(t *testing.T) {
 func TestRRFBreaksTiesByID(t *testing.T) {
 	t.Parallel()
 
-	fusion, err := pipeline.NewRRF(0)
+	fusion, err := pipeline.NewRRF(pipeline.WithRankConstant(0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,11 +75,11 @@ func TestRRFBreaksTiesByID(t *testing.T) {
 func TestRRFValidatesConfigurationAndCancellation(t *testing.T) {
 	t.Parallel()
 
-	if fusion, err := pipeline.NewRRF(-1); fusion != nil || err == nil {
+	if fusion, err := pipeline.NewRRF(pipeline.WithRankConstant(-1)); fusion != nil || err == nil {
 		t.Fatalf("negative rank constant accepted: %v, %v", fusion, err)
 	}
 
-	fusion, err := pipeline.NewRRF(60)
+	fusion, err := pipeline.NewRRF()
 	if err != nil {
 		t.Fatal(err)
 	}

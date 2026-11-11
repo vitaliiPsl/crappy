@@ -449,7 +449,7 @@ func TestPipelineCombinesBM25AndVectorLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	merger, err := pipeline.NewRRF(60)
+	merger, err := pipeline.NewRRF()
 	if err != nil {
 		t.Fatal(err)
 	}

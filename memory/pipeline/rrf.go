@@ -12,18 +12,31 @@ import (
 
 var _ memory.Merger = (*RRF)(nil)
 
+const DefaultRankConstant = 60
+
+type RRFOption func(*RRF)
+
+func WithRankConstant(rankConstant int) RRFOption {
+	return func(rrf *RRF) {
+		rrf.rankConstant = rankConstant
+	}
+}
+
 type RRF struct {
 	rankConstant int
 }
 
-func NewRRF(rankConstant int) (*RRF, error) {
-	if rankConstant < 0 {
+func NewRRF(options ...RRFOption) (*RRF, error) {
+	rrf := &RRF{rankConstant: DefaultRankConstant}
+	for _, option := range options {
+		option(rrf)
+	}
+
+	if rrf.rankConstant < 0 {
 		return nil, errors.New("rank constant cannot be negative")
 	}
 
-	return &RRF{
-		rankConstant: rankConstant,
-	}, nil
+	return rrf, nil
 }
 
 func (f *RRF) Merge(ctx context.Context, lists [][]memory.SearchResult) ([]memory.SearchResult, error) {
