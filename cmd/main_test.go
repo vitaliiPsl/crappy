@@ -19,10 +19,11 @@ import (
 	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/token"
 	"github.com/vitaliipsl/crappy/internal/config"
+	"github.com/vitaliipsl/crappy/internal/memory"
 	"github.com/vitaliipsl/crappy/internal/model"
 	"github.com/vitaliipsl/crappy/internal/settings"
 	"github.com/vitaliipsl/crappy/internal/tools"
-	"github.com/vitaliipsl/crappy/memory"
+	corememory "github.com/vitaliipsl/crappy/memory"
 	jsonstore "github.com/vitaliipsl/crappy/memory/json"
 )
 
@@ -38,7 +39,7 @@ func TestNewAssistantLoadsMemoryAcrossFreshSessionsAndRestarts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	entry, err := memory.New(store).Create(ctx, "personal", "Prefer concise explanations")
+	entry, err := corememory.New(store).Create(ctx, "personal", "Prefer concise explanations")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,13 +56,27 @@ func TestNewAssistantLoadsMemoryAcrossFreshSessionsAndRestarts(t *testing.T) {
 	defer server.Close()
 
 	settings := settings.Settings{
-		SessionsPath: t.TempDir(), MemoryPath: path, Tools: tools.DefaultConfig(),
-		Providers: []model.Provider{{ID: "test", API: "openai", APIKey: "test-key", BaseURL: server.URL}},
+		SessionsPath: t.TempDir(),
+		Memory:       memory.Config{Path: path},
+		Tools:        tools.DefaultConfig(),
+		Providers: []model.Provider{
+			{
+				ID:      "test",
+				API:     "openai",
+				APIKey:  "test-key",
+				BaseURL: server.URL,
+			},
+		},
 	}
 	config := config.Config{ProviderID: "test", ModelID: "test-model"}
 
 	for range 2 {
-		h, app, err := newAssistant(ctx, settings, config, token.NewCharacterEstimator())
+		memories, err := memory.Open(ctx, settings.Memory)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		h, app, err := newAssistant(ctx, settings, config, token.NewCharacterEstimator(), memories)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -124,7 +139,7 @@ func TestNewAssistantSearchesSavedMemoriesAfterRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	entry, err := memory.New(store).Create(ctx, "personal", "Prefer concise explanations")
+	entry, err := corememory.New(store).Create(ctx, "personal", "Prefer concise explanations")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +173,7 @@ func TestNewAssistantSearchesSavedMemoriesAfterRestart(t *testing.T) {
 				continue
 			}
 
-			var results []memory.SearchResult
+			var results []corememory.SearchResult
 			if err := json.Unmarshal([]byte(item.Output), &results); err != nil {
 				t.Errorf("decode search results: %v; output=%s", err, item.Output)
 			} else if len(results) != 1 || results[0].Entry.ID != entry.ID || results[0].Entry.Content != entry.Content || results[0].Score <= 0 {
@@ -178,13 +193,31 @@ func TestNewAssistantSearchesSavedMemoriesAfterRestart(t *testing.T) {
 	defer server.Close()
 
 	settings := settings.Settings{
-		SessionsPath: t.TempDir(), MemoryPath: path, Tools: tools.DefaultConfig(),
-		Providers: []model.Provider{{ID: "test", API: "openai", APIKey: "test-key", BaseURL: server.URL}},
+		SessionsPath: t.TempDir(),
+		Memory:       memory.Config{Path: path},
+		Tools:        tools.DefaultConfig(),
+		Providers: []model.Provider{
+			{
+				ID:      "test",
+				API:     "openai",
+				APIKey:  "test-key",
+				BaseURL: server.URL,
+			},
+		},
 	}
 
-	config := config.Config{ProviderID: "test", ModelID: "test-model", Compaction: config.Compaction{ThresholdTokens: 1_000_000}}
+	config := config.Config{
+		ProviderID: "test",
+		ModelID:    "test-model",
+		Compaction: config.Compaction{ThresholdTokens: 1_000_000},
+	}
 	for range 2 {
-		h, app, err := newAssistant(ctx, settings, config, token.NewCharacterEstimator())
+		memories, err := memory.Open(ctx, settings.Memory)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		h, app, err := newAssistant(ctx, settings, config, token.NewCharacterEstimator(), memories)
 		if err != nil {
 			t.Fatal(err)
 		}

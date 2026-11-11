@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/vitaliiPsl/crappy-adk/x/retry"
+
+	"github.com/vitaliipsl/crappy/internal/memory"
 )
 
 func TestLoadFileSeedsDefaults(t *testing.T) {
@@ -33,8 +35,8 @@ func TestLoadFileSeedsDefaults(t *testing.T) {
 		t.Fatalf("SessionsPath = %q, want absolute path", loaded.SessionsPath)
 	}
 
-	if !filepath.IsAbs(loaded.MemoryPath) {
-		t.Fatalf("MemoryPath = %q, want absolute path", loaded.MemoryPath)
+	if !filepath.IsAbs(loaded.Memory.Path) {
+		t.Fatalf("Memory.Path = %q, want absolute path", loaded.Memory.Path)
 	}
 
 	data, err := os.ReadFile(path)
@@ -50,7 +52,7 @@ func TestLoadFileSeedsDefaults(t *testing.T) {
 		t.Fatalf("seeded settings = %q, want sessions path", data)
 	}
 
-	if !strings.Contains(string(data), "memory_path: "+DefaultMemoryPath) {
+	if !strings.Contains(string(data), "path: "+memory.DefaultPath) {
 		t.Fatalf("seeded settings = %q, want default memory path", data)
 	}
 
@@ -208,7 +210,8 @@ func TestLoadFileResolvesPathsRelativeToSettings(t *testing.T) {
 	writeSettings(t, path, `
 config_path: config/config.yaml
 sessions_path: data/sessions
-memory_path: data/memory.json
+memory:
+  path: data/memory.json
 providers:
   - id: provider
     api: openai
@@ -230,8 +233,8 @@ providers:
 	}
 
 	want = filepath.Join(directory, "data", "memory.json")
-	if loaded.MemoryPath != want {
-		t.Fatalf("MemoryPath = %q, want %q", loaded.MemoryPath, want)
+	if loaded.Memory.Path != want {
+		t.Fatalf("Memory.Path = %q, want %q", loaded.Memory.Path, want)
 	}
 }
 

@@ -3,6 +3,7 @@ package settings
 import (
 	"github.com/vitaliiPsl/crappy-adk/x/retry"
 
+	"github.com/vitaliipsl/crappy/internal/memory"
 	"github.com/vitaliipsl/crappy/internal/model"
 	"github.com/vitaliipsl/crappy/internal/tools"
 )
@@ -12,13 +13,12 @@ const (
 	DefaultPath         = "~/.crappy/settings.yaml"
 	DefaultConfigPath   = "~/.crappy/config.yaml"
 	DefaultSessionsPath = "~/.crappy/sessions"
-	DefaultMemoryPath   = "~/.crappy/memory.json"
 )
 
 type Settings struct {
 	ConfigPath   string           `yaml:"config_path,omitempty" validate:"required"`
 	SessionsPath string           `yaml:"sessions_path,omitempty" validate:"required"`
-	MemoryPath   string           `yaml:"memory_path,omitempty" validate:"required"`
+	Memory       memory.Config    `yaml:"memory"`
 	Tools        tools.Config     `yaml:"tools"`
 	Retry        retry.Config     `yaml:"retry"`
 	Providers    []model.Provider `yaml:"providers" validate:"min=1,unique=ID,dive"`
@@ -28,7 +28,7 @@ func defaults() Settings {
 	return Settings{
 		ConfigPath:   DefaultConfigPath,
 		SessionsPath: DefaultSessionsPath,
-		MemoryPath:   DefaultMemoryPath,
+		Memory:       memory.DefaultConfig(),
 		Tools:        tools.DefaultConfig(),
 		Retry:        retry.DefaultConfig(),
 		Providers: []model.Provider{

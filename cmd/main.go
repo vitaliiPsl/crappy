@@ -26,9 +26,6 @@ import (
 	"github.com/vitaliipsl/crappy/internal/tools"
 	"github.com/vitaliipsl/crappy/internal/tools/local"
 	corememory "github.com/vitaliipsl/crappy/memory"
-	"github.com/vitaliipsl/crappy/memory/bm25"
-	jsonstore "github.com/vitaliipsl/crappy/memory/json"
-	"github.com/vitaliipsl/crappy/memory/pipeline"
 )
 
 func main() {
@@ -57,7 +54,12 @@ func run(ctx context.Context) error {
 
 	estimator := token.NewCharacterEstimator()
 
-	h, app, err := newAssistant(ctx, settings, config, estimator)
+	memories, err := memory.Open(ctx, settings.Memory)
+	if err != nil {
+		return err
+	}
+
+	h, app, err := newAssistant(ctx, settings, config, estimator, memories)
 	if err != nil {
 		return err
 	}
@@ -83,6 +85,7 @@ func newAssistant(
 	settings settings.Settings,
 	config config.Config,
 	estimator token.Estimator,
+	memories *corememory.Memory,
 ) (*harness.Harness, *assistant.Assistant, error) {
 	models, err := model.NewRegistry(settings.Providers)
 	if err != nil {
@@ -95,7 +98,11 @@ func newAssistant(
 		model.Retry(settings.Retry),
 	)
 
-	compactor, err := compaction.NewCompactor(config.CompactionConfig(), modelResolver, compaction.WithEstimator(estimator))
+	compactor, err := compaction.NewCompactor(
+		config.CompactionConfig(),
+		modelResolver,
+		compaction.WithEstimator(estimator),
+	)
 	if err != nil {
 		return nil, nil, fmt.Errorf("create compactor: %w", err)
 	}
@@ -106,28 +113,6 @@ func newAssistant(
 	if err != nil {
 		return nil, nil, fmt.Errorf("open session storage: %w", err)
 	}
-
-	memoryStore, err := jsonstore.New(settings.MemoryPath)
-	if err != nil {
-		return nil, nil, fmt.Errorf("open memory storage: %w", err)
-	}
-
-	memoryIndex, err := bm25.New(ctx, memoryStore)
-	if err != nil {
-		return nil, nil, fmt.Errorf("initialize memory index: %w", err)
-	}
-
-	memoryPipeline, err := pipeline.New(memoryStore, pipeline.WithRetrievers(memoryIndex))
-	if err != nil {
-		return nil, nil, fmt.Errorf("create memory pipeline: %w", err)
-	}
-
-	memories := corememory.New(memoryStore,
-		corememory.WithIndexer(memoryIndex, func(_ context.Context, err error) {
-			log.Printf("memory indexing: %v", err)
-		}),
-		corememory.WithPipeline(memoryPipeline),
-	)
 
 	agents := agent.New(config.AgentConfig(), modelResolver,
 		agent.WithToolMiddleware(
