@@ -41,6 +41,15 @@ func (e *Executor) Execute(ctx context.Context, params execution.ExecuteParams) 
 
 	inputs := []kit.Message{input}
 	if found && latest.ExecutionID == params.ExecutionID {
+		var message kit.Message
+		if err := json.Unmarshal(latest.Payload, &message); err != nil {
+			return fmt.Errorf("decode latest message: %w", err)
+		}
+
+		if message.Role == kit.RoleModel && len(message.ToolCalls()) == 0 {
+			return nil
+		}
+
 		inputs = nil
 	}
 

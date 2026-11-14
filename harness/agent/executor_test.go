@@ -335,6 +335,32 @@ func TestExecutorResumesWithoutDuplicatingInputOrCompletedTools(t *testing.T) {
 	}
 }
 
+func TestExecutorResumesFinishedRunWithoutModelCall(t *testing.T) {
+	t.Parallel()
+
+	model := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
+		Message: kit.NewModelMessage(kit.NewTextContent("done")), FinishReason: kit.FinishReasonStop,
+	}})
+	store := entry.NewMemoryStore()
+	factory := New(kit.AgentConfig{}, staticModelResolver{model})
+	params := execution.ExecuteParams{
+		SessionID: "session", ExecutionID: "work", Input: agentInput(t, "hi"), Entries: store, Events: event.NewBroker("session", store),
+	}
+
+	for range 2 {
+		if err := NewExecutor(factory).Execute(context.Background(), params); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	model.AssertCallCount(t, 1)
+
+	entries, err := store.List(context.Background(), "session", 0)
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("history after resume = %+v, %v", entries, err)
+	}
+}
+
 func TestExecutorPublishesAgentEvents(t *testing.T) {
 	t.Parallel()
 
