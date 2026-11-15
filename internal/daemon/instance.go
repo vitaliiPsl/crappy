@@ -6,39 +6,22 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"sync"
 )
 
 var ErrRunning = errors.New("assistant is already running")
 
 type Instance struct {
 	directory string
-	lock      *os.File
-	once      sync.Once
-	err       error
+	lock      *Lock
 }
 
 func Acquire(directory string) (*Instance, error) {
-	if err := os.MkdirAll(directory, 0700); err != nil {
-		return nil, err
-	}
-
-	if err := os.Chmod(directory, 0700); err != nil {
-		return nil, err
-	}
-
-	file, err := os.OpenFile(filepath.Join(directory, "lock"), os.O_CREATE|os.O_RDWR, 0600)
+	lock, err := AcquireLock(filepath.Join(directory, "lock"))
 	if err != nil {
 		return nil, err
 	}
 
-	if err := lockFile(file); err != nil {
-		_ = file.Close()
-
-		return nil, err
-	}
-
-	return &Instance{directory: directory, lock: file}, nil
+	return &Instance{directory: directory, lock: lock}, nil
 }
 
 func (i *Instance) Listen() (net.Listener, error) {
@@ -62,7 +45,5 @@ func (i *Instance) Listen() (net.Listener, error) {
 }
 
 func (i *Instance) Close() error {
-	i.once.Do(func() { i.err = i.lock.Close() })
-
-	return i.err
+	return i.lock.Close()
 }

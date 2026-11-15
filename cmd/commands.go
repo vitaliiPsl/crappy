@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 
 	"github.com/vitaliipsl/crappy/internal/api"
 	"github.com/vitaliipsl/crappy/internal/client/tui"
@@ -38,7 +37,7 @@ func run(ctx context.Context, args []string) error {
 		return fmt.Errorf("load settings: %w", err)
 	}
 
-	directory := filepath.Join(settings.SessionsPath, ".daemon")
+	directory := daemonDirectory(settingsPath)
 	if command == commandServe {
 		return serve(ctx, settings, directory)
 	}
@@ -88,7 +87,7 @@ func openTerminal(ctx context.Context, manager *daemon.Manager, output io.Writer
 	client := api.NewClient(manager.SocketPath(), directory)
 	defer client.Close()
 
-	if err := tui.Run(ctx, client); err != nil {
+	if err := tui.Run(ctx, client, directory); err != nil {
 		return err
 	}
 

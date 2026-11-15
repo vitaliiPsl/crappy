@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/internal/api"
+	"github.com/vitaliipsl/crappy/internal/daemon"
 	"github.com/vitaliipsl/crappy/internal/memory"
 	"github.com/vitaliipsl/crappy/internal/model"
 	"github.com/vitaliipsl/crappy/internal/schedule"
@@ -32,6 +34,10 @@ func TestServeExposesAssistantOverSocket(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"sequence_number\":1,\"response\":{\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"id\":\"msg-test\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"done\"}]}]}}\n\n")
 	}))
+
+	if sessions, err := client.ListSessions(ctx); err != nil || len(sessions) != 0 {
+		t.Fatalf("daemon files appeared as conversations: %+v, %v", sessions, err)
+	}
 
 	session, err := client.CreateSession(ctx, "")
 	if err != nil {
@@ -134,7 +140,7 @@ func TestServeRunsScheduledWorkWithoutConnectedClient(t *testing.T) {
 		}
 	}
 
-	reconnected := api.NewClient(filepath.Join(root, "runtime", "socket"), root)
+	reconnected := api.NewClient(filepath.Join(root, "daemon", "socket"), root)
 	defer reconnected.Close()
 
 	scheduledID := waitForModelReply(ctx, t, reconnected, session.ID, "scheduled-complete")
@@ -149,6 +155,41 @@ func TestServeRunsScheduledWorkWithoutConnectedClient(t *testing.T) {
 
 	if calls.Load() != 4 {
 		t.Fatalf("model calls = %d", calls.Load())
+	}
+}
+
+func TestDaemonDirectoryFollowsSettingsFile(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	if got := daemonDirectory(filepath.Join(root, "settings.yaml")); got != filepath.Join(root, "daemon") {
+		t.Fatalf("daemon directory = %q", got)
+	}
+}
+
+func TestServeRejectsSharedSessionStorage(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+
+	root, client := newServeFixture(ctx, t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("ownership check called the model")
+	}))
+	otherDirectory := filepath.Join(root, "other-daemon")
+
+	configuration := settings.Settings{SessionsPath: filepath.Join(root, "sessions")}
+	if err := serve(ctx, configuration, otherDirectory); !errors.Is(err, daemon.ErrRunning) {
+		t.Fatalf("second daemon acquired the same session storage: %v", err)
+	}
+
+	instance, err := daemon.Acquire(otherDirectory)
+	if err != nil {
+		t.Fatalf("failed startup leaked daemon ownership: %v", err)
+	}
+
+	defer func() { _ = instance.Close() }()
+
+	if _, err := client.Health(ctx); err != nil {
+		t.Fatalf("existing daemon affected by second startup: %v", err)
 	}
 }
 
@@ -178,7 +219,7 @@ func newServeFixture(ctx context.Context, t *testing.T, handler http.Handler) (s
 		Tools:        tools.DefaultConfig(),
 		Providers:    []model.Provider{{ID: "test", API: "openai", APIKey: "test", BaseURL: server.URL}},
 	}
-	directory := filepath.Join(root, "runtime")
+	directory := daemonDirectory(filepath.Join(root, "settings.yaml"))
 	serverContext, stop := context.WithCancel(context.Background())
 
 	done := make(chan error, 1)

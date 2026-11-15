@@ -363,7 +363,7 @@ func TestEntryStoreRejectsUnsafeSessionID(t *testing.T) {
 	t.Parallel()
 
 	storage := openStorage(t, filepath.Join(t.TempDir(), "sessions"))
-	for _, sessionID := range []string{"", ".", "..", "nested/session", `nested\session`} {
+	for _, sessionID := range []string{"", ".", "..", ".daemon", "nested/session", `nested\session`} {
 		if _, err := storage.EntryStore().Append(
 			context.Background(),
 			sessionID,

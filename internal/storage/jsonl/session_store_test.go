@@ -22,6 +22,15 @@ func TestSessionStoreListsMaterializedSessions(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "sessions")
 	storage := openStorage(t, root)
 
+	internal := filepath.Join(root, ".daemon")
+	if err := os.Mkdir(internal, 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(internal, transcriptFilename), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+
 	states, err := storage.SessionStore().List(context.Background())
 	if err != nil {
 		t.Fatalf("List() error = %v", err)

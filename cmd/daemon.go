@@ -3,13 +3,19 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/vitaliipsl/crappy/internal/app"
 	"github.com/vitaliipsl/crappy/internal/daemon"
 	"github.com/vitaliipsl/crappy/internal/settings"
 )
+
+func daemonDirectory(settingsPath string) string {
+	return filepath.Join(filepath.Dir(settingsPath), "daemon")
+}
 
 func backgroundManager(directory, settingsPath string) (*daemon.Manager, error) {
 	executable, err := os.Executable()
@@ -47,6 +53,13 @@ func serve(ctx context.Context, configuration settings.Settings, directory strin
 	}
 
 	defer func() { _ = instance.Close() }()
+
+	storageLock, err := daemon.AcquireLock(filepath.Join(configuration.SessionsPath, ".lock"))
+	if err != nil {
+		return fmt.Errorf("acquire session storage: %w", err)
+	}
+
+	defer func() { _ = storageLock.Close() }()
 
 	runtime, err := app.Open(ctx, configuration)
 	if err != nil {

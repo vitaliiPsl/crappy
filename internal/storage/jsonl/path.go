@@ -56,7 +56,7 @@ func validateSessionID(sessionID string) error {
 		return errors.New("session ID is required")
 	}
 
-	if sessionID == "." || sessionID == ".." || strings.ContainsAny(sessionID, `/\`) {
+	if strings.HasPrefix(sessionID, ".") || strings.ContainsAny(sessionID, `/\`) {
 		return fmt.Errorf("invalid session ID %q", sessionID)
 	}
 
