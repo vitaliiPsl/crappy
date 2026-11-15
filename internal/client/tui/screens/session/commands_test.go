@@ -20,8 +20,8 @@ import (
 	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/session/state"
 	"github.com/vitaliipsl/crappy/harness/token"
-	"github.com/vitaliipsl/crappy/internal/assistant"
 	"github.com/vitaliipsl/crappy/internal/config"
+	"github.com/vitaliipsl/crappy/internal/service"
 	"github.com/vitaliipsl/crappy/internal/storage/jsonl"
 	"github.com/vitaliipsl/crappy/internal/workdir"
 )
@@ -39,7 +39,7 @@ func TestLoadModelReadsAssistantSelection(t *testing.T) {
 	h := harness.New(storage)
 	t.Cleanup(func() { _ = h.Shutdown(ctx) })
 
-	app := assistant.New(config.Config{
+	app := service.NewLocal(config.Config{
 		ProviderID: "provider",
 		ModelID:    "selected-model",
 		Generation: config.Generation{Thinking: "high"},
@@ -79,7 +79,7 @@ func TestLoadWorkdirReadsSessionState(t *testing.T) {
 	h := harness.New(storage)
 	t.Cleanup(func() { _ = h.Shutdown(ctx) })
 
-	app := assistant.New(config.Config{}, h, storage, nil, token.NewCharacterEstimator())
+	app := service.NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator())
 
 	screen := New(ctx, app, "")
 	defer screen.Close()
@@ -163,7 +163,7 @@ func TestExecuteReportsTerminalPersistenceFailure(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			screen := New(ctx, assistant.New(config.Config{}, h, storage, nil, token.NewCharacterEstimator()), opened.ID())
+			screen := New(ctx, service.NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator()), opened.ID())
 			defer screen.Close()
 
 			screen.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
@@ -197,7 +197,7 @@ func TestExecuteReportsTerminalPersistenceFailure(t *testing.T) {
 				t.Fatalf("terminal error = %v, want %v", screen.terminalErr, failure)
 			}
 
-			if _, err := screen.assistant.GetExecutionStatus(ctx, opened.ID(), accepted.executionID); !errors.Is(err, failure) {
+			if _, err := screen.service.GetExecutionStatus(ctx, opened.ID(), accepted.executionID); !errors.Is(err, failure) {
 				t.Fatalf("lookup lost terminal persistence failure: %v", err)
 			}
 
@@ -245,7 +245,7 @@ func TestWaitForExecutionStopsWhenScreenCloses(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	screen := New(ctx, assistant.New(config.Config{}, h, storage, nil, token.NewCharacterEstimator()), opened.ID())
+	screen := New(ctx, service.NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator()), opened.ID())
 	defer screen.Close()
 
 	accepted := screen.execute(kit.NewUserMessage(kit.NewTextContent("hello")))().(executeResultMsg)
@@ -261,7 +261,7 @@ func TestWaitForExecutionStopsWhenScreenCloses(t *testing.T) {
 		t.Fatalf("detaching reported an execution failure: %v", screen.terminalErr)
 	}
 
-	status, err := screen.assistant.GetExecutionStatus(ctx, opened.ID(), accepted.executionID)
+	status, err := screen.service.GetExecutionStatus(ctx, opened.ID(), accepted.executionID)
 	if err != nil || status != execution.Running {
 		t.Fatalf("detaching changed execution status: %q, %v", status, err)
 	}
@@ -276,7 +276,7 @@ func TestFirstSubmitCreatesSession(t *testing.T) {
 	h := harness.New(storage)
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 
-	screen := New(context.Background(), assistant.New(config.Config{}, h, storage, nil, token.NewCharacterEstimator()), "")
+	screen := New(context.Background(), service.NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator()), "")
 	defer screen.Close()
 
 	created := screen.submit("fix the compaction")().(createdMsg)

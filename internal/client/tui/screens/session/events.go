@@ -9,11 +9,11 @@ import (
 	"github.com/vitaliipsl/crappy/harness/compaction"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
-	"github.com/vitaliipsl/crappy/internal/assistant"
+	"github.com/vitaliipsl/crappy/internal/service"
 )
 
 func (m *Model) applyEvent(value event.Event) {
-	usage, err := assistant.UsageFromEvent(value)
+	usage, err := service.UsageFromEvent(value)
 	if err != nil {
 		m.notice = errorNotice(err)
 

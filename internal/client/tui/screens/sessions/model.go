@@ -7,7 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/vitaliipsl/crappy/harness/session/state"
-	"github.com/vitaliipsl/crappy/internal/assistant"
+	"github.com/vitaliipsl/crappy/internal/service"
 )
 
 var errCurrentSession = errors.New("current session cannot be deleted")
@@ -21,7 +21,7 @@ type Model struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	assistant *assistant.Assistant
+	service service.Service
 
 	currentID string
 	sessions  []state.Record
@@ -37,13 +37,13 @@ type Model struct {
 	height int
 }
 
-func New(ctx context.Context, app *assistant.Assistant, currentID string) *Model {
+func New(ctx context.Context, app service.Service, currentID string) *Model {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Model{
 		ctx:       ctx,
 		cancel:    cancel,
-		assistant: app,
+		service:   app,
 		currentID: currentID,
 		loading:   true,
 	}

@@ -10,8 +10,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/vitaliipsl/crappy/harness/execution"
-	"github.com/vitaliipsl/crappy/internal/assistant"
 	"github.com/vitaliipsl/crappy/internal/client/tui/components/hints"
+	"github.com/vitaliipsl/crappy/internal/service"
 )
 
 const (
@@ -122,7 +122,7 @@ func (m *Model) shortcutsView() string {
 	}
 
 	values = append(values,
-		hints.Hint{Key: "Ctrl+C", Label: "Quit"},
+		hints.Hint{Key: "Ctrl+C", Label: "Close"},
 	)
 
 	if m.running() {
@@ -191,7 +191,7 @@ func formatTokens(tokens int64) string {
 	}
 }
 
-func renderContext(report assistant.ContextReport) string {
+func renderContext(report service.ContextReport) string {
 	labelWidth := len("Instructions")
 
 	tokenWidth := max(
@@ -239,7 +239,7 @@ func renderContext(report assistant.ContextReport) string {
 
 	if len(report.Tools) > 0 {
 		tools := slices.Clone(report.Tools)
-		slices.SortStableFunc(tools, func(a, b assistant.ContextTool) int {
+		slices.SortStableFunc(tools, func(a, b service.ContextTool) int {
 			return cmp.Compare(b.Tokens, a.Tokens)
 		})
 

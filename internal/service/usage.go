@@ -1,4 +1,4 @@
-package assistant
+package service
 
 import (
 	"context"
@@ -12,12 +12,12 @@ import (
 	"github.com/vitaliipsl/crappy/harness/event"
 )
 
-func (a *Assistant) Usage(ctx context.Context, sessionID string) (kit.Usage, error) {
-	if _, err := a.GetSession(ctx, sessionID); err != nil {
+func (s *Local) Usage(ctx context.Context, sessionID string) (kit.Usage, error) {
+	if _, err := s.GetSession(ctx, sessionID); err != nil {
 		return kit.Usage{}, err
 	}
 
-	entries, err := a.entries.List(ctx, sessionID, 0)
+	entries, err := s.entries.List(ctx, sessionID, 0)
 	if err != nil {
 		return kit.Usage{}, err
 	}

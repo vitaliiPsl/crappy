@@ -1,4 +1,4 @@
-package assistant
+package service
 
 import (
 	"context"
@@ -38,7 +38,7 @@ func TestUsageReadsPersistedFactsWithoutChangingHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	app := New(config.Config{}, h, storage, nil, token.NewCharacterEstimator())
+	app := NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator())
 
 	events := event.NewBroker(sessionID, storage.EntryStore())
 	defer events.Close()

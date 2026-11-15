@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"bytes"
@@ -14,20 +14,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vitaliiPsl/crappy-adk/kit"
-
 	corememory "github.com/vitaliipsl/crappy-memory/memory"
 	jsonstore "github.com/vitaliipsl/crappy-memory/storage/json"
 	"github.com/vitaliipsl/crappy/harness/execution"
-	"github.com/vitaliipsl/crappy/harness/token"
-	"github.com/vitaliipsl/crappy/internal/config"
 	"github.com/vitaliipsl/crappy/internal/memory"
 	"github.com/vitaliipsl/crappy/internal/model"
 	"github.com/vitaliipsl/crappy/internal/settings"
 	"github.com/vitaliipsl/crappy/internal/tools"
+
+	"github.com/vitaliiPsl/crappy-adk/kit"
 )
 
-func TestNewAssistantLoadsMemoryAcrossFreshSessionsAndRestarts(t *testing.T) {
+func TestRuntimeLoadsMemoryAcrossFreshSessionsAndRestarts(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -56,6 +54,7 @@ func TestNewAssistantLoadsMemoryAcrossFreshSessionsAndRestarts(t *testing.T) {
 	defer server.Close()
 
 	settings := settings.Settings{
+		ConfigPath:   runtimeConfig(t),
 		SessionsPath: t.TempDir(),
 		Memory:       memory.Config{Path: path},
 		Tools:        tools.DefaultConfig(),
@@ -68,20 +67,16 @@ func TestNewAssistantLoadsMemoryAcrossFreshSessionsAndRestarts(t *testing.T) {
 			},
 		},
 	}
-	config := config.Config{ProviderID: "test", ModelID: "test-model"}
 
 	for range 2 {
-		memories, err := memory.Open(ctx, settings.Memory)
+		runtime, err := Open(ctx, settings)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		h, app, err := newAssistant(ctx, settings, config, token.NewCharacterEstimator(), memories)
-		if err != nil {
-			t.Fatal(err)
-		}
+		app := runtime.Service()
 
-		t.Cleanup(func() { _ = h.Shutdown(ctx) })
+		t.Cleanup(func() { _ = runtime.Shutdown(ctx) })
 
 		session, err := app.CreateSession(ctx, directory)
 		if err != nil {
@@ -115,7 +110,7 @@ func TestNewAssistantLoadsMemoryAcrossFreshSessionsAndRestarts(t *testing.T) {
 			t.Fatalf("memory tools = %d, want 6", memoryTools)
 		}
 
-		if err := h.Shutdown(ctx); err != nil {
+		if err := runtime.Shutdown(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -126,7 +121,7 @@ func TestNewAssistantLoadsMemoryAcrossFreshSessionsAndRestarts(t *testing.T) {
 	}
 }
 
-func TestNewAssistantSearchesSavedMemoriesAfterRestart(t *testing.T) {
+func TestRuntimeSearchesSavedMemoriesAfterRestart(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -193,6 +188,7 @@ func TestNewAssistantSearchesSavedMemoriesAfterRestart(t *testing.T) {
 	defer server.Close()
 
 	settings := settings.Settings{
+		ConfigPath:   runtimeConfig(t),
 		SessionsPath: t.TempDir(),
 		Memory:       memory.Config{Path: path},
 		Tools:        tools.DefaultConfig(),
@@ -206,23 +202,15 @@ func TestNewAssistantSearchesSavedMemoriesAfterRestart(t *testing.T) {
 		},
 	}
 
-	config := config.Config{
-		ProviderID: "test",
-		ModelID:    "test-model",
-		Compaction: config.Compaction{ThresholdTokens: 1_000_000},
-	}
 	for range 2 {
-		memories, err := memory.Open(ctx, settings.Memory)
+		runtime, err := Open(ctx, settings)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		h, app, err := newAssistant(ctx, settings, config, token.NewCharacterEstimator(), memories)
-		if err != nil {
-			t.Fatal(err)
-		}
+		app := runtime.Service()
 
-		t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
+		t.Cleanup(func() { _ = runtime.Shutdown(context.Background()) })
 
 		session, err := app.CreateSession(ctx, t.TempDir())
 		if err != nil {
@@ -238,7 +226,7 @@ func TestNewAssistantSearchesSavedMemoriesAfterRestart(t *testing.T) {
 			t.Fatalf("memory recall execution = %s, %v", status, err)
 		}
 
-		if err := h.Shutdown(ctx); err != nil {
+		if err := runtime.Shutdown(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -246,4 +234,15 @@ func TestNewAssistantSearchesSavedMemoriesAfterRestart(t *testing.T) {
 	if requests.Load() != 4 || searches.Load() != 2 {
 		t.Fatalf("model requests=%d, memory searches=%d; want 4 and 2", requests.Load(), searches.Load())
 	}
+}
+
+func runtimeConfig(t *testing.T) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("provider_id: test\nmodel_id: test-model\ncompaction:\n  threshold_tokens: 1000000\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	return path
 }

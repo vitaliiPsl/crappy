@@ -10,7 +10,7 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
 	"github.com/vitaliipsl/crappy/harness/event"
-	"github.com/vitaliipsl/crappy/internal/assistant"
+	"github.com/vitaliipsl/crappy/internal/service"
 	"github.com/vitaliipsl/crappy/internal/workdir"
 )
 
@@ -18,7 +18,8 @@ const subscriptionStartEntryID uint64 = 0
 
 type modelMsg struct {
 	target *Model
-	model  assistant.ModelSelection
+	model  service.ModelSelection
+	err    error
 }
 
 func (modelMsg) Broadcast() {}
@@ -35,7 +36,7 @@ func (workdirMsg) Broadcast() {}
 type contextMsg struct {
 	target    *Model
 	sessionID string
-	data      assistant.ContextReport
+	data      service.ContextReport
 	err       error
 }
 
@@ -92,7 +93,9 @@ func (cancelResultMsg) Broadcast() {}
 
 func (m *Model) loadModel() tea.Cmd {
 	return func() tea.Msg {
-		return modelMsg{target: m, model: m.assistant.GetModel()}
+		model, err := m.service.GetModel(m.ctx)
+
+		return modelMsg{target: m, model: model, err: err}
 	}
 }
 
@@ -101,7 +104,7 @@ func (m *Model) loadWorkdir() tea.Cmd {
 
 	return func() tea.Msg {
 		if sessionID != "" {
-			record, err := m.assistant.GetSession(m.ctx, sessionID)
+			record, err := m.service.GetSession(m.ctx, sessionID)
 			if err != nil {
 				return workdirMsg{target: m, sessionID: sessionID, err: err}
 			}
@@ -124,7 +127,7 @@ func (m *Model) loadWorkdir() tea.Cmd {
 
 func (m *Model) subscribe() tea.Cmd {
 	return func() tea.Msg {
-		subscription, err := m.assistant.Subscribe(m.ctx, m.sessionID, subscriptionStartEntryID)
+		subscription, err := m.service.Subscribe(m.ctx, m.sessionID, subscriptionStartEntryID)
 
 		return subscribedMsg{target: m, subscription: subscription, err: err}
 	}
@@ -151,7 +154,7 @@ func (m *Model) waitForEvent() tea.Cmd {
 
 func (m *Model) create(input kit.Message) tea.Cmd {
 	return func() tea.Msg {
-		opened, err := m.assistant.CreateSession(m.ctx, "")
+		opened, err := m.service.CreateSession(m.ctx, "")
 		if err != nil {
 			return createdMsg{target: m, err: err}
 		}
@@ -165,7 +168,7 @@ func (m *Model) execute(input kit.Message) tea.Cmd {
 	text := kit.ContentsText(input.Content)
 
 	return func() tea.Msg {
-		id, err := m.assistant.Execute(m.ctx, sessionID, input.Content...)
+		id, err := m.service.Execute(m.ctx, sessionID, input.Content...)
 
 		return executeResultMsg{target: m, executionID: id, input: text, err: err}
 	}
@@ -175,7 +178,7 @@ func (m *Model) waitForExecution(executionID string) tea.Cmd {
 	sessionID := m.sessionID
 
 	return func() tea.Msg {
-		_, err := m.assistant.WaitExecution(m.ctx, sessionID, executionID)
+		_, err := m.service.WaitExecution(m.ctx, sessionID, executionID)
 
 		return executionWaitMsg{target: m, err: err}
 	}
@@ -183,7 +186,7 @@ func (m *Model) waitForExecution(executionID string) tea.Cmd {
 
 func (m *Model) cancelExecution(executionID string) tea.Cmd {
 	return func() tea.Msg {
-		err := m.assistant.Cancel(m.ctx, m.sessionID, executionID)
+		err := m.service.Cancel(m.ctx, m.sessionID, executionID)
 
 		return cancelResultMsg{target: m, err: err}
 	}

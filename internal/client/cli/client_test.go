@@ -16,7 +16,7 @@ import (
 	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/token"
-	"github.com/vitaliipsl/crappy/internal/assistant"
+	"github.com/vitaliipsl/crappy/internal/service"
 	"github.com/vitaliipsl/crappy/internal/storage/jsonl"
 )
 
@@ -50,7 +50,7 @@ func TestClientRunsSession(t *testing.T) {
 			var output bytes.Buffer
 
 			err = New(
-				assistant.New(config.Config{}, h, storage, nil, token.NewCharacterEstimator()),
+				service.NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator()),
 				"",
 				strings.NewReader("hi\n"),
 				&output,
@@ -83,7 +83,7 @@ func TestClientReportsFailedExecution(t *testing.T) {
 	var output bytes.Buffer
 
 	err = New(
-		assistant.New(config.Config{}, h, storage, nil, token.NewCharacterEstimator()),
+		service.NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator()),
 		"",
 		strings.NewReader("hi\n"),
 		&output,

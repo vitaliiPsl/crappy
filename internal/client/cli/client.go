@@ -14,13 +14,13 @@ import (
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/session/state"
-	"github.com/vitaliipsl/crappy/internal/assistant"
+	"github.com/vitaliipsl/crappy/internal/service"
 )
 
 const prompt = "> "
 
 type Client struct {
-	assistant *assistant.Assistant
+	service   service.Service
 	sessionID string
 	input     io.Reader
 	output    io.Writer
@@ -32,13 +32,13 @@ type input struct {
 }
 
 func New(
-	app *assistant.Assistant,
+	app service.Service,
 	sessionID string,
 	input io.Reader,
 	output io.Writer,
 ) *Client {
 	return &Client{
-		assistant: app,
+		service:   app,
 		sessionID: sessionID,
 		input:     input,
 		output:    output,
@@ -52,16 +52,16 @@ func (c *Client) Run(ctx context.Context) error {
 	)
 
 	if c.sessionID == "" {
-		opened, err = c.assistant.CreateSession(ctx, "")
+		opened, err = c.service.CreateSession(ctx, "")
 	} else {
-		opened, err = c.assistant.GetSession(ctx, c.sessionID)
+		opened, err = c.service.GetSession(ctx, c.sessionID)
 	}
 
 	if err != nil {
 		return fmt.Errorf("open session: %w", err)
 	}
 
-	subscription, err := c.assistant.Subscribe(ctx, opened.ID, 0)
+	subscription, err := c.service.Subscribe(ctx, opened.ID, 0)
 	if err != nil {
 		return fmt.Errorf("subscribe: %w", err)
 	}
@@ -112,7 +112,7 @@ func (c *Client) Run(ctx context.Context) error {
 				continue
 			}
 
-			submitted, err := c.assistant.Execute(ctx, opened.ID, kit.NewTextContent(text))
+			submitted, err := c.service.Execute(ctx, opened.ID, kit.NewTextContent(text))
 			if err != nil {
 				return fmt.Errorf("execute: %w", err)
 			}

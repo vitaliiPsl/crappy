@@ -16,8 +16,8 @@ import (
 	compactionexec "github.com/vitaliipsl/crappy/harness/compaction/executor"
 	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/token"
-	"github.com/vitaliipsl/crappy/internal/assistant"
 	"github.com/vitaliipsl/crappy/internal/config"
+	"github.com/vitaliipsl/crappy/internal/service"
 	"github.com/vitaliipsl/crappy/internal/storage/jsonl"
 )
 
@@ -69,7 +69,7 @@ func TestUsageRebuildsFromJournal(t *testing.T) {
 	}
 
 	for range 2 {
-		screen := New(ctx, assistant.New(config.Config{}, h, storage, nil, token.NewCharacterEstimator()), opened.ID())
+		screen := New(ctx, service.NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator()), opened.ID())
 		_, next := screen.Update(screen.subscribe()())
 
 		for range records {

@@ -1,4 +1,4 @@
-package assistant
+package service
 
 import (
 	"context"
@@ -42,7 +42,7 @@ func TestGetSessionReadsStateWithoutConstructingRuntime(t *testing.T) {
 	h := harness.New(storage)
 	t.Cleanup(func() { _ = h.Shutdown(ctx) })
 
-	app := New(config.Config{}, h, storage, nil, token.NewCharacterEstimator())
+	app := NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator())
 
 	if record, err := app.GetSession(ctx, "saved"); err != nil || record.ID != "saved" {
 		t.Fatalf("session query = %+v, %v", record, err)
@@ -74,7 +74,7 @@ func TestSessionPersistsWorkdirAtCreationAndPreservesItOnResume(t *testing.T) {
 	h := harness.New(storage)
 	t.Cleanup(func() { _ = h.Shutdown(ctx) })
 
-	app := New(config.Config{}, h, storage, nil, token.NewCharacterEstimator())
+	app := NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator())
 
 	t.Chdir(t.TempDir())
 
@@ -135,7 +135,7 @@ func TestSessionPersistsWorkdirAtCreationAndPreservesItOnResume(t *testing.T) {
 	restarted := harness.New(storage)
 	t.Cleanup(func() { _ = restarted.Shutdown(ctx) })
 
-	app = New(config.Config{}, restarted, storage, nil, token.NewCharacterEstimator())
+	app = NewLocal(config.Config{}, restarted, storage, nil, token.NewCharacterEstimator())
 
 	for _, test := range []struct {
 		id      string

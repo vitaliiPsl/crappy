@@ -5,14 +5,14 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/vitaliipsl/crappy/internal/assistant"
 	"github.com/vitaliipsl/crappy/internal/client/tui/navigation"
 	"github.com/vitaliipsl/crappy/internal/client/tui/routes"
 	sessionscreen "github.com/vitaliipsl/crappy/internal/client/tui/screens/session"
 	sessionsscreen "github.com/vitaliipsl/crappy/internal/client/tui/screens/sessions"
+	"github.com/vitaliipsl/crappy/internal/service"
 )
 
-func Run(ctx context.Context, app *assistant.Assistant) error {
+func Run(ctx context.Context, app service.Service) error {
 	sessions, err := app.ListSessions(ctx)
 	if err != nil {
 		return err

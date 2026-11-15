@@ -18,6 +18,12 @@ func (m *Model) handleModel(message modelMsg) {
 		return
 	}
 
+	if message.err != nil {
+		m.notice = errorNotice(message.err)
+
+		return
+	}
+
 	m.model = message.model
 }
 

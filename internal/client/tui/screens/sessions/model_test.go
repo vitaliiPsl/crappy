@@ -15,9 +15,9 @@ import (
 	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/session/state"
 	"github.com/vitaliipsl/crappy/harness/token"
-	"github.com/vitaliipsl/crappy/internal/assistant"
 	"github.com/vitaliipsl/crappy/internal/client/tui/navigation"
 	"github.com/vitaliipsl/crappy/internal/client/tui/routes"
+	"github.com/vitaliipsl/crappy/internal/service"
 )
 
 func TestLoadSelectsCurrentSession(t *testing.T) {
@@ -187,7 +187,7 @@ func testModel(t *testing.T, currentID string, sessions []state.Record) *Model {
 	h := harness.New(testStorage{store})
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 
-	return New(context.Background(), assistant.New(config.Config{}, h, testStorage{store}, nil, token.NewCharacterEstimator()), currentID)
+	return New(context.Background(), service.NewLocal(config.Config{}, h, testStorage{store}, nil, token.NewCharacterEstimator()), currentID)
 }
 
 type testStorage struct{ state.Store }

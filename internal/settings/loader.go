@@ -2,6 +2,7 @@ package settings
 
 import (
 	"bytes"
+	"cmp"
 	"errors"
 	"fmt"
 	"io"
@@ -15,10 +16,14 @@ import (
 
 var validatorInstance = validator.New(validator.WithRequiredStructEnabled())
 
+func Path() (string, error) {
+	return utils.ResolvePath(cmp.Or(os.Getenv(EnvPath), DefaultPath))
+}
+
 func Load() (Settings, error) {
-	path := os.Getenv(EnvPath)
-	if path == "" {
-		path = DefaultPath
+	path, err := Path()
+	if err != nil {
+		return Settings{}, err
 	}
 
 	return LoadFile(path)

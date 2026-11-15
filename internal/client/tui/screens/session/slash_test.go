@@ -18,10 +18,10 @@ import (
 	compactionexec "github.com/vitaliipsl/crappy/harness/compaction/executor"
 	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/token"
-	"github.com/vitaliipsl/crappy/internal/assistant"
 	"github.com/vitaliipsl/crappy/internal/client/tui/navigation"
 	"github.com/vitaliipsl/crappy/internal/client/tui/routes"
 	"github.com/vitaliipsl/crappy/internal/config"
+	"github.com/vitaliipsl/crappy/internal/service"
 	"github.com/vitaliipsl/crappy/internal/storage/jsonl"
 )
 
@@ -122,7 +122,7 @@ func TestContextCommandShowsLocalSnapshotsWhileExecutionIsActive(t *testing.T) {
 	h := harness.New(storage, harness.WithExecutor(agent.ExecutorName, agent.NewExecutor(agents)))
 	t.Cleanup(func() { _ = h.Shutdown(ctx) })
 
-	app := assistant.New(config.Config{}, h, storage, agents, token.NewCharacterEstimator())
+	app := service.NewLocal(config.Config{}, h, storage, agents, token.NewCharacterEstimator())
 
 	created, err := app.CreateSession(ctx, "")
 	if err != nil {
@@ -209,7 +209,7 @@ func TestContextCommandRequiresExistingSession(t *testing.T) {
 	h := harness.New(storage)
 	t.Cleanup(func() { _ = h.Shutdown(ctx) })
 
-	app := assistant.New(config.Config{}, h, storage, nil, token.NewCharacterEstimator())
+	app := service.NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator())
 
 	screen := New(ctx, app, "")
 	defer screen.Close()
@@ -258,7 +258,7 @@ func TestCompactCommandUsesNormalExecutionLifecycle(t *testing.T) {
 	))
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 
-	app := assistant.New(config.Config{}, h, storage, nil, token.NewCharacterEstimator())
+	app := service.NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator())
 
 	screen := New(ctx, app, "")
 	defer screen.Close()

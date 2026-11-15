@@ -1,4 +1,4 @@
-package assistant
+package service
 
 import (
 	"context"
@@ -62,16 +62,16 @@ type ContextTool struct {
 	Tokens int `json:"tokens"`
 }
 
-func (a *Assistant) Context(ctx context.Context, sessionID string) (ContextReport, error) {
-	opened, err := a.harness.Session(ctx, sessionID)
+func (s *Local) Context(ctx context.Context, sessionID string) (ContextReport, error) {
+	opened, err := s.harness.Session(ctx, sessionID)
 	if err != nil {
 		return ContextReport{}, err
 	}
 
-	built, err := a.agents.Build(ctx, agent.BuildRequest{
+	built, err := s.agents.Build(ctx, agent.BuildRequest{
 		SessionID: opened.ID(),
 		State:     opened.State(),
-		History:   agent.NewHistory(opened.ID(), "", a.entries, opened),
+		History:   agent.NewHistory(opened.ID(), "", s.entries, opened),
 	})
 	if err != nil {
 		return ContextReport{}, err
@@ -90,14 +90,14 @@ func (a *Assistant) Context(ctx context.Context, sessionID string) (ContextRepor
 		result.Instructions = append(result.Instructions, ContextInstruction{
 			Source: instruction.Source,
 			Text:   text,
-			Tokens: a.estimator.Estimate(text),
+			Tokens: s.estimator.Estimate(text),
 		})
 	}
 
 	for _, message := range resolved.Messages {
 		result.Messages = append(result.Messages, ContextMessage{
 			Message: message,
-			Tokens:  token.EstimateMessage(a.estimator, message),
+			Tokens:  token.EstimateMessage(s.estimator, message),
 		})
 	}
 
@@ -105,7 +105,7 @@ func (a *Assistant) Context(ctx context.Context, sessionID string) (ContextRepor
 		definition := tool.Definition()
 		result.Tools = append(result.Tools, ContextTool{
 			ToolDefinition: definition,
-			Tokens:         token.EstimateTool(a.estimator, definition),
+			Tokens:         token.EstimateTool(s.estimator, definition),
 		})
 	}
 

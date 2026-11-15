@@ -1,4 +1,4 @@
-package assistant
+package service
 
 import (
 	"context"
@@ -24,14 +24,19 @@ func TestGetModelReturnsSerializableSelectionWithoutASession(t *testing.T) {
 	h := harness.New(storage)
 	t.Cleanup(func() { _ = h.Shutdown(ctx) })
 
-	app := New(config.Config{
+	app := NewLocal(config.Config{
 		ProviderID:   "provider",
 		ModelID:      "model",
 		Generation:   config.Generation{Thinking: "high"},
 		Instructions: "Internal instructions",
 	}, h, storage, nil, token.NewCharacterEstimator())
 
-	data, err := json.Marshal(app.GetModel())
+	selection, err := app.GetModel(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := json.Marshal(selection)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -51,7 +51,7 @@ func (m *Model) showContext() tea.Cmd {
 	sessionID := m.sessionID
 
 	return func() tea.Msg {
-		data, err := m.assistant.Context(m.ctx, sessionID)
+		data, err := m.service.Context(m.ctx, sessionID)
 
 		return contextMsg{target: m, sessionID: sessionID, data: data, err: err}
 	}
@@ -65,7 +65,7 @@ func (m *Model) compact() tea.Cmd {
 	sessionID := m.sessionID
 
 	return func() tea.Msg {
-		id, err := m.assistant.Compact(m.ctx, sessionID)
+		id, err := m.service.Compact(m.ctx, sessionID)
 
 		return executeResultMsg{target: m, executionID: id, err: err}
 	}
@@ -79,7 +79,7 @@ func (m *Model) resume() tea.Cmd {
 	sessionID := m.sessionID
 
 	return func() tea.Msg {
-		id, err := m.assistant.Resume(m.ctx, sessionID)
+		id, err := m.service.Resume(m.ctx, sessionID)
 
 		return executeResultMsg{target: m, executionID: id, err: err}
 	}

@@ -19,8 +19,8 @@ import (
 	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/token"
-	"github.com/vitaliipsl/crappy/internal/assistant"
 	"github.com/vitaliipsl/crappy/internal/config"
+	"github.com/vitaliipsl/crappy/internal/service"
 	"github.com/vitaliipsl/crappy/internal/storage/jsonl"
 )
 
@@ -255,7 +255,7 @@ func TestQueueRestoresResumesAndCancelsThroughAssistant(t *testing.T) {
 	)))
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 
-	app := assistant.New(config.Config{}, h, storage, nil, token.NewCharacterEstimator())
+	app := service.NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator())
 
 	screen := New(ctx, app, opened.ID())
 	defer screen.Close()

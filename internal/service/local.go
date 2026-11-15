@@ -1,4 +1,4 @@
-package assistant
+package service
 
 import (
 	"github.com/vitaliipsl/crappy/harness"
@@ -9,7 +9,7 @@ import (
 	"github.com/vitaliipsl/crappy/internal/config"
 )
 
-type Assistant struct {
+type Local struct {
 	config    config.Config
 	harness   *harness.Harness
 	sessions  state.Store
@@ -18,8 +18,8 @@ type Assistant struct {
 	estimator token.Estimator
 }
 
-func New(config config.Config, harness *harness.Harness, store harness.Store, agents *agent.Factory, estimator token.Estimator) *Assistant {
-	return &Assistant{
+func NewLocal(config config.Config, harness *harness.Harness, store harness.Store, agents *agent.Factory, estimator token.Estimator) *Local {
+	return &Local{
 		config:    config,
 		harness:   harness,
 		sessions:  store.SessionStore(),

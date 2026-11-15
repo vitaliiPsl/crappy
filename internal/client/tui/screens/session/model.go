@@ -9,17 +9,17 @@ import (
 
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
-	"github.com/vitaliipsl/crappy/internal/assistant"
 	"github.com/vitaliipsl/crappy/internal/client/tui/commands"
 	"github.com/vitaliipsl/crappy/internal/client/tui/components/composer"
 	"github.com/vitaliipsl/crappy/internal/client/tui/components/transcript"
+	"github.com/vitaliipsl/crappy/internal/service"
 )
 
 type Model struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	assistant    *assistant.Assistant
+	service      service.Service
 	subscription event.Subscription
 	commands     *commands.Registry
 
@@ -32,7 +32,7 @@ type Model struct {
 	terminalErr    error
 
 	sessionUsage kit.Usage
-	model        assistant.ModelSelection
+	model        service.ModelSelection
 
 	transcript transcript.Model
 	composer   composer.Model
@@ -44,13 +44,13 @@ type Model struct {
 	queueOffset   int
 }
 
-func New(ctx context.Context, app *assistant.Assistant, sessionID string) *Model {
+func New(ctx context.Context, app service.Service, sessionID string) *Model {
 	ctx, cancel := context.WithCancel(ctx)
 
 	model := &Model{
 		ctx:        ctx,
 		cancel:     cancel,
-		assistant:  app,
+		service:    app,
 		sessionID:  sessionID,
 		transcript: transcript.New(),
 		composer:   composer.New(),

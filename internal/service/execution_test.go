@@ -1,4 +1,4 @@
-package assistant
+package service
 
 import (
 	"context"
@@ -50,7 +50,7 @@ func TestExecuteAndCancelUseHarnessExecutionLifetime(t *testing.T) {
 		})))
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 
-	app := New(config.Config{}, h, storage, nil, token.NewCharacterEstimator())
+	app := NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator())
 
 	created, err := app.CreateSession(ctx, t.TempDir())
 	if err != nil {
@@ -151,7 +151,7 @@ func TestExecutionObservationRestoresOutcomeAfterRestart(t *testing.T) {
 		})))
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 
-	app := New(config.Config{}, h, storage, nil, token.NewCharacterEstimator())
+	app := NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator())
 
 	created, err := app.CreateSession(ctx, t.TempDir())
 	if err != nil {
@@ -185,7 +185,7 @@ func TestExecutionObservationRestoresOutcomeAfterRestart(t *testing.T) {
 	restarted := harness.New(storage)
 	t.Cleanup(func() { _ = restarted.Shutdown(context.Background()) })
 
-	app = New(config.Config{}, restarted, storage, nil, token.NewCharacterEstimator())
+	app = NewLocal(config.Config{}, restarted, storage, nil, token.NewCharacterEstimator())
 
 	loaded, err := app.GetExecutionStatus(ctx, created.ID, id)
 	if err != nil || loaded != before {
@@ -215,7 +215,7 @@ func TestOperationsRequireAnExistingSession(t *testing.T) {
 	h := harness.New(storage)
 	t.Cleanup(func() { _ = h.Shutdown(ctx) })
 
-	app := New(config.Config{}, h, storage, nil, token.NewCharacterEstimator())
+	app := NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator())
 
 	operations := []func() error{
 		func() error {
@@ -291,7 +291,7 @@ func TestRestartRestoresQueueUntilResume(t *testing.T) {
 	)))
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 
-	app := New(config.Config{}, h, storage, nil, token.NewCharacterEstimator())
+	app := NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator())
 
 	created, err := app.CreateSession(ctx, t.TempDir())
 	if err != nil {
@@ -343,7 +343,7 @@ func TestRestartRestoresQueueUntilResume(t *testing.T) {
 	)))
 	t.Cleanup(func() { _ = restarted.Shutdown(context.Background()) })
 
-	app = New(config.Config{}, restarted, storage, nil, token.NewCharacterEstimator())
+	app = NewLocal(config.Config{}, restarted, storage, nil, token.NewCharacterEstimator())
 
 	for i, id := range submitted {
 		want := execution.Queued
