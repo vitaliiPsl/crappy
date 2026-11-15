@@ -7,6 +7,7 @@ import (
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/session"
 	"github.com/vitaliipsl/crappy/harness/session/state"
+	"github.com/vitaliipsl/crappy/internal/schedule"
 )
 
 type Health struct {
@@ -23,6 +24,9 @@ type ResponseError struct {
 }
 
 var serviceErrors = map[string]error{
+	"schedule_not_found":      schedule.ErrNotFound,
+	"schedule_not_pending":    schedule.ErrNotPending,
+	"invalid_schedule":        schedule.ErrInvalid,
 	"session_required":        harness.ErrSessionRequired,
 	"session_not_found":       state.ErrNotFound,
 	"execution_not_active":    session.ErrExecutionNotActive,

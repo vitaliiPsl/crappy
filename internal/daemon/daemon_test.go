@@ -70,7 +70,7 @@ func newServerFixture(t *testing.T, root string, executor execution.Executor) *s
 	}
 
 	h := harness.New(storage, harness.WithExecutor(agent.ExecutorName, executor))
-	app := service.NewLocal(config.Config{ProviderID: "test", ModelID: "test-model"}, h, storage, nil, token.NewCharacterEstimator())
+	app := service.NewLocal(config.Config{ProviderID: "test", ModelID: "test-model"}, h, storage, nil, token.NewCharacterEstimator(), nil)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	fixture := &serverFixture{

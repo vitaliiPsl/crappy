@@ -19,6 +19,7 @@ import (
 	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/internal/memory"
 	"github.com/vitaliipsl/crappy/internal/model"
+	"github.com/vitaliipsl/crappy/internal/schedule"
 	"github.com/vitaliipsl/crappy/internal/settings"
 	"github.com/vitaliipsl/crappy/internal/tools"
 
@@ -56,6 +57,7 @@ func TestRuntimeLoadsMemoryAcrossFreshSessionsAndRestarts(t *testing.T) {
 	settings := settings.Settings{
 		ConfigPath:   runtimeConfig(t),
 		SessionsPath: t.TempDir(),
+		Scheduling:   schedule.DefaultConfig(),
 		Memory:       memory.Config{Path: path},
 		Tools:        tools.DefaultConfig(),
 		Providers: []model.Provider{
@@ -190,6 +192,7 @@ func TestRuntimeSearchesSavedMemoriesAfterRestart(t *testing.T) {
 	settings := settings.Settings{
 		ConfigPath:   runtimeConfig(t),
 		SessionsPath: t.TempDir(),
+		Scheduling:   schedule.DefaultConfig(),
 		Memory:       memory.Config{Path: path},
 		Tools:        tools.DefaultConfig(),
 		Providers: []model.Provider{

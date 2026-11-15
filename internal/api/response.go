@@ -31,8 +31,10 @@ func writeError(w http.ResponseWriter, err error) {
 
 	status := http.StatusInternalServerError
 	switch response.Code {
-	case "session_not_found":
+	case "session_not_found", "schedule_not_found":
 		status = http.StatusNotFound
+	case "schedule_not_pending":
+		status = http.StatusConflict
 	case "stopping":
 		status = http.StatusServiceUnavailable
 	case "":

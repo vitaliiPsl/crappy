@@ -11,6 +11,7 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/x/retry"
 
 	"github.com/vitaliipsl/crappy/internal/memory"
+	"github.com/vitaliipsl/crappy/internal/schedule"
 )
 
 func TestLoadFileSeedsDefaults(t *testing.T) {
@@ -68,6 +69,10 @@ func TestLoadFileSeedsDefaults(t *testing.T) {
 		t.Fatalf("retry = %+v, want %+v", got, want)
 	}
 
+	if loaded.Scheduling != schedule.DefaultConfig() {
+		t.Fatalf("schedule poll interval = %v", loaded.Scheduling.PollInterval)
+	}
+
 	if !strings.Contains(string(data), "max_attempts:") {
 		t.Fatalf("seeded settings = %q, want retry settings", data)
 	}
@@ -87,6 +92,8 @@ func TestLoadFile(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "settings.yaml")
 	writeSettings(t, path, `
+scheduling:
+  poll_interval: 250ms
 providers:
   - id: work
     api: openai
@@ -109,6 +116,10 @@ providers:
 		t.Fatalf("tool timeout = %v, want %v", got, want)
 	}
 
+	if got, want := loaded.Scheduling.PollInterval, 250*time.Millisecond; got != want {
+		t.Fatalf("schedule poll interval = %v, want %v", got, want)
+	}
+
 	provider := loaded.Providers[0]
 	if got, want := provider.ID, "work"; got != want {
 		t.Fatalf("provider ID = %q, want %q", got, want)
@@ -124,6 +135,21 @@ providers:
 
 	if got, want := provider.APIKey, "work-key"; got != want {
 		t.Fatalf("provider API key = %q, want %q", got, want)
+	}
+}
+
+func TestLoadFileRejectsInvalidSchedulePollInterval(t *testing.T) {
+	t.Parallel()
+
+	for _, interval := range []string{"0s", "-1s", "invalid"} {
+		t.Run(interval, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "settings.yaml")
+			writeSettings(t, path, "scheduling:\n  poll_interval: "+interval+"\n")
+
+			if _, err := LoadFile(path); err == nil {
+				t.Fatal("accepted invalid schedule poll interval")
+			}
+		})
 	}
 }
 

@@ -2,10 +2,12 @@ package service
 
 import (
 	"context"
+	"time"
 
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/session/state"
+	"github.com/vitaliipsl/crappy/internal/schedule"
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
 )
@@ -22,6 +24,11 @@ type Service interface {
 	Compact(context.Context, string) (string, error)
 	GetExecutionStatus(context.Context, string, string) (execution.Status, error)
 	WaitExecution(context.Context, string, string) (execution.Status, error)
+
+	CreateSchedule(context.Context, string, string, time.Time) (schedule.Record, error)
+	GetSchedule(context.Context, string, string) (schedule.Record, error)
+	ListSchedules(context.Context, string) ([]schedule.Record, error)
+	CancelSchedule(context.Context, string, string) (schedule.Record, error)
 
 	GetModel(context.Context) (ModelSelection, error)
 	Context(context.Context, string) (ContextReport, error)

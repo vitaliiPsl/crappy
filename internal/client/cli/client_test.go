@@ -50,7 +50,7 @@ func TestClientRunsSession(t *testing.T) {
 			var output bytes.Buffer
 
 			err = New(
-				service.NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator()),
+				service.NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator(), nil),
 				"",
 				strings.NewReader("hi\n"),
 				&output,
@@ -83,7 +83,7 @@ func TestClientReportsFailedExecution(t *testing.T) {
 	var output bytes.Buffer
 
 	err = New(
-		service.NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator()),
+		service.NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator(), nil),
 		"",
 		strings.NewReader("hi\n"),
 		&output,

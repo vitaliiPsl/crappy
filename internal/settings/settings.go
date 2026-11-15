@@ -5,6 +5,7 @@ import (
 
 	"github.com/vitaliipsl/crappy/internal/memory"
 	"github.com/vitaliipsl/crappy/internal/model"
+	"github.com/vitaliipsl/crappy/internal/schedule"
 	"github.com/vitaliipsl/crappy/internal/tools"
 )
 
@@ -18,6 +19,7 @@ const (
 type Settings struct {
 	ConfigPath   string           `yaml:"config_path,omitempty" validate:"required"`
 	SessionsPath string           `yaml:"sessions_path,omitempty" validate:"required"`
+	Scheduling   schedule.Config  `yaml:"scheduling"`
 	Memory       memory.Config    `yaml:"memory"`
 	Tools        tools.Config     `yaml:"tools"`
 	Retry        retry.Config     `yaml:"retry"`
@@ -28,6 +30,7 @@ func defaults() Settings {
 	return Settings{
 		ConfigPath:   DefaultConfigPath,
 		SessionsPath: DefaultSessionsPath,
+		Scheduling:   schedule.DefaultConfig(),
 		Memory:       memory.DefaultConfig(),
 		Tools:        tools.DefaultConfig(),
 		Retry:        retry.DefaultConfig(),

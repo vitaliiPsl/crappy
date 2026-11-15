@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"path/filepath"
 
 	"github.com/vitaliipsl/crappy/harness"
 	"github.com/vitaliipsl/crappy/harness/agent"
@@ -14,6 +16,7 @@ import (
 	"github.com/vitaliipsl/crappy/internal/instructions"
 	"github.com/vitaliipsl/crappy/internal/memory"
 	"github.com/vitaliipsl/crappy/internal/model"
+	"github.com/vitaliipsl/crappy/internal/schedule"
 	"github.com/vitaliipsl/crappy/internal/service"
 	"github.com/vitaliipsl/crappy/internal/settings"
 	"github.com/vitaliipsl/crappy/internal/storage/jsonl"
@@ -22,8 +25,9 @@ import (
 )
 
 type Runtime struct {
-	service *service.Local
-	harness *harness.Harness
+	service   *service.Local
+	harness   *harness.Harness
+	scheduler *schedule.Worker
 }
 
 func Open(ctx context.Context, settings settings.Settings) (*Runtime, error) {
@@ -62,6 +66,11 @@ func Open(ctx context.Context, settings settings.Settings) (*Runtime, error) {
 		return nil, fmt.Errorf("open session storage: %w", err)
 	}
 
+	schedules, err := schedule.NewManager(ctx, schedule.NewJSONStore(filepath.Join(settings.SessionsPath, "schedules.json")))
+	if err != nil {
+		return nil, fmt.Errorf("open schedules: %w", err)
+	}
+
 	agents := agent.New(configuration.AgentConfig(), resolver,
 		agent.WithToolMiddleware(
 			tools.OutputCap(settings.Tools, storage.PutBlob),
@@ -71,6 +80,7 @@ func Open(ctx context.Context, settings settings.Settings) (*Runtime, error) {
 			instructions.NewContributor(),
 			local.NewContributor(),
 			memory.NewContributor(memories),
+			schedule.NewContributor(schedules),
 			automaticCompaction,
 		),
 	)
@@ -80,9 +90,13 @@ func Open(ctx context.Context, settings settings.Settings) (*Runtime, error) {
 		harness.WithExecutor(compactionexec.ExecutorName, compactionexec.New(compactor)),
 	)
 
+	worker := schedule.NewWorker(schedules, schedule.NewExecutionDispatcher(runtime), settings.Scheduling.PollInterval)
+	worker.Start()
+
 	return &Runtime{
-		service: service.NewLocal(configuration, runtime, storage, agents, estimator),
-		harness: runtime,
+		service:   service.NewLocal(configuration, runtime, storage, agents, estimator, schedules),
+		harness:   runtime,
+		scheduler: worker,
 	}, nil
 }
 
@@ -91,5 +105,8 @@ func (r *Runtime) Service() *service.Local {
 }
 
 func (r *Runtime) Shutdown(ctx context.Context) error {
-	return r.harness.Shutdown(ctx)
+	schedulerErr := r.scheduler.Shutdown(ctx)
+	harnessErr := r.harness.Shutdown(ctx)
+
+	return errors.Join(schedulerErr, harnessErr)
 }

@@ -7,6 +7,7 @@ import (
 	"github.com/vitaliipsl/crappy/harness/session/state"
 	"github.com/vitaliipsl/crappy/harness/token"
 	"github.com/vitaliipsl/crappy/internal/config"
+	"github.com/vitaliipsl/crappy/internal/schedule"
 )
 
 type Local struct {
@@ -16,9 +17,10 @@ type Local struct {
 	entries   entry.Store
 	agents    *agent.Factory
 	estimator token.Estimator
+	schedules *schedule.Manager
 }
 
-func NewLocal(config config.Config, harness *harness.Harness, store harness.Store, agents *agent.Factory, estimator token.Estimator) *Local {
+func NewLocal(config config.Config, harness *harness.Harness, store harness.Store, agents *agent.Factory, estimator token.Estimator, schedules *schedule.Manager) *Local {
 	return &Local{
 		config:    config,
 		harness:   harness,
@@ -26,5 +28,6 @@ func NewLocal(config config.Config, harness *harness.Harness, store harness.Stor
 		entries:   store.EntryStore(),
 		agents:    agents,
 		estimator: estimator,
+		schedules: schedules,
 	}
 }

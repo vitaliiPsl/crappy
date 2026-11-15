@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/vitaliipsl/crappy/internal/api"
 	"github.com/vitaliipsl/crappy/internal/memory"
 	"github.com/vitaliipsl/crappy/internal/model"
+	"github.com/vitaliipsl/crappy/internal/schedule"
 	"github.com/vitaliipsl/crappy/internal/settings"
 	"github.com/vitaliipsl/crappy/internal/tools"
 
@@ -26,6 +28,133 @@ func TestServeExposesAssistantOverSocket(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 
+	_, client := newServeFixture(ctx, t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"sequence_number\":1,\"response\":{\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"id\":\"msg-test\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"done\"}]}]}}\n\n")
+	}))
+
+	session, err := client.CreateSession(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := client.Context(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("context tools=%d, %v", len(report.Tools), err)
+	}
+
+	for _, name := range []string{"schedule_create", "schedule_list", "schedule_cancel"} {
+		found := false
+		for _, tool := range report.Tools {
+			if tool.Name == name {
+				found = true
+			}
+		}
+
+		if !found {
+			t.Fatalf("missing tool %s", name)
+		}
+	}
+
+	id, err := client.Execute(ctx, session.ID, kit.NewTextContent("Say done"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if status, err := client.WaitExecution(ctx, session.ID, id); err != nil || status != execution.Completed {
+		t.Fatalf("outcome=%s, %v", status, err)
+	}
+
+	waitForModelReply(ctx, t, client, session.ID, "done")
+}
+
+func TestServeRunsScheduledWorkWithoutConnectedClient(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+
+	outputs := []string{
+		`{"type":"function_call","id":"fc-schedule","call_id":"call-schedule","name":"schedule_create","arguments":"{\"instruction\":\"Write scheduled-complete into result.txt\",\"at\":\"%s\"}"}`,
+		`{"type":"message","id":"msg-scheduled","role":"assistant","content":[{"type":"output_text","text":"scheduled"}]}`,
+		`{"type":"function_call","id":"fc-bash","call_id":"call-bash","name":"bash","arguments":"{\"command\":\"printf scheduled-complete > result.txt\",\"description\":\"Write the scheduled result\"}"}`,
+		`{"type":"message","id":"msg-result","role":"assistant","content":[{"type":"output_text","text":"scheduled-complete"}]}`,
+	}
+
+	var calls atomic.Int32
+
+	root, client := newServeFixture(ctx, t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		index := int(calls.Add(1)) - 1
+		if index >= len(outputs) {
+			t.Errorf("unexpected model call %d", index)
+			http.Error(w, "unexpected model call", http.StatusInternalServerError)
+
+			return
+		}
+
+		output := outputs[index]
+		if index == 0 {
+			output = fmt.Sprintf(output, time.Now().Add(time.Second).Format(time.RFC3339Nano))
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprintf(w, "data: {\"type\":\"response.completed\",\"sequence_number\":1,\"response\":{\"status\":\"completed\",\"output\":[%s]}}\n\n", output)
+	}))
+
+	session, err := client.CreateSession(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	id, err := client.Execute(ctx, session.ID, kit.NewTextContent("Write scheduled-complete into result.txt in one second"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if status, err := client.WaitExecution(ctx, session.ID, id); err != nil || status != execution.Completed {
+		t.Fatalf("scheduling execution = %s, %v", status, err)
+	}
+
+	records, err := client.ListSchedules(ctx, session.ID)
+	if err != nil || len(records) != 1 {
+		t.Fatalf("scheduled records = %+v, %v", records, err)
+	}
+
+	client.Close()
+
+	// No client is connected while the daemon carries out the scheduled work.
+	for {
+		result, err := os.ReadFile(filepath.Join(root, "result.txt"))
+		if err == nil && string(result) == "scheduled-complete" {
+			break
+		}
+
+		select {
+		case <-ctx.Done():
+			t.Fatalf("scheduled result missing: %s, %v; model calls = %d", result, err, calls.Load())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	reconnected := api.NewClient(filepath.Join(root, "runtime", "socket"), root)
+	defer reconnected.Close()
+
+	scheduledID := waitForModelReply(ctx, t, reconnected, session.ID, "scheduled-complete")
+	if status, err := reconnected.WaitExecution(ctx, session.ID, scheduledID); err != nil || status != execution.Completed {
+		t.Fatalf("scheduled execution = %s, %v", status, err)
+	}
+
+	record, err := reconnected.GetSchedule(ctx, session.ID, records[0].ID)
+	if err != nil || record.State != schedule.Dispatched {
+		t.Fatalf("schedule after reconnect = %+v, %v", record, err)
+	}
+
+	if calls.Load() != 4 {
+		t.Fatalf("model calls = %d", calls.Load())
+	}
+}
+
+func newServeFixture(ctx context.Context, t *testing.T, handler http.Handler) (string, *api.Client) {
+	t.Helper()
+
 	root, err := os.MkdirTemp("/tmp", "crappy-cmd-")
 	if err != nil {
 		t.Fatal(err)
@@ -33,11 +162,8 @@ func TestServeExposesAssistantOverSocket(t *testing.T) {
 
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"sequence_number\":1,\"response\":{\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"id\":\"msg-test\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"done\"}]}]}}\n\n")
-	}))
-	defer server.Close()
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
 
 	configPath := filepath.Join(root, "config.yaml")
 	if err := os.WriteFile(configPath, []byte("provider_id: test\nmodel_id: test-model\n"), 0600); err != nil {
@@ -47,6 +173,7 @@ func TestServeExposesAssistantOverSocket(t *testing.T) {
 	settings := settings.Settings{
 		ConfigPath:   configPath,
 		SessionsPath: filepath.Join(root, "sessions"),
+		Scheduling:   schedule.DefaultConfig(),
 		Memory:       memory.Config{Path: filepath.Join(root, "memory.json")},
 		Tools:        tools.DefaultConfig(),
 		Providers:    []model.Provider{{ID: "test", API: "openai", APIKey: "test", BaseURL: server.URL}},
@@ -66,7 +193,7 @@ func TestServeExposesAssistantOverSocket(t *testing.T) {
 	})
 
 	client := api.NewClient(filepath.Join(directory, "socket"), root)
-	defer client.Close()
+	t.Cleanup(client.Close)
 
 	for {
 		probe, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
@@ -85,26 +212,13 @@ func TestServeExposesAssistantOverSocket(t *testing.T) {
 		}
 	}
 
-	session, err := client.CreateSession(ctx, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	return root, client
+}
 
-	report, err := client.Context(ctx, session.ID)
-	if err != nil || len(report.Tools) != 10 {
-		t.Fatalf("context tools=%d, %v", len(report.Tools), err)
-	}
+func waitForModelReply(ctx context.Context, t *testing.T, client *api.Client, sessionID, reply string) string {
+	t.Helper()
 
-	id, err := client.Execute(ctx, session.ID, kit.NewTextContent("Say done"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if status, err := client.WaitExecution(ctx, session.ID, id); err != nil || status != execution.Completed {
-		t.Fatalf("outcome=%s, %v", status, err)
-	}
-
-	subscription, err := client.Subscribe(ctx, session.ID, 0)
+	subscription, err := client.Subscribe(ctx, sessionID, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,12 +240,8 @@ func TestServeExposesAssistantOverSocket(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if message.Role == kit.RoleModel {
-				if text := kit.ContentsText(message.Content); text != "done" {
-					t.Fatalf("reply=%q", text)
-				}
-
-				return
+			if message.Role == kit.RoleModel && kit.ContentsText(message.Content) == reply {
+				return value.ExecutionID
 			}
 		case <-ctx.Done():
 			t.Fatal(ctx.Err())

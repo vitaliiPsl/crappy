@@ -43,7 +43,7 @@ func TestLoadModelReadsAssistantSelection(t *testing.T) {
 		ProviderID: "provider",
 		ModelID:    "selected-model",
 		Generation: config.Generation{Thinking: "high"},
-	}, h, storage, nil, token.NewCharacterEstimator())
+	}, h, storage, nil, token.NewCharacterEstimator(), nil)
 
 	screen := New(ctx, app, "")
 	defer screen.Close()
@@ -79,7 +79,7 @@ func TestLoadWorkdirReadsSessionState(t *testing.T) {
 	h := harness.New(storage)
 	t.Cleanup(func() { _ = h.Shutdown(ctx) })
 
-	app := service.NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator())
+	app := service.NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator(), nil)
 
 	screen := New(ctx, app, "")
 	defer screen.Close()
@@ -163,7 +163,7 @@ func TestExecuteReportsTerminalPersistenceFailure(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			screen := New(ctx, service.NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator()), opened.ID())
+			screen := New(ctx, service.NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator(), nil), opened.ID())
 			defer screen.Close()
 
 			screen.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
@@ -245,7 +245,7 @@ func TestWaitForExecutionStopsWhenScreenCloses(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	screen := New(ctx, service.NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator()), opened.ID())
+	screen := New(ctx, service.NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator(), nil), opened.ID())
 	defer screen.Close()
 
 	accepted := screen.execute(kit.NewUserMessage(kit.NewTextContent("hello")))().(executeResultMsg)
@@ -276,7 +276,7 @@ func TestFirstSubmitCreatesSession(t *testing.T) {
 	h := harness.New(storage)
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 
-	screen := New(context.Background(), service.NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator()), "")
+	screen := New(context.Background(), service.NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator(), nil), "")
 	defer screen.Close()
 
 	created := screen.submit("fix the compaction")().(createdMsg)
