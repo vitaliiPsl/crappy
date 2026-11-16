@@ -104,6 +104,126 @@ func commitResult(ctx context.Context, params execution.ExecuteParams, text stri
 	return params.Events.Commit(ctx, params.ExecutionID, agent.MessageEntryType, message)
 }
 
+func TestDaemonSteersRunningExecutionAndQueuesWhenIdle(t *testing.T) {
+	type delivery struct {
+		executionID string
+		message     kit.Message
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+
+	started := make(chan string, 2)
+	received := make(chan delivery, 2)
+	release := make(chan struct{})
+	fixture := newServerFixture(t, newSocketRoot(t), execution.Func(func(ctx context.Context, params execution.ExecuteParams) error {
+		var input kit.Message
+		if err := json.Unmarshal(params.Input, &input); err != nil {
+			return err
+		}
+
+		started <- params.ExecutionID
+
+		record := func(message kit.Message) error {
+			if err := params.Events.Commit(ctx, params.ExecutionID, agent.MessageEntryType, message); err != nil {
+				return err
+			}
+
+			received <- delivery{executionID: params.ExecutionID, message: message}
+
+			return nil
+		}
+		if input.TextContent().Text != "work" {
+			return record(input)
+		}
+
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+
+		return params.Steer(ctx, func(payload json.RawMessage) error {
+			var message kit.Message
+			if err := json.Unmarshal(payload, &message); err != nil {
+				return err
+			}
+
+			return record(message)
+		})
+	}))
+
+	if err := fixture.client.Steer(ctx, "missing", kit.NewTextContent("focus")); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("unknown session = %v", err)
+	}
+
+	opened, err := fixture.client.CreateSession(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := fixture.client.Execute(ctx, opened.ID, kit.NewTextContent("work"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case id := <-started:
+		if id != first {
+			t.Fatalf("started execution = %s, want %s", id, first)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+
+	if err := fixture.client.Steer(ctx, opened.ID, kit.NewTextContent("focus"), kit.NewTextContent("also check tests")); err != nil {
+		t.Fatal(err)
+	}
+
+	close(release)
+
+	if status, err := fixture.client.WaitExecution(ctx, opened.ID, first); err != nil || status != execution.Completed {
+		t.Fatalf("steered execution = %s, %v", status, err)
+	}
+
+	if err := fixture.client.Steer(ctx, opened.ID, kit.NewTextContent("idle")); err != nil {
+		t.Fatal(err)
+	}
+
+	var nextID string
+	select {
+	case id := <-started:
+		nextID = id
+
+		if id == first {
+			t.Fatal("idle steering reused the completed execution")
+		}
+
+		if status, err := fixture.client.WaitExecution(ctx, opened.ID, id); err != nil || status != execution.Completed {
+			t.Fatalf("idle steering = %s, %v", status, err)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+
+	for _, want := range []struct {
+		executionID string
+		text        string
+	}{
+		{executionID: first, text: "focus\nalso check tests"},
+		{executionID: nextID, text: "idle"},
+	} {
+		select {
+		case got := <-received:
+			if got.executionID != want.executionID || got.message.Role != kit.RoleUser || kit.ContentsText(got.message.Content) != want.text {
+				t.Fatalf("delivered input = %+v, want %+v", got, want)
+			}
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+	}
+}
+
 func TestDaemonKeepsExecutionAliveAfterClientDisconnect(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()

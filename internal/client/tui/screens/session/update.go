@@ -11,7 +11,10 @@ import (
 	"github.com/vitaliipsl/crappy/harness/event"
 )
 
-const cancelKey = "esc"
+const (
+	cancelKey = "esc"
+	steerKey  = "alt+enter"
+)
 
 func (m *Model) handleModel(message modelMsg) {
 	if message.target != m || m.ctx.Err() != nil {
@@ -88,6 +91,18 @@ func (m *Model) submit(text string) tea.Cmd {
 	return m.execute(input)
 }
 
+func (m *Model) submitSteering() tea.Cmd {
+	text := strings.TrimSpace(m.composer.Value())
+	if text == "" || m.submission != "" {
+		return nil
+	}
+
+	m.notice = notice{}
+	m.submission = text
+
+	return m.steer(kit.NewUserMessage(kit.NewTextContent(text)))
+}
+
 func (m *Model) handleCreated(message createdMsg) tea.Cmd {
 	if message.target != m {
 		return nil
@@ -159,6 +174,10 @@ func (m *Model) handleExecuteResult(message executeResultMsg) tea.Cmd {
 	if message.err != nil {
 		m.notice = errorNotice(message.err)
 
+		return nil
+	}
+
+	if message.executionID == "" {
 		return nil
 	}
 

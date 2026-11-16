@@ -26,6 +26,15 @@ func (s *Local) Execute(ctx context.Context, sessionID string, content ...kit.Co
 	return current.ID(), nil
 }
 
+func (s *Local) Steer(ctx context.Context, sessionID string, content ...kit.Content) error {
+	opened, err := s.harness.Session(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+
+	return opened.Steer(ctx, execution.NewRequest(agent.ExecutorName, kit.NewUserMessage(content...)))
+}
+
 func (s *Local) Cancel(ctx context.Context, sessionID, executionID string) error {
 	opened, err := s.harness.Session(ctx, sessionID)
 	if err != nil {

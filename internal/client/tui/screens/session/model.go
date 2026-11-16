@@ -131,6 +131,10 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.cancelExecution(m.pending[0].ID)
 		}
 
+		if message.String() == steerKey && m.running() {
+			return m, m.submitSteering()
+		}
+
 		if isTranscriptKey(message.String()) {
 			return m, m.transcript.Update(message)
 		}

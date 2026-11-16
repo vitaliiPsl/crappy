@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -59,5 +60,30 @@ func TestContextResultIgnoresOtherAndClosedScreens(t *testing.T) {
 
 	if !screen.contextLoading {
 		t.Fatal("a closed screen accepted a context result")
+	}
+}
+
+func TestSteeringFailurePreservesDraftAndAllowsRetry(t *testing.T) {
+	screen := New(t.Context(), nil, "session")
+	defer screen.Close()
+
+	screen.applyExecution(execution.Record{ID: "active", Status: execution.Running})
+	screen.composer.Focus()
+	screen.Update(tea.KeyPressMsg{Code: 'd', Text: "draft"})
+
+	key := tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModAlt}
+	if _, submit := screen.Update(key); submit == nil {
+		t.Fatal("steering was not submitted")
+	}
+
+	failure := errors.New("steering rejected")
+	screen.Update(executeResultMsg{target: screen, input: "draft", err: failure})
+
+	if screen.composer.Value() != "draft" || screen.submission != "" || screen.notice.message != failure.Error() {
+		t.Fatal("steering failure lost the draft, blocked submission, or hid the error")
+	}
+
+	if _, retry := screen.Update(key); retry == nil {
+		t.Fatal("steering could not be retried")
 	}
 }

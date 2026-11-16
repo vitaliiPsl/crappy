@@ -58,6 +58,7 @@ func (h *Handler) registerRoutes() *http.ServeMux {
 	mux.HandleFunc("DELETE /sessions/{session}", h.deleteSession)
 
 	mux.HandleFunc("POST /sessions/{session}/execute", h.execute)
+	mux.HandleFunc("POST /sessions/{session}/steer", h.steer)
 	mux.HandleFunc("POST /sessions/{session}/executions/{execution}/cancel", h.cancelExecution)
 	mux.HandleFunc("POST /sessions/{session}/resume", h.resume)
 	mux.HandleFunc("POST /sessions/{session}/compact", h.compact)
@@ -135,6 +136,18 @@ func (h *Handler) execute(w http.ResponseWriter, r *http.Request) {
 
 	id, err := h.service.Execute(r.Context(), r.PathValue("session"), content...)
 	writeResponse(w, id, err)
+}
+
+func (h *Handler) steer(w http.ResponseWriter, r *http.Request) {
+	var content []kit.Content
+	if err := readRequest(w, r, &content); err != nil {
+		writeError(w, err)
+
+		return
+	}
+
+	err := h.service.Steer(r.Context(), r.PathValue("session"), content...)
+	writeResponse(w, nil, err)
 }
 
 func (h *Handler) cancelExecution(w http.ResponseWriter, r *http.Request) {

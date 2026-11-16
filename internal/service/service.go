@@ -19,6 +19,7 @@ type Service interface {
 	DeleteSession(context.Context, string) error
 
 	Execute(context.Context, string, ...kit.Content) (string, error)
+	Steer(context.Context, string, ...kit.Content) error
 	Cancel(context.Context, string, string) error
 	Resume(context.Context, string) (string, error)
 	Compact(context.Context, string) (string, error)

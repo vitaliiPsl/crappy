@@ -118,6 +118,10 @@ func (m *Model) shortcutsView() string {
 		}
 
 		values = append(values, hints.Hint{Key: "Enter", Label: label})
+		if m.running() {
+			values = append(values, hints.Hint{Key: "Alt+Enter", Label: "Steer"})
+		}
+
 		values = append(values, hints.Hint{Key: "Shift+Enter", Label: "Newline"})
 	}
 

@@ -235,6 +235,7 @@ func TestOperationsRequireAnExistingSession(t *testing.T) {
 			return err
 		},
 		func() error { return app.Cancel(ctx, "", "execution") },
+		func() error { return app.Steer(ctx, "", kit.NewTextContent("hello")) },
 		func() error {
 			_, err := app.GetExecutionStatus(ctx, "", "execution")
 

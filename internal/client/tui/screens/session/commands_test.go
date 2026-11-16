@@ -300,6 +300,101 @@ func TestFirstSubmitCreatesSession(t *testing.T) {
 	}
 }
 
+func TestSteeringShortcutDeliversToRunningExecution(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	storage, err := jsonl.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	received := make(chan kit.Message, 1)
+	h := harness.New(storage, harness.WithExecutor(agent.ExecutorName, execution.Func(func(ctx context.Context, params execution.ExecuteParams) error {
+		close(started)
+
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+
+		return params.Steer(ctx, func(payload json.RawMessage) error {
+			var message kit.Message
+			if err := json.Unmarshal(payload, &message); err != nil {
+				return err
+			}
+
+			received <- message
+
+			return params.Events.Commit(ctx, params.ExecutionID, agent.MessageEntryType, message)
+		})
+	})))
+	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
+
+	opened, err := h.CreateSession(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	active, err := opened.Execute(ctx, execution.NewRequest(agent.ExecutorName, kit.NewUserMessage(kit.NewTextContent("initial"))))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-started:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+
+	app := service.NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator(), nil)
+
+	screen := New(ctx, app, opened.ID())
+	defer screen.Close()
+
+	screen.applyExecution(execution.Record{ID: active.ID(), Executor: agent.ExecutorName, Status: execution.Running})
+	screen.composer.Focus()
+	screen.Update(tea.KeyPressMsg{Code: 'f', Text: "focus on scheduling"})
+
+	key := tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModAlt}
+
+	_, submit := screen.Update(key)
+	if submit == nil || screen.composer.Value() != "focus on scheduling" {
+		t.Fatal("steering was not submitted or cleared the draft before admission")
+	}
+
+	if _, repeated := screen.Update(key); repeated != nil {
+		t.Fatal("steering was submitted twice before admission")
+	}
+
+	accepted := submit().(executeResultMsg)
+	if accepted.err != nil || accepted.executionID != "" {
+		t.Fatalf("steering admission = %+v", accepted)
+	}
+
+	if _, wait := screen.Update(accepted); wait != nil || screen.composer.Value() != "" || !screen.running() {
+		t.Fatal("steering admission did not clear the draft or changed execution tracking")
+	}
+
+	close(release)
+
+	if status, err := active.Wait(ctx); err != nil || status != execution.Completed {
+		t.Fatalf("steered execution = %s, %v", status, err)
+	}
+
+	select {
+	case message := <-received:
+		if message.Role != kit.RoleUser || kit.ContentsText(message.Content) != "focus on scheduling" {
+			t.Fatalf("steering input = %+v", message)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+}
+
 type executionTestStore struct {
 	sessions state.Store
 	entries  entry.Store

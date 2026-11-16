@@ -106,6 +106,10 @@ func (c *Client) Execute(ctx context.Context, id string, content ...kit.Content)
 	return value, err
 }
 
+func (c *Client) Steer(ctx context.Context, id string, content ...kit.Content) error {
+	return c.session(ctx, id, "POST", "/steer", content, nil)
+}
+
 func (c *Client) Cancel(ctx context.Context, id, executionID string) error {
 	return c.session(ctx, id, "POST", "/executions/"+url.PathEscape(executionID)+"/cancel", nil, nil)
 }

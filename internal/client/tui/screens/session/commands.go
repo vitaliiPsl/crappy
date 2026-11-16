@@ -174,6 +174,17 @@ func (m *Model) execute(input kit.Message) tea.Cmd {
 	}
 }
 
+func (m *Model) steer(input kit.Message) tea.Cmd {
+	sessionID := m.sessionID
+	text := kit.ContentsText(input.Content)
+
+	return func() tea.Msg {
+		err := m.service.Steer(m.ctx, sessionID, input.Content...)
+
+		return executeResultMsg{target: m, input: text, err: err}
+	}
+}
+
 func (m *Model) waitForExecution(executionID string) tea.Cmd {
 	sessionID := m.sessionID
 

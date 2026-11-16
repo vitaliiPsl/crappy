@@ -71,6 +71,10 @@ func TestViewFitsWindowWithContext(t *testing.T) {
 				t.Fatal("running execution has no interrupt hint")
 			}
 
+			if !strings.Contains(view, "Alt+Enter") || !strings.Contains(view, "Steer") {
+				t.Fatal("running execution has no steering hint")
+			}
+
 			if !strings.Contains(view, "…") || !strings.Contains(view, "crappy") {
 				t.Fatalf("long workdir is missing its suffix: %q", view)
 			}
