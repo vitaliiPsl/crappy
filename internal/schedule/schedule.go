@@ -22,9 +22,13 @@ var (
 )
 
 type Record struct {
-	ID          string    `json:"id"`
-	SessionID   string    `json:"session_id"`
+	ID          string `json:"id"`
+	SessionID   string `json:"session_id"`
+	ExecutionID string `json:"execution_id,omitempty"`
+
 	Instruction string    `json:"instruction"`
 	At          time.Time `json:"at"`
-	State       State     `json:"state"`
+	Cron        string    `json:"cron,omitempty"`
+
+	State State `json:"state"`
 }

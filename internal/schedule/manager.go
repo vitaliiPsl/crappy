@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/robfig/cron/v3"
 
 	"github.com/vitaliipsl/crappy/harness/session/state"
 )
@@ -42,16 +43,29 @@ func (m *Manager) Create(ctx context.Context, sessionID, instruction string, at 
 		return Record{}, fmt.Errorf("%w: session, instruction, and time are required", ErrInvalid)
 	}
 
+	return m.create(ctx, Record{SessionID: sessionID, Instruction: instruction, At: at.UTC()})
+}
+
+func (m *Manager) CreateRecurring(ctx context.Context, sessionID, instruction, spec string) (Record, error) {
+	if sessionID == "" || strings.TrimSpace(instruction) == "" || strings.TrimSpace(spec) == "" {
+		return Record{}, fmt.Errorf("%w: session, instruction, and cron are required", ErrInvalid)
+	}
+
+	at, err := nextOccurrence(spec, time.Now())
+	if err != nil {
+		return Record{}, err
+	}
+
+	return m.create(ctx, Record{SessionID: sessionID, Instruction: instruction, At: at, Cron: spec})
+}
+
+func (m *Manager) create(ctx context.Context, record Record) (Record, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	record := Record{
-		ID:          uuid.NewString(),
-		SessionID:   sessionID,
-		Instruction: instruction,
-		At:          at.UTC(),
-		State:       Scheduled,
-	}
+	record.ID = uuid.NewString()
+	record.State = Scheduled
+
 	if err := m.save(ctx, record); err != nil {
 		return Record{}, err
 	}
@@ -130,15 +144,28 @@ func (m *Manager) dispatch(ctx context.Context, id string, now time.Time, dispat
 		return err
 	}
 
-	if err := dispatcher.Dispatch(ctx, record); err != nil {
-		if errors.Is(err, state.ErrNotFound) {
-			return errors.Join(err, m.finish(ctx, record, Failed))
-		}
+	executionID, err := dispatcher.Dispatch(ctx, record)
+	if errors.Is(err, state.ErrNotFound) {
+		return errors.Join(err, m.finish(ctx, record, Failed))
+	}
 
+	if err != nil {
 		return err
 	}
 
-	return m.finish(ctx, record, Dispatched)
+	record.ExecutionID = executionID
+	if record.Cron == "" {
+		return m.finish(ctx, record, Dispatched)
+	}
+
+	next, err := nextOccurrence(record.Cron, now)
+	if err != nil {
+		return errors.Join(err, m.finish(ctx, record, Failed))
+	}
+
+	record.At = next
+
+	return m.finish(ctx, record, Scheduled)
 }
 
 func (m *Manager) claim(ctx context.Context, id string, now time.Time) (Record, bool, error) {
@@ -190,6 +217,22 @@ func (m *Manager) save(ctx context.Context, record Record) error {
 	m.records[record.ID] = record
 
 	return nil
+}
+
+func nextOccurrence(spec string, after time.Time) (time.Time, error) {
+	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+
+	schedule, err := parser.Parse(spec)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("%w: cron %q: %w", ErrInvalid, spec, err)
+	}
+
+	next := schedule.Next(after.Local())
+	if next.IsZero() {
+		return time.Time{}, fmt.Errorf("%w: cron %q has no upcoming occurrence", ErrInvalid, spec)
+	}
+
+	return next.UTC(), nil
 }
 
 func (m *Manager) list(sessionID string) []Record {

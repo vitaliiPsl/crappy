@@ -87,6 +87,35 @@ func TestCreateToolRequiresTimestamp(t *testing.T) {
 	}
 }
 
+func TestCreateToolSchedulesRecurringWork(t *testing.T) {
+	t.Parallel()
+
+	manager, err := NewManager(t.Context(), NewJSONStore(filepath.Join(t.TempDir(), "schedules.json")))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tools := NewTools(manager, "session")
+
+	created := callTool[Record](t, tools, "schedule_create", map[string]any{
+		"instruction": "check the inbox", "cron": "0 * * * *",
+	})
+	if created.State != Scheduled || created.Cron != "0 * * * *" || !created.At.After(time.Now()) {
+		t.Fatalf("created = %+v", created)
+	}
+
+	tool := findTool(t, tools, "schedule_create")
+
+	for _, args := range []map[string]any{
+		{"instruction": "check the inbox"},
+		{"instruction": "check the inbox", "at": "2027-01-02T09:30:00+08:00", "cron": "0 0 * * *"},
+	} {
+		if _, err := tool.Execute(kit.NewRunContext(t.Context()), kit.NewToolCall("call", "schedule_create", args)); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("schedule_create(%v) = %v", args, err)
+		}
+	}
+}
+
 func findTool(t *testing.T, tools []kit.Tool, name string) kit.Tool {
 	t.Helper()
 

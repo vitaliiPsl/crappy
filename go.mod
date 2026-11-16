@@ -14,6 +14,7 @@ require (
 	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/go-playground/validator/v10 v10.25.0
 	github.com/google/uuid v1.6.0
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/vitaliiPsl/crappy-adk v0.11.1-0.20261025093118-09a43e85846d
 	github.com/vitaliipsl/crappy-memory v0.0.0
 	golang.org/x/sys v0.47.0

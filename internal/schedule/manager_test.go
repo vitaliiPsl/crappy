@@ -91,10 +91,10 @@ func TestManagerRetriesUnrecordedDispatchAfterRestart(t *testing.T) {
 	}
 
 	calls := 0
-	dispatcher := dispatchFunc(func(context.Context, Record) error {
+	dispatcher := dispatchFunc(func(context.Context, Record) (string, error) {
 		calls++
 
-		return nil
+		return "execution", nil
 	})
 
 	if err := manager.DispatchDue(ctx, time.Now(), dispatcher); !errors.Is(err, errDispatchWrite) {
@@ -150,17 +150,17 @@ func TestManagerCancellationAndDueTimes(t *testing.T) {
 
 	calls := make(map[string]int)
 
-	dispatcher := dispatchFunc(func(ctx context.Context, record Record) error {
+	dispatcher := dispatchFunc(func(ctx context.Context, record Record) (string, error) {
 		calls[record.Instruction]++
 		if _, err := manager.Cancel(ctx, record.SessionID, record.ID); !errors.Is(err, ErrNotPending) {
 			t.Errorf("cancellation after claim = %v", err)
 		}
 
 		if record.Instruction == "missing" {
-			return state.ErrNotFound
+			return "", state.ErrNotFound
 		}
 
-		return nil
+		return "execution", nil
 	})
 	if err := manager.DispatchDue(ctx, now, dispatcher); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("missing target = %v", err)
@@ -187,6 +187,89 @@ func TestManagerCancellationAndDueTimes(t *testing.T) {
 	}
 }
 
+func TestManagerReschedulesRecurringDispatch(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+
+	manager, err := NewManager(ctx, NewJSONStore(filepath.Join(t.TempDir(), "schedules.json")))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	before := time.Now()
+
+	record, err := manager.CreateRecurring(ctx, "session", "check the inbox", "CRON_TZ=UTC 0 9 * * *")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first := record.At
+	if record.State != Scheduled || record.Cron == "" || first.Hour() != 9 || first.Minute() != 0 ||
+		!first.After(before) || first.Sub(before) > 24*time.Hour {
+		t.Fatalf("created = %+v", record)
+	}
+
+	ids := []string{"first", "second"}
+	calls := 0
+	dispatcher := dispatchFunc(func(context.Context, Record) (string, error) {
+		calls++
+
+		return ids[calls-1], nil
+	})
+
+	if err := manager.DispatchDue(ctx, first, dispatcher); err != nil {
+		t.Fatal(err)
+	}
+
+	record, err = manager.Get(ctx, "session", record.ID)
+	if err != nil || record.State != Scheduled || !record.At.Equal(first.Add(24*time.Hour)) || record.ExecutionID != "first" {
+		t.Fatalf("after first occurrence = %+v, %v", record, err)
+	}
+
+	if err := manager.DispatchDue(ctx, first.Add(73*time.Hour), dispatcher); err != nil {
+		t.Fatal(err)
+	}
+
+	record, err = manager.Get(ctx, "session", record.ID)
+	if err != nil || calls != 2 || !record.At.Equal(first.Add(96*time.Hour)) || record.ExecutionID != "second" {
+		t.Fatalf("missed occurrences were not coalesced: %+v, %v; dispatches = %d", record, err, calls)
+	}
+
+	if record, err := manager.Cancel(ctx, "session", record.ID); err != nil || record.State != Cancelled {
+		t.Fatalf("cancel recurrence = %+v, %v", record, err)
+	}
+
+	if err := manager.DispatchDue(ctx, first.Add(365*24*time.Hour), dispatcher); err != nil || calls != 2 {
+		t.Fatalf("cancelled recurrence dispatched: %v; dispatches = %d", err, calls)
+	}
+}
+
+func TestManagerRejectsInvalidCron(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+
+	manager, err := NewManager(ctx, NewJSONStore(filepath.Join(t.TempDir(), "schedules.json")))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, spec := range []string{
+		"", "not cron", "0 0 30 2 *",
+		"@daily", "@weekly", "@every 1h", "@every 0s", "@every -1h",
+		"CRON_TZ=UTC @daily",
+	} {
+		if _, err := manager.CreateRecurring(ctx, "session", "work", spec); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("cron %q = %v", spec, err)
+		}
+	}
+
+	if records, err := manager.List(ctx, "session"); err != nil || len(records) != 0 {
+		t.Fatalf("invalid schedules were saved: %+v, %v", records, err)
+	}
+}
+
 var errDispatchWrite = errors.New("dispatch state write failed")
 
 type dispatchFailingStore struct {
@@ -203,8 +286,8 @@ func (s *dispatchFailingStore) Save(ctx context.Context, records []Record) error
 	return s.Store.Save(ctx, records)
 }
 
-type dispatchFunc func(context.Context, Record) error
+type dispatchFunc func(context.Context, Record) (string, error)
 
-func (f dispatchFunc) Dispatch(ctx context.Context, record Record) error {
+func (f dispatchFunc) Dispatch(ctx context.Context, record Record) (string, error) {
 	return f(ctx, record)
 }

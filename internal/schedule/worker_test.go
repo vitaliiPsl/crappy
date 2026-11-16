@@ -31,13 +31,13 @@ func TestWorkerShutdownCancelsAndWaitsForDispatch(t *testing.T) {
 	unblock := sync.OnceFunc(func() { close(release) })
 	defer unblock()
 
-	worker := NewWorker(manager, dispatchFunc(func(ctx context.Context, _ Record) error {
+	worker := NewWorker(manager, dispatchFunc(func(ctx context.Context, _ Record) (string, error) {
 		close(started)
 		<-ctx.Done()
 		close(cancelled)
 		<-release
 
-		return ctx.Err()
+		return "", ctx.Err()
 	}), time.Hour)
 	worker.Start()
 	t.Cleanup(func() {

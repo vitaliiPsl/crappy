@@ -7,6 +7,7 @@ import (
 )
 
 const instructions = `Use scheduling tools for future work instead of sleeping or background processes. Check the clock through the shell when resolving relative dates.
+For repeating work, pass a cron expression instead of a timestamp; it is evaluated in local time. A recurring schedule skips an occurrence while its previous run is unfinished.
 Scheduled work runs in this conversation and may run late while the laptop is asleep or Crappy is stopped.
 Only confirm a schedule after schedule_create succeeds.`
 
