@@ -17,6 +17,7 @@ import (
 	corememory "github.com/vitaliipsl/crappy-memory/memory"
 	jsonstore "github.com/vitaliipsl/crappy-memory/storage/json"
 	"github.com/vitaliipsl/crappy/harness/execution"
+	"github.com/vitaliipsl/crappy/internal/background"
 	"github.com/vitaliipsl/crappy/internal/memory"
 	"github.com/vitaliipsl/crappy/internal/model"
 	"github.com/vitaliipsl/crappy/internal/schedule"
@@ -248,4 +249,173 @@ func runtimeConfig(t *testing.T) string {
 	}
 
 	return path
+}
+
+func TestRuntimeBackgroundJobContinuesAfterExecutionAndCapsRetrievedOutput(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+
+	directory := t.TempDir()
+
+	var (
+		requests atomic.Int32
+		jobID    atomic.Value
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var body struct {
+			Input []struct {
+				Type   string          `json:"type"`
+				CallID string          `json:"call_id"`
+				Output json.RawMessage `json:"output"`
+			} `json:"input"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Error(err)
+			writer.WriteHeader(http.StatusBadRequest)
+
+			return
+		}
+
+		output := []any{}
+		switch requests.Add(1) {
+		case 1:
+			arguments, _ := json.Marshal(map[string]any{
+				"command":     "while [ ! -f release ]; do sleep 0.01; done; i=0; while [ \"$i\" -lt 3000 ]; do printf 'background-output\\n'; i=$((i+1)); done",
+				"description": "Produce a large result after release", "background_timeout_seconds": 60,
+			})
+			output = []any{map[string]any{
+				"type": "function_call", "id": "start", "call_id": "start-job", "name": "bash", "arguments": string(arguments),
+			}}
+		case 2:
+			for _, item := range body.Input {
+				if item.Type != "function_call_output" || item.CallID != "start-job" {
+					continue
+				}
+
+				var receipt string
+				if err := json.Unmarshal(item.Output, &receipt); err != nil {
+					t.Error(err)
+
+					continue
+				}
+
+				var record background.Record
+				if err := json.Unmarshal([]byte(receipt), &record); err != nil || record.ID == "" {
+					t.Errorf("background admission = %s, %v", item.Output, err)
+				}
+
+				jobID.Store(record.ID)
+			}
+		case 3:
+			arguments, _ := json.Marshal(map[string]any{"id": jobID.Load()})
+			output = []any{map[string]any{
+				"type": "function_call", "id": "get", "call_id": "get-job", "name": "job_get", "arguments": string(arguments),
+			}}
+		case 4:
+			found := false
+			for _, item := range body.Input {
+				if item.Type == "function_call_output" && item.CallID == "get-job" {
+					found = strings.Contains(string(item.Output), "background-output") && strings.Contains(string(item.Output), "full output:") && len(item.Output) < 2000
+				}
+			}
+
+			if !found {
+				t.Error("model did not receive the capped background output")
+			}
+		default:
+			t.Error("unexpected model request")
+			writer.WriteHeader(http.StatusInternalServerError)
+
+			return
+		}
+
+		data, err := json.Marshal(output)
+		if err != nil {
+			t.Error(err)
+
+			return
+		}
+
+		writer.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprintf(writer, "data: {\"type\":\"response.completed\",\"sequence_number\":1,\"response\":{\"status\":\"completed\",\"output\":%s}}\n\n", data)
+	}))
+	defer server.Close()
+
+	runtime, err := Open(ctx, settings.Settings{
+		ConfigPath:   runtimeConfig(t),
+		SessionsPath: t.TempDir(),
+		Scheduling:   schedule.DefaultConfig(),
+		Memory:       memory.Config{Path: filepath.Join(t.TempDir(), "memory.json")},
+		Tools: tools.Config{
+			Timeout:              time.Second,
+			MaxTimeout:           2 * time.Second,
+			MaxBackgroundTimeout: time.Minute,
+			MaxOutputBytes:       1024,
+		},
+		Providers: []model.Provider{{
+			ID: "test", API: "openai", APIKey: "test-key", BaseURL: server.URL,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = runtime.Shutdown(context.Background()) })
+
+	app := runtime.Service()
+
+	opened, err := app.CreateSession(ctx, directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	subscription, err := app.Subscribe(ctx, opened.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer subscription.Close()
+
+	first, err := app.Execute(ctx, opened.ID, kit.NewTextContent("Run work in the background"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if status, err := app.WaitExecution(ctx, opened.ID, first); err != nil || status != execution.Completed {
+		t.Fatalf("launcher execution = %s, %v", status, err)
+	}
+
+	if requests.Load() != 2 || jobID.Load() == nil {
+		t.Fatalf("launcher did not return before background work finished: requests=%d, job=%v", requests.Load(), jobID.Load())
+	}
+
+	if err := os.WriteFile(filepath.Join(directory, "release"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for {
+		select {
+		case value := <-subscription.Events():
+			if value.Type != execution.EntryType || value.ExecutionID == first {
+				continue
+			}
+
+			var record execution.Record
+			if err := json.Unmarshal(value.Payload, &record); err != nil {
+				t.Fatal(err)
+			}
+
+			if record.Status.Terminal() {
+				if record.Status != execution.Completed || requests.Load() != 4 {
+					t.Fatalf("completion execution = %+v, requests=%d", record, requests.Load())
+				}
+
+				return
+			}
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+	}
 }

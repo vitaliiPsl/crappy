@@ -8,11 +8,13 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
 	"github.com/vitaliipsl/crappy/harness/agent"
 	"github.com/vitaliipsl/crappy/harness/session/state"
+	"github.com/vitaliipsl/crappy/internal/background"
 	"github.com/vitaliipsl/crappy/internal/workdir"
 )
 
@@ -23,7 +25,7 @@ func TestContributorBindsToolsToSessionAndExecution(t *testing.T) {
 	store := state.NewMemoryStore()
 	first := newSessionState(t, store, "first")
 	second := newSessionState(t, store, "second")
-	contributor := NewContributor()
+	contributor := NewContributor(background.NewManager(time.Hour))
 
 	for _, test := range []struct {
 		name    string
@@ -95,7 +97,7 @@ func TestContributorBindsShellToExecution(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			contributor := NewContributor()
+			contributor := NewContributor(background.NewManager(time.Hour))
 
 			first := contributeForSession(t, contributor, sessionState)
 			for _, want := range []string{

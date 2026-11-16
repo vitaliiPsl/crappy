@@ -116,6 +116,10 @@ providers:
 		t.Fatalf("tool timeout = %v, want %v", got, want)
 	}
 
+	if got, want := loaded.Tools.MaxBackgroundTimeout, 30*time.Minute; got != want {
+		t.Fatalf("background timeout limit = %v, want %v", got, want)
+	}
+
 	if got, want := loaded.Scheduling.PollInterval, 250*time.Millisecond; got != want {
 		t.Fatalf("schedule poll interval = %v, want %v", got, want)
 	}
@@ -201,6 +205,30 @@ providers:
 
 	if _, err := LoadFile(path); err == nil {
 		t.Fatal("LoadFile() error = nil, want invalid tool timeout error")
+	}
+}
+
+func TestLoadFileValidatesBackgroundTimeoutLimit(t *testing.T) {
+	t.Parallel()
+
+	for _, limit := range []time.Duration{0, -time.Second, time.Millisecond, time.Second, 2 * time.Hour} {
+		t.Run(limit.String(), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "settings.yaml")
+			writeSettings(t, path, fmt.Sprintf("tools:\n  max_background_timeout: %s\n", limit))
+
+			loaded, err := LoadFile(path)
+			if limit < time.Second {
+				if err == nil {
+					t.Fatal("accepted a background timeout limit below one second")
+				}
+
+				return
+			}
+
+			if err != nil || loaded.Tools.MaxBackgroundTimeout != limit {
+				t.Fatalf("background timeout limit = %s, %v; want %s", loaded.Tools.MaxBackgroundTimeout, err, limit)
+			}
+		})
 	}
 }
 

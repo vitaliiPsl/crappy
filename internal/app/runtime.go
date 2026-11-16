@@ -12,6 +12,7 @@ import (
 	"github.com/vitaliipsl/crappy/harness/compaction/automatic"
 	compactionexec "github.com/vitaliipsl/crappy/harness/compaction/executor"
 	"github.com/vitaliipsl/crappy/harness/token"
+	"github.com/vitaliipsl/crappy/internal/background"
 	"github.com/vitaliipsl/crappy/internal/config"
 	"github.com/vitaliipsl/crappy/internal/instructions"
 	"github.com/vitaliipsl/crappy/internal/memory"
@@ -28,6 +29,7 @@ type Runtime struct {
 	service   *service.Local
 	harness   *harness.Harness
 	scheduler *schedule.Worker
+	jobs      *background.Worker
 }
 
 func Open(ctx context.Context, settings settings.Settings) (*Runtime, error) {
@@ -71,6 +73,7 @@ func Open(ctx context.Context, settings settings.Settings) (*Runtime, error) {
 		return nil, fmt.Errorf("open schedules: %w", err)
 	}
 
+	jobs := background.NewManager(settings.Tools.MaxBackgroundTimeout)
 	agents := agent.New(configuration.AgentConfig(), resolver,
 		agent.WithToolMiddleware(
 			tools.OutputCap(settings.Tools, storage.PutBlob),
@@ -78,9 +81,10 @@ func Open(ctx context.Context, settings settings.Settings) (*Runtime, error) {
 		),
 		agent.WithContributors(
 			instructions.NewContributor(),
-			local.NewContributor(),
+			local.NewContributor(jobs),
 			memory.NewContributor(memories),
 			schedule.NewContributor(schedules),
+			background.NewContributor(jobs),
 			automaticCompaction,
 		),
 	)
@@ -93,10 +97,14 @@ func Open(ctx context.Context, settings settings.Settings) (*Runtime, error) {
 	worker := schedule.NewWorker(schedules, schedule.NewExecutionDispatcher(runtime), settings.Scheduling.PollInterval)
 	worker.Start()
 
+	jobWorker := background.NewWorker(jobs, background.NewExecutionDispatcher(runtime))
+	jobWorker.Start()
+
 	return &Runtime{
 		service:   service.NewLocal(configuration, runtime, storage, agents, estimator, schedules),
 		harness:   runtime,
 		scheduler: worker,
+		jobs:      jobWorker,
 	}, nil
 }
 
@@ -106,7 +114,8 @@ func (r *Runtime) Service() *service.Local {
 
 func (r *Runtime) Shutdown(ctx context.Context) error {
 	schedulerErr := r.scheduler.Shutdown(ctx)
+	jobsErr := r.jobs.Shutdown(ctx)
 	harnessErr := r.harness.Shutdown(ctx)
 
-	return errors.Join(schedulerErr, harnessErr)
+	return errors.Join(schedulerErr, jobsErr, harnessErr)
 }
