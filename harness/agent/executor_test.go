@@ -5,15 +5,244 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"sync"
 	"testing"
+	"time"
 
+	adkagent "github.com/vitaliiPsl/crappy-adk/agent"
 	"github.com/vitaliiPsl/crappy-adk/kit"
 	"github.com/vitaliiPsl/crappy-adk/kittest"
+	adktool "github.com/vitaliiPsl/crappy-adk/x/tool"
 
 	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
+	"github.com/vitaliipsl/crappy/harness/session"
+	"github.com/vitaliipsl/crappy/harness/session/state"
 )
+
+func TestExecutorConsumesSteeringBeforeNextModelCall(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	started := make(chan struct{})
+	releaseTool := make(chan struct{})
+
+	release := sync.OnceFunc(func() { close(releaseTool) })
+	defer release()
+
+	wait := adktool.MustNew("wait", "Wait for release", func(run *kit.RunContext, _ struct{}) (string, error) {
+		close(started)
+
+		select {
+		case <-releaseTool:
+			return "tool finished", nil
+		case <-run.Done():
+			return "", run.Err()
+		}
+	})
+	call := kit.NewToolCall("call", "wait", nil)
+	model := kittest.NewModel(t,
+		kittest.ModelResult{Response: kit.ModelResponse{
+			Message: kit.NewModelMessage(kit.NewToolCallContent(call)), FinishReason: kit.FinishReasonToolCall,
+		}},
+		kittest.ModelResult{Response: kit.ModelResponse{
+			Message: kit.NewModelMessage(kit.NewTextContent("steering handled")), FinishReason: kit.FinishReasonStop,
+		}},
+		kittest.ModelResult{Response: kit.ModelResponse{
+			Message: kit.NewModelMessage(kit.NewTextContent("queued work handled")), FinishReason: kit.FinishReasonStop,
+		}},
+	)
+	opened, store := newSteeringAgentSession(ctx, t, model, contribute(Contribution{Tools: []kit.Tool{wait}}))
+
+	first, err := opened.Execute(ctx, execution.NewRequest(ExecutorName, kit.NewUserMessage(kit.NewTextContent("initial"))))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-started:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+
+	ordinary, err := opened.Execute(ctx, execution.NewRequest(ExecutorName, kit.NewUserMessage(kit.NewTextContent("later"))))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, text := range []string{"focus on scheduling", "also inspect cancellation"} {
+		if err := opened.Steer(ctx, execution.NewRequest(ExecutorName, kit.NewUserMessage(kit.NewTextContent(text)))); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	release()
+
+	if status, err := ordinary.Wait(ctx); err != nil || status != execution.Completed {
+		t.Fatalf("queued execution = %s, %v", status, err)
+	}
+
+	if status, err := first.Status(); err != nil || status != execution.Completed {
+		t.Fatalf("original execution = %s, %v", status, err)
+	}
+
+	model.AssertCallCount(t, 3)
+
+	messages := model.CallAt(1).Messages
+	if len(messages) != 5 || messages[2].Role != kit.RoleTool || messages[3].TextContent().Text != "focus on scheduling" || messages[4].TextContent().Text != "also inspect cancellation" {
+		t.Fatalf("steering was not delivered after tool results: %+v", messages)
+	}
+
+	stored, err := store.List(ctx, "session", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	deliveries := 0
+
+	executionIDs := make(map[string]bool)
+	for _, value := range stored {
+		if value.Type == execution.EntryType {
+			executionIDs[value.ExecutionID] = true
+		}
+
+		if value.Type != MessageEntryType {
+			continue
+		}
+
+		var message kit.Message
+		if err := json.Unmarshal(value.Payload, &message); err != nil {
+			t.Fatal(err)
+		}
+
+		text := kit.ContentsText(message.Content)
+		if text == "focus on scheduling" || text == "also inspect cancellation" {
+			deliveries++
+
+			if value.ExecutionID != first.ID() {
+				t.Fatalf("steering changed execution identity: %+v", value)
+			}
+		}
+	}
+
+	if deliveries != 2 || len(executionIDs) != 2 {
+		t.Fatalf("steering deliveries = %d, executions = %d", deliveries, len(executionIDs))
+	}
+}
+
+func TestExecutorQueuesSteeringThatMissesLastBoundary(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	started := make(chan struct{})
+	releaseModel := make(chan struct{})
+
+	release := sync.OnceFunc(func() { close(releaseModel) })
+	defer release()
+
+	firstRequest := true
+	gate := adkagent.WithOnModelRequestReady(func(run *kit.RunContext, _ kit.ModelRequest) (bool, error) {
+		if firstRequest {
+			firstRequest = false
+
+			close(started)
+
+			select {
+			case <-releaseModel:
+			case <-run.Done():
+				return false, run.Err()
+			}
+		}
+
+		return false, nil
+	})
+	model := kittest.NewModel(t,
+		kittest.ModelResult{Response: kit.ModelResponse{
+			Message: kit.NewModelMessage(kit.NewTextContent("first finished")), FinishReason: kit.FinishReasonStop,
+		}},
+		kittest.ModelResult{Response: kit.ModelResponse{
+			Message: kit.NewModelMessage(kit.NewTextContent("follow-up finished")), FinishReason: kit.FinishReasonStop,
+		}},
+	)
+	opened, _ := newSteeringAgentSession(ctx, t, model, contribute(Contribution{Options: []adkagent.Option{gate}}))
+
+	first, err := opened.Execute(ctx, execution.NewRequest(ExecutorName, kit.NewUserMessage(kit.NewTextContent("initial"))))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-started:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+
+	if err := opened.Steer(ctx, execution.NewRequest(ExecutorName, kit.NewUserMessage(kit.NewTextContent("late steering")))); err != nil {
+		t.Fatal(err)
+	}
+
+	release()
+
+	if status, err := first.Wait(ctx); err != nil || status != execution.Completed {
+		t.Fatalf("first execution = %s, %v", status, err)
+	}
+
+	records, err := opened.Entries(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	nextID := ""
+	for _, value := range records {
+		if value.Type == execution.EntryType && value.ExecutionID != first.ID() {
+			nextID = value.ExecutionID
+
+			break
+		}
+	}
+
+	next, err := opened.Execution(ctx, nextID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if status, err := next.Wait(ctx); err != nil || status != execution.Completed {
+		t.Fatalf("fallback execution = %s, %v", status, err)
+	}
+
+	model.AssertCallCount(t, 2)
+
+	if messages := model.CallAt(1).Messages; len(messages) != 3 || messages[1].TextContent().Text != "first finished" || messages[2].TextContent().Text != "late steering" {
+		t.Fatalf("late steering did not use normal queue delivery: %+v", messages)
+	}
+}
+
+func newSteeringAgentSession(ctx context.Context, t *testing.T, model kit.Model, contributors ...Contributor) (*session.Session, *entry.MemoryStore) {
+	t.Helper()
+
+	states := state.NewMemoryStore()
+	if err := states.Save(ctx, state.Record{ID: "session"}); err != nil {
+		t.Fatal(err)
+	}
+
+	store := entry.NewMemoryStore()
+	registry := execution.NewRegistry()
+	registry.Register(ExecutorName, NewExecutor(New(kit.AgentConfig{}, staticModelResolver{model}, WithContributors(contributors...))))
+
+	opened, err := session.New(ctx, "session", state.New(states, "session"), store, event.NewBroker("session", store), registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(opened.Close)
+
+	return opened, store
+}
 
 func TestExecutorCompletesMissingToolResults(t *testing.T) {
 	t.Parallel()

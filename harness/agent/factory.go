@@ -41,7 +41,7 @@ func New(config kit.AgentConfig, models ModelResolver, options ...Option) *Facto
 	return factory
 }
 
-func (f *Factory) Build(ctx context.Context, request BuildRequest) (kit.Agent, error) {
+func (f *Factory) Build(ctx context.Context, request BuildRequest, extraOptions ...adkagent.Option) (kit.Agent, error) {
 	model, err := f.models.Resolve(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("resolve model: %w", err)
@@ -72,6 +72,7 @@ func (f *Factory) Build(ctx context.Context, request BuildRequest) (kit.Agent, e
 	}
 
 	options = append(options, adkagent.WithTools(tools...))
+	options = append(options, extraOptions...)
 
 	built, err := adkagent.New(model, request.History, options...)
 	if err != nil {

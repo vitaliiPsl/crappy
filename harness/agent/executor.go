@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	adkagent "github.com/vitaliiPsl/crappy-adk/agent"
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
 	"github.com/vitaliipsl/crappy/harness/execution"
@@ -58,12 +59,19 @@ func (e *Executor) Execute(ctx context.Context, params execution.ExecuteParams) 
 		return err
 	}
 
+	var options []adkagent.Option
+	if params.Steer != nil {
+		options = append(options, adkagent.WithOnTurnStart(func(run *kit.RunContext) error {
+			return steer(run.Context, params, history)
+		}))
+	}
+
 	built, err := e.factory.Build(ctx, BuildRequest{
 		SessionID:   params.SessionID,
 		ExecutionID: params.ExecutionID,
 		State:       params.State,
 		History:     history,
-	})
+	}, options...)
 	if err != nil {
 		return fmt.Errorf("build agent: %w", err)
 	}
@@ -116,6 +124,17 @@ func (*Executor) completeToolResults(ctx context.Context, history *History, para
 	}
 
 	return nil
+}
+
+func steer(ctx context.Context, params execution.ExecuteParams, history *History) error {
+	return params.Steer(ctx, func(payload json.RawMessage) error {
+		var message kit.Message
+		if err := json.Unmarshal(payload, &message); err != nil {
+			return fmt.Errorf("decode steering input: %w", err)
+		}
+
+		return history.Append(ctx, message)
+	})
 }
 
 func unresolvedToolCalls(messages []kit.Message) []kit.ToolCall {

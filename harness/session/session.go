@@ -21,8 +21,9 @@ type Session struct {
 	events    event.Broker
 	executors execution.Resolver
 
-	current *Execution
-	queue   []*Execution
+	current  *Execution
+	queue    []*Execution
+	steering []execution.Request
 
 	mu sync.Mutex
 }

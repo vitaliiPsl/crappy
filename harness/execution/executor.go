@@ -18,6 +18,10 @@ type ExecuteParams struct {
 	State   state.State
 	Entries entry.Store
 	Events  event.Publisher
+
+	// Steer removes inputs after accept succeeds. Call it synchronously
+	// from Execute, with a single consumer, to keep delivery ordered with execution.
+	Steer func(ctx context.Context, accept func(json.RawMessage) error) error
 }
 
 type Executor interface {

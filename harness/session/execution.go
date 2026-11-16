@@ -28,7 +28,10 @@ type Execution struct {
 }
 
 func newExecution(record execution.Record) *Execution {
-	created := &Execution{record: record, done: make(chan struct{})}
+	created := &Execution{
+		record: record,
+		done:   make(chan struct{}),
+	}
 	if record.Status.Terminal() {
 		close(created.done)
 	}
@@ -136,6 +139,12 @@ func (s *Session) runExecution(ctx context.Context, current *Execution) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if err := s.enqueueRemainingSteering(context.WithoutCancel(ctx)); err != nil {
+		s.halt(err)
+
+		return
+	}
+
 	status, failure := execution.Completed, ""
 
 	switch {
@@ -176,6 +185,7 @@ func (s *Session) invokeExecutor(ctx context.Context, record execution.Record) e
 		State:       s.state,
 		Entries:     s.entries,
 		Events:      s.events,
+		Steer:       s.steer,
 	})
 }
 

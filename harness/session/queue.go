@@ -23,24 +23,7 @@ func (s *Session) Execute(ctx context.Context, request execution.Request) (*Exec
 		return nil, ErrClosed
 	}
 
-	if _, err := s.executors.Resolve(request.Executor); err != nil {
-		return nil, err
-	}
-
-	input, err := json.Marshal(request.Input)
-	if err != nil {
-		return nil, fmt.Errorf("encode execution input: %w", err)
-	}
-
-	queued := newExecution(execution.Record{ID: uuid.NewString(), Executor: request.Executor, Input: input})
-	if err := s.commitExecution(ctx, queued, execution.Queued, ""); err != nil {
-		return nil, err
-	}
-
-	s.queue = append(s.queue, queued)
-	s.startNext()
-
-	return queued, nil
+	return s.enqueue(ctx, request)
 }
 
 func (s *Session) Resume(ctx context.Context) (*Execution, error) {
@@ -118,6 +101,31 @@ func (s *Session) Cancel(ctx context.Context, id string) error {
 	}
 
 	return ErrExecutionNotActive
+}
+
+func (s *Session) enqueue(ctx context.Context, request execution.Request) (*Execution, error) {
+	if _, err := s.executors.Resolve(request.Executor); err != nil {
+		return nil, err
+	}
+
+	input, err := json.Marshal(request.Input)
+	if err != nil {
+		return nil, fmt.Errorf("encode execution input: %w", err)
+	}
+
+	queued := newExecution(execution.Record{
+		ID:       uuid.NewString(),
+		Executor: request.Executor,
+		Input:    input,
+	})
+	if err := s.commitExecution(ctx, queued, execution.Queued, ""); err != nil {
+		return nil, err
+	}
+
+	s.queue = append(s.queue, queued)
+	s.startNext()
+
+	return queued, nil
 }
 
 func (s *Session) startNext() {
