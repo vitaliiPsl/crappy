@@ -94,6 +94,14 @@ func TestLoadFile(t *testing.T) {
 	writeSettings(t, path, `
 scheduling:
   poll_interval: 250ms
+mcp:
+  connect_timeout: 2s
+  servers:
+    - name: work
+      tools: [search]
+      url: https://example.com/mcp
+      headers:
+        Authorization: Bearer ${WORK_TOKEN}
 providers:
   - id: work
     api: openai
@@ -125,6 +133,10 @@ providers:
 	}
 
 	provider := loaded.Providers[0]
+	if loaded.MCP.ConnectTimeout != 2*time.Second || len(loaded.MCP.Servers) != 1 || loaded.MCP.Servers[0].Headers["Authorization"] != "Bearer ${WORK_TOKEN}" {
+		t.Fatalf("MCP settings = %+v", loaded.MCP)
+	}
+
 	if got, want := provider.ID, "work"; got != want {
 		t.Fatalf("provider ID = %q, want %q", got, want)
 	}
@@ -139,6 +151,26 @@ providers:
 
 	if got, want := provider.APIKey, "work-key"; got != want {
 		t.Fatalf("provider API key = %q, want %q", got, want)
+	}
+}
+
+func TestLoadFileRejectsInvalidMCPSettings(t *testing.T) {
+	t.Parallel()
+
+	for _, contents := range []string{
+		"mcp:\n  connect_timeout: 0s\n",
+		"mcp:\n  poll_interval: 0s\n",
+		"mcp:\n  servers:\n    - name: work\n",
+		"mcp:\n  servers:\n    - name: work\n      command: server\n      url: https://example.com/mcp\n",
+		"mcp:\n  servers:\n    - name: work\n      url: example.com/mcp\n",
+		"mcp:\n  servers:\n    - name: work\n      command: server\n    - name: work\n      command: server\n",
+	} {
+		path := filepath.Join(t.TempDir(), "settings.yaml")
+		writeSettings(t, path, contents)
+
+		if _, err := LoadFile(path); err == nil {
+			t.Fatal("accepted invalid MCP settings")
+		}
 	}
 }
 

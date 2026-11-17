@@ -15,6 +15,7 @@ import (
 	"github.com/vitaliipsl/crappy/internal/background"
 	"github.com/vitaliipsl/crappy/internal/config"
 	"github.com/vitaliipsl/crappy/internal/instructions"
+	"github.com/vitaliipsl/crappy/internal/mcp"
 	"github.com/vitaliipsl/crappy/internal/memory"
 	"github.com/vitaliipsl/crappy/internal/model"
 	"github.com/vitaliipsl/crappy/internal/prompt"
@@ -31,6 +32,7 @@ type Runtime struct {
 	harness   *harness.Harness
 	scheduler *schedule.Worker
 	jobs      *background.Worker
+	mcp       *mcp.Worker
 }
 
 func Open(ctx context.Context, settings settings.Settings) (*Runtime, error) {
@@ -69,12 +71,14 @@ func Open(ctx context.Context, settings settings.Settings) (*Runtime, error) {
 		return nil, fmt.Errorf("open session storage: %w", err)
 	}
 
-	schedules, err := schedule.NewManager(ctx, schedule.NewJSONStore(filepath.Join(settings.SessionsPath, "schedules.json")))
+	schedulesManager, err := schedule.NewManager(ctx, schedule.NewJSONStore(filepath.Join(settings.SessionsPath, "schedules.json")))
 	if err != nil {
 		return nil, fmt.Errorf("open schedules: %w", err)
 	}
 
-	jobs := background.NewManager(settings.Tools.MaxBackgroundTimeout)
+	jobsManager := background.NewManager(settings.Tools.MaxBackgroundTimeout)
+	mcpManager := mcp.NewManager(settings.MCP)
+
 	agents := agent.New(configuration.AgentConfig(), resolver,
 		agent.WithToolMiddleware(
 			tools.OutputCap(settings.Tools, storage.PutBlob),
@@ -82,11 +86,12 @@ func Open(ctx context.Context, settings settings.Settings) (*Runtime, error) {
 		),
 		agent.WithContributors(
 			instructions.NewContributor(),
-			local.NewContributor(jobs),
+			local.NewContributor(jobsManager),
 			memory.NewContributor(memories),
-			schedule.NewContributor(schedules),
-			background.NewContributor(jobs),
+			schedule.NewContributor(schedulesManager),
+			background.NewContributor(jobsManager),
 			prompt.NewContributor(),
+			mcp.NewContributor(mcpManager),
 			automaticCompaction,
 		),
 	)
@@ -96,17 +101,28 @@ func Open(ctx context.Context, settings settings.Settings) (*Runtime, error) {
 		harness.WithExecutor(compactionexec.ExecutorName, compactionexec.New(compactor)),
 	)
 
-	worker := schedule.NewWorker(schedules, schedule.NewExecutionDispatcher(runtime), settings.Scheduling.PollInterval)
-	worker.Start()
+	sheduleWorker := schedule.NewWorker(schedulesManager, schedule.NewExecutionDispatcher(runtime), settings.Scheduling.PollInterval)
+	sheduleWorker.Start()
 
-	jobWorker := background.NewWorker(jobs, background.NewExecutionDispatcher(runtime))
+	jobWorker := background.NewWorker(jobsManager, background.NewExecutionDispatcher(runtime))
 	jobWorker.Start()
 
+	mcpWorker := mcp.NewWorker(mcpManager, settings.MCP.PollInterval)
+	mcpWorker.Start()
+
 	return &Runtime{
-		service:   service.NewLocal(configuration, runtime, storage, agents, estimator, schedules),
+		service: service.NewLocal(
+			configuration,
+			runtime,
+			storage,
+			agents,
+			estimator,
+			schedulesManager,
+		),
 		harness:   runtime,
-		scheduler: worker,
+		scheduler: sheduleWorker,
 		jobs:      jobWorker,
+		mcp:       mcpWorker,
 	}, nil
 }
 
@@ -118,6 +134,7 @@ func (r *Runtime) Shutdown(ctx context.Context) error {
 	schedulerErr := r.scheduler.Shutdown(ctx)
 	jobsErr := r.jobs.Shutdown(ctx)
 	harnessErr := r.harness.Shutdown(ctx)
+	mcpErr := r.mcp.Shutdown(ctx)
 
-	return errors.Join(schedulerErr, jobsErr, harnessErr)
+	return errors.Join(schedulerErr, jobsErr, harnessErr, mcpErr)
 }

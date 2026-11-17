@@ -3,6 +3,7 @@ package settings
 import (
 	"github.com/vitaliiPsl/crappy-adk/x/retry"
 
+	"github.com/vitaliipsl/crappy/internal/mcp"
 	"github.com/vitaliipsl/crappy/internal/memory"
 	"github.com/vitaliipsl/crappy/internal/model"
 	"github.com/vitaliipsl/crappy/internal/schedule"
@@ -21,6 +22,7 @@ type Settings struct {
 	SessionsPath string           `yaml:"sessions_path,omitempty" validate:"required"`
 	Scheduling   schedule.Config  `yaml:"scheduling"`
 	Memory       memory.Config    `yaml:"memory"`
+	MCP          mcp.Config       `yaml:"mcp"`
 	Tools        tools.Config     `yaml:"tools"`
 	Retry        retry.Config     `yaml:"retry"`
 	Providers    []model.Provider `yaml:"providers" validate:"min=1,unique=ID,dive"`
@@ -32,6 +34,7 @@ func defaults() Settings {
 		SessionsPath: DefaultSessionsPath,
 		Scheduling:   schedule.DefaultConfig(),
 		Memory:       memory.DefaultConfig(),
+		MCP:          mcp.DefaultConfig(),
 		Tools:        tools.DefaultConfig(),
 		Retry:        retry.DefaultConfig(),
 		Providers: []model.Provider{

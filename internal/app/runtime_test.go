@@ -14,11 +14,14 @@ import (
 	"testing"
 	"time"
 
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
 	corememory "github.com/vitaliipsl/crappy-memory/memory"
 	jsonstore "github.com/vitaliipsl/crappy-memory/storage/json"
 	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/interaction"
 	"github.com/vitaliipsl/crappy/internal/background"
+	"github.com/vitaliipsl/crappy/internal/mcp"
 	"github.com/vitaliipsl/crappy/internal/memory"
 	"github.com/vitaliipsl/crappy/internal/model"
 	"github.com/vitaliipsl/crappy/internal/prompt"
@@ -28,6 +31,130 @@ import (
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
 )
+
+func TestRuntimeUsesMCPToolsAndClosesConnections(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+
+	var toolCalls, modelCalls atomic.Int32
+
+	remote := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "records", Version: "1"},
+		&mcpsdk.ServerOptions{Instructions: "Use search to find work records."})
+	remote.AddTool(&mcpsdk.Tool{
+		Name: "search", Description: "Find work records",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{"query": map[string]any{"type": "string"}}},
+	}, func(_ context.Context, request *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+		var arguments map[string]any
+		if err := json.Unmarshal(request.Params.Arguments, &arguments); err != nil || len(arguments) != 1 || arguments["query"] != "latest" {
+			t.Errorf("remote tool arguments = %+v, %v", arguments, err)
+		}
+
+		toolCalls.Add(1)
+
+		return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "The latest record is ready."}}}, nil
+	})
+
+	endpoint := httptest.NewServer(mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return remote }, nil))
+	defer endpoint.Close()
+
+	modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Input []struct {
+				Type   string          `json:"type"`
+				Output json.RawMessage `json:"output"`
+			} `json:"input"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+			w.WriteHeader(http.StatusBadRequest)
+
+			return
+		}
+
+		output := "[]"
+		if modelCalls.Add(1) == 1 {
+			output = `[{"type":"function_call","id":"search","call_id":"search","name":"mcp__work__search","arguments":"{\"query\":\"latest\",\"timeout_seconds\":1}"}]`
+		} else {
+			found := false
+			for _, item := range body.Input {
+				if item.Type == "function_call_output" && strings.Contains(string(item.Output), "latest record is ready") {
+					found = true
+				}
+			}
+
+			if !found {
+				t.Error("model did not receive the MCP tool result")
+			}
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprintf(w, "data: {\"type\":\"response.completed\",\"sequence_number\":1,\"response\":{\"status\":\"completed\",\"output\":%s}}\n\n", output)
+	}))
+	defer modelServer.Close()
+
+	config := mcp.DefaultConfig()
+	config.Servers = []mcp.ServerConfig{{Name: "work", URL: endpoint.URL}}
+
+	runtime, err := Open(ctx, settings.Settings{
+		ConfigPath: runtimeConfig(t), SessionsPath: t.TempDir(), Scheduling: schedule.DefaultConfig(),
+		Memory: memory.Config{Path: filepath.Join(t.TempDir(), "memory.json")}, Tools: tools.DefaultConfig(), MCP: config,
+		Providers: []model.Provider{{ID: "test", API: "openai", APIKey: "test-key", BaseURL: modelServer.URL}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer func() { _ = runtime.Shutdown(context.Background()) }()
+
+	app := runtime.Service()
+
+	opened, err := app.CreateSession(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for found := false; !found; {
+		report, err := app.Context(ctx, opened.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for _, tool := range report.Tools {
+			if tool.Name == "mcp__work__search" {
+				found = true
+
+				if _, exists := tool.Schema["properties"].(map[string]any)["timeout_seconds"]; !exists {
+					t.Fatal("MCP tool omitted the existing timeout wrapper")
+				}
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			t.Fatal("MCP tool was never contributed")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	if toolCalls.Load() != 0 || modelCalls.Load() != 0 {
+		t.Fatalf("context inspection executed work: tools=%d, model=%d", toolCalls.Load(), modelCalls.Load())
+	}
+
+	id, err := app.Execute(ctx, opened.ID, kit.NewTextContent("Find the latest work record"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if status, err := app.WaitExecution(ctx, opened.ID, id); err != nil || status != execution.Completed || toolCalls.Load() != 1 || modelCalls.Load() != 2 {
+		t.Fatalf("MCP execution = %s, %v; tool calls=%d, model calls=%d", status, err, toolCalls.Load(), modelCalls.Load())
+	}
+
+	if err := runtime.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestRuntimeWaitsForUserWithoutToolDeadline(t *testing.T) {
 	t.Parallel()
@@ -81,7 +208,7 @@ func TestRuntimeWaitsForUserWithoutToolDeadline(t *testing.T) {
 
 	runtime, err := Open(ctx, settings.Settings{
 		ConfigPath: runtimeConfig(t), SessionsPath: t.TempDir(), Scheduling: schedule.DefaultConfig(),
-		Memory: memory.Config{Path: filepath.Join(t.TempDir(), "memory.json")}, Tools: toolConfig,
+		Memory: memory.Config{Path: filepath.Join(t.TempDir(), "memory.json")}, Tools: toolConfig, MCP: mcp.DefaultConfig(),
 		Providers: []model.Provider{{ID: "test", API: "openai", APIKey: "test-key", BaseURL: server.URL}},
 	})
 	if err != nil {
@@ -200,6 +327,7 @@ func TestRuntimeLoadsMemoryAcrossFreshSessionsAndRestarts(t *testing.T) {
 		ConfigPath:   runtimeConfig(t),
 		SessionsPath: t.TempDir(),
 		Scheduling:   schedule.DefaultConfig(),
+		MCP:          mcp.DefaultConfig(),
 		Memory:       memory.Config{Path: path},
 		Tools:        tools.DefaultConfig(),
 		Providers: []model.Provider{
@@ -335,6 +463,7 @@ func TestRuntimeSearchesSavedMemoriesAfterRestart(t *testing.T) {
 		ConfigPath:   runtimeConfig(t),
 		SessionsPath: t.TempDir(),
 		Scheduling:   schedule.DefaultConfig(),
+		MCP:          mcp.DefaultConfig(),
 		Memory:       memory.Config{Path: path},
 		Tools:        tools.DefaultConfig(),
 		Providers: []model.Provider{
@@ -489,6 +618,7 @@ func TestRuntimeBackgroundJobContinuesAfterExecutionAndCapsRetrievedOutput(t *te
 		ConfigPath:   runtimeConfig(t),
 		SessionsPath: t.TempDir(),
 		Scheduling:   schedule.DefaultConfig(),
+		MCP:          mcp.DefaultConfig(),
 		Memory:       memory.Config{Path: filepath.Join(t.TempDir(), "memory.json")},
 		Tools: tools.Config{
 			Timeout:              time.Second,

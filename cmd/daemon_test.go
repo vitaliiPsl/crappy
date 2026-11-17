@@ -17,6 +17,7 @@ import (
 	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/internal/api"
 	"github.com/vitaliipsl/crappy/internal/daemon"
+	"github.com/vitaliipsl/crappy/internal/mcp"
 	"github.com/vitaliipsl/crappy/internal/memory"
 	"github.com/vitaliipsl/crappy/internal/model"
 	"github.com/vitaliipsl/crappy/internal/schedule"
@@ -215,6 +216,7 @@ func newServeFixture(ctx context.Context, t *testing.T, handler http.Handler) (s
 		ConfigPath:   configPath,
 		SessionsPath: filepath.Join(root, "sessions"),
 		Scheduling:   schedule.DefaultConfig(),
+		MCP:          mcp.DefaultConfig(),
 		Memory:       memory.Config{Path: filepath.Join(root, "memory.json")},
 		Tools:        tools.DefaultConfig(),
 		Providers:    []model.Provider{{ID: "test", API: "openai", APIKey: "test", BaseURL: server.URL}},

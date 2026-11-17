@@ -11,9 +11,11 @@ require (
 	charm.land/bubbles/v2 v2.1.0
 	charm.land/bubbletea/v2 v2.0.6
 	charm.land/lipgloss/v2 v2.0.2
+	github.com/charmbracelet/ultraviolet v0.0.0-20260416155717-489999b90468
 	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/go-playground/validator/v10 v10.25.0
 	github.com/google/uuid v1.6.0
+	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/vitaliiPsl/crappy-adk v0.11.1-0.20261025093118-09a43e85846d
 	github.com/vitaliipsl/crappy-memory v0.0.0
@@ -28,7 +30,6 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.37.0 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/charmbracelet/colorprofile v0.4.3 // indirect
-	github.com/charmbracelet/ultraviolet v0.0.0-20260416155717-489999b90468 // indirect
 	github.com/charmbracelet/x/term v0.2.2 // indirect
 	github.com/charmbracelet/x/termios v0.1.1 // indirect
 	github.com/charmbracelet/x/windows v0.2.2 // indirect
@@ -49,16 +50,21 @@ require (
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/openai/openai-go/v3 v3.33.0 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
+	github.com/segmentio/asm v1.1.3 // indirect
+	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
+	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	go.opencensus.io v0.24.0 // indirect
 	golang.org/x/crypto v0.40.0 // indirect
 	golang.org/x/net v0.41.0 // indirect
+	golang.org/x/oauth2 v0.35.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/text v0.27.0 // indirect
+	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/genai v1.55.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240903143218-8af14fe29dc1 // indirect
 	google.golang.org/grpc v1.66.2 // indirect
