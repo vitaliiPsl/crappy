@@ -6,6 +6,7 @@ import (
 
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
+	"github.com/vitaliipsl/crappy/harness/interaction"
 	"github.com/vitaliipsl/crappy/harness/session/state"
 	"github.com/vitaliipsl/crappy/internal/schedule"
 
@@ -25,6 +26,9 @@ type Service interface {
 	Compact(context.Context, string) (string, error)
 	GetExecutionStatus(context.Context, string, string) (execution.Status, error)
 	WaitExecution(context.Context, string, string) (execution.Status, error)
+
+	PendingPrompts(context.Context, string) ([]interaction.Request, error)
+	Respond(context.Context, string, string, interaction.Answer) error
 
 	CreateSchedule(context.Context, string, string, time.Time) (schedule.Record, error)
 	GetSchedule(context.Context, string, string) (schedule.Record, error)

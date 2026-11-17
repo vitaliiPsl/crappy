@@ -154,9 +154,9 @@ func (m *Model) handleEvent(message eventMsg) tea.Cmd {
 		return nil
 	}
 
-	m.applyEvent(message.event)
+	command := m.applyEvent(message.event)
 
-	return m.waitForEvent()
+	return tea.Batch(command, m.waitForEvent())
 }
 
 func (m *Model) handleExecuteResult(message executeResultMsg) tea.Cmd {

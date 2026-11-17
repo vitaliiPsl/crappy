@@ -5,6 +5,7 @@ import (
 
 	"github.com/vitaliipsl/crappy/harness"
 	"github.com/vitaliipsl/crappy/harness/event"
+	"github.com/vitaliipsl/crappy/harness/interaction"
 	"github.com/vitaliipsl/crappy/harness/session"
 	"github.com/vitaliipsl/crappy/harness/session/state"
 	"github.com/vitaliipsl/crappy/internal/schedule"
@@ -24,6 +25,8 @@ type ResponseError struct {
 }
 
 var serviceErrors = map[string]error{
+	"prompt_not_found":        interaction.ErrNotFound,
+	"prompts_closed":          interaction.ErrClosed,
 	"schedule_not_found":      schedule.ErrNotFound,
 	"schedule_not_pending":    schedule.ErrNotPending,
 	"invalid_schedule":        schedule.ErrInvalid,

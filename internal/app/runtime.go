@@ -17,6 +17,7 @@ import (
 	"github.com/vitaliipsl/crappy/internal/instructions"
 	"github.com/vitaliipsl/crappy/internal/memory"
 	"github.com/vitaliipsl/crappy/internal/model"
+	"github.com/vitaliipsl/crappy/internal/prompt"
 	"github.com/vitaliipsl/crappy/internal/schedule"
 	"github.com/vitaliipsl/crappy/internal/service"
 	"github.com/vitaliipsl/crappy/internal/settings"
@@ -77,7 +78,7 @@ func Open(ctx context.Context, settings settings.Settings) (*Runtime, error) {
 	agents := agent.New(configuration.AgentConfig(), resolver,
 		agent.WithToolMiddleware(
 			tools.OutputCap(settings.Tools, storage.PutBlob),
-			tools.Timeout(settings.Tools),
+			toolTimeout(settings.Tools),
 		),
 		agent.WithContributors(
 			instructions.NewContributor(),
@@ -85,6 +86,7 @@ func Open(ctx context.Context, settings settings.Settings) (*Runtime, error) {
 			memory.NewContributor(memories),
 			schedule.NewContributor(schedules),
 			background.NewContributor(jobs),
+			prompt.NewContributor(),
 			automaticCompaction,
 		),
 	)

@@ -11,6 +11,7 @@ import (
 	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/internal/client/tui/commands"
 	"github.com/vitaliipsl/crappy/internal/client/tui/components/composer"
+	promptview "github.com/vitaliipsl/crappy/internal/client/tui/components/prompt"
 	"github.com/vitaliipsl/crappy/internal/client/tui/components/transcript"
 	"github.com/vitaliipsl/crappy/internal/service"
 )
@@ -36,6 +37,7 @@ type Model struct {
 
 	transcript transcript.Model
 	composer   composer.Model
+	prompt     promptview.Model
 	width      int
 	height     int
 
@@ -54,6 +56,7 @@ func New(ctx context.Context, app service.Service, sessionID string) *Model {
 		sessionID:  sessionID,
 		transcript: transcript.New(),
 		composer:   composer.New(),
+		prompt:     promptview.New(),
 	}
 	model.commands = model.newCommands()
 
@@ -103,8 +106,18 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.handleCancelResult(message)
 
 		return m, nil
+	case promptResponseMsg:
+		return m, m.handlePromptResponse(message)
+	case promptview.Submit:
+		return m, m.respond(message)
+	case promptview.Cancel:
+		if request := m.prompt.Current(); request.ID == message.RequestID {
+			return m, m.cancelExecution(request.ExecutionID)
+		}
+
+		return m, nil
 	case composer.Submit:
-		if m.queueOpen {
+		if m.queueOpen || m.prompt.Active() {
 			return m, nil
 		}
 
@@ -121,10 +134,22 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		if m.prompt.Expanded() {
+			return m, m.prompt.Update(message)
+		}
+
 		return m, m.transcript.Update(message)
 	case tea.KeyPressMsg:
 		if m.queueOpen {
 			return m, m.handleQueueKey(message.String())
+		}
+
+		if m.prompt.Active() {
+			if !m.prompt.Expanded() && isTranscriptKey(message.String()) {
+				return m, m.transcript.Update(message)
+			}
+
+			return m, m.prompt.Update(message)
 		}
 
 		if message.String() == cancelKey && m.running() {
@@ -138,6 +163,10 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if isTranscriptKey(message.String()) {
 			return m, m.transcript.Update(message)
 		}
+	}
+
+	if m.prompt.Active() {
+		return m, m.prompt.Update(message)
 	}
 
 	return m, m.composer.Update(message)

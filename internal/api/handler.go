@@ -65,6 +65,9 @@ func (h *Handler) registerRoutes() *http.ServeMux {
 	mux.HandleFunc("GET /sessions/{session}/executions/{execution}", h.executionStatus)
 	mux.HandleFunc("GET /sessions/{session}/executions/{execution}/wait", h.waitExecution)
 
+	mux.HandleFunc("GET /sessions/{session}/prompts", h.pendingPrompts)
+	mux.HandleFunc("POST /sessions/{session}/prompts/{prompt}/respond", h.respond)
+
 	mux.HandleFunc("POST /sessions/{session}/schedules", h.createSchedule)
 	mux.HandleFunc("GET /sessions/{session}/schedules/{schedule}", h.getSchedule)
 	mux.HandleFunc("GET /sessions/{session}/schedules", h.listSchedules)

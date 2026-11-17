@@ -11,6 +11,7 @@ const (
 	toolArgumentPath        = "path"
 	toolArgumentURL         = "url"
 	toolArgumentQuery       = "query"
+	toolArgumentQuestion    = "question"
 	toolArgumentText        = "text"
 	toolArgumentID          = "id"
 )
@@ -20,6 +21,7 @@ var primaryToolArguments = []string{
 	toolArgumentPath,
 	toolArgumentURL,
 	toolArgumentQuery,
+	toolArgumentQuestion,
 	toolArgumentText,
 	toolArgumentID,
 }

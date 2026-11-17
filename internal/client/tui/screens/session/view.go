@@ -24,11 +24,17 @@ const (
 )
 
 func (m *Model) render() string {
+	m.composer.SetWidth(m.contentWidth())
+	m.prompt.SetSize(m.contentWidth(), max(5, m.height/2))
+
 	header := m.headerView()
 	status := m.statusView()
 	shortcuts := m.shortcutsView()
 
-	m.composer.SetWidth(m.contentWidth())
+	available := m.height - pageStyle.GetVerticalFrameSize() - transcriptAreaStyle.GetVerticalFrameSize() -
+		lipgloss.Height(header) - lipgloss.Height(status) - lipgloss.Height(shortcuts) - minimumContentSize
+	m.prompt.SetSize(m.contentWidth(), min(max(5, m.height/2), max(5, available)))
+
 	height := m.transcriptHeight(header, status, shortcuts)
 	m.transcript.SetSize(m.contentWidth(), height)
 
@@ -42,7 +48,7 @@ func (m *Model) render() string {
 		parts = append(parts, status)
 	}
 
-	parts = append(parts, m.composer.View(), shortcuts)
+	parts = append(parts, m.inputView(), shortcuts)
 
 	return pageStyle.Render(strings.Join(parts, sectionSeparator))
 }
@@ -51,7 +57,7 @@ func (m *Model) transcriptHeight(header, status, shortcuts string) int {
 	height := m.height -
 		pageStyle.GetVerticalFrameSize() -
 		transcriptAreaStyle.GetVerticalFrameSize() -
-		m.composer.Height() -
+		lipgloss.Height(m.inputView()) -
 		lipgloss.Height(header) -
 		lipgloss.Height(shortcuts)
 
@@ -60,6 +66,14 @@ func (m *Model) transcriptHeight(header, status, shortcuts string) int {
 	}
 
 	return max(height, minimumContentSize)
+}
+
+func (m *Model) inputView() string {
+	if m.prompt.Active() {
+		return m.prompt.View()
+	}
+
+	return m.composer.View()
 }
 
 func (m *Model) headerView() string {
@@ -109,6 +123,10 @@ func (m *Model) shortcutsView() string {
 		return m.queueHints()
 	}
 
+	if m.prompt.Active() {
+		return m.prompt.Shortcuts()
+	}
+
 	var values []hints.Hint
 
 	if m.terminalErr == nil {
@@ -149,7 +167,9 @@ func (m *Model) statusView() string {
 	style := workingStyle
 
 	queued := m.queuedCount()
-	if m.running() {
+	if m.prompt.Active() {
+		return ""
+	} else if m.running() {
 		label = workingLabel
 		if queued > 0 {
 			label += fmt.Sprintf(" · %d queued", queued)

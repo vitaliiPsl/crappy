@@ -17,15 +17,156 @@ import (
 	corememory "github.com/vitaliipsl/crappy-memory/memory"
 	jsonstore "github.com/vitaliipsl/crappy-memory/storage/json"
 	"github.com/vitaliipsl/crappy/harness/execution"
+	"github.com/vitaliipsl/crappy/harness/interaction"
 	"github.com/vitaliipsl/crappy/internal/background"
 	"github.com/vitaliipsl/crappy/internal/memory"
 	"github.com/vitaliipsl/crappy/internal/model"
+	"github.com/vitaliipsl/crappy/internal/prompt"
 	"github.com/vitaliipsl/crappy/internal/schedule"
 	"github.com/vitaliipsl/crappy/internal/settings"
 	"github.com/vitaliipsl/crappy/internal/tools"
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
 )
+
+func TestRuntimeWaitsForUserWithoutToolDeadline(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+
+	var requests atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var body struct {
+			Input []struct {
+				Type   string `json:"type"`
+				Output string `json:"output"`
+			} `json:"input"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Error(err)
+			writer.WriteHeader(http.StatusBadRequest)
+
+			return
+		}
+
+		output := "[]"
+		switch requests.Add(1) {
+		case 1:
+			output = `[{"type":"function_call","id":"question","call_id":"deadline","name":"ask_user","arguments":"{\"question\":\"Which deadline?\",\"choices\":[{\"id\":\"soon\",\"label\":\"As soon as possible\"}]}"}]`
+		case 2:
+			found := false
+			for _, item := range body.Input {
+				if item.Type == "function_call_output" && strings.Contains(item.Output, "Friday") {
+					found = true
+				}
+			}
+
+			if !found {
+				t.Error("the agent did not receive the user's answer")
+			}
+		case 3:
+		default:
+			t.Error("unexpected model request")
+		}
+
+		writer.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprintf(writer, "data: {\"type\":\"response.completed\",\"sequence_number\":1,\"response\":{\"status\":\"completed\",\"output\":%s}}\n\n", output)
+	}))
+	defer server.Close()
+
+	toolConfig := tools.DefaultConfig()
+	toolConfig.Timeout = 20 * time.Millisecond
+
+	runtime, err := Open(ctx, settings.Settings{
+		ConfigPath: runtimeConfig(t), SessionsPath: t.TempDir(), Scheduling: schedule.DefaultConfig(),
+		Memory: memory.Config{Path: filepath.Join(t.TempDir(), "memory.json")}, Tools: toolConfig,
+		Providers: []model.Provider{{ID: "test", API: "openai", APIKey: "test-key", BaseURL: server.URL}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = runtime.Shutdown(context.Background()) })
+
+	app := runtime.Service()
+
+	opened, err := app.CreateSession(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := app.Context(ctx, opened.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	found := false
+	for _, tool := range report.Tools {
+		if tool.Name == prompt.ToolName {
+			found = true
+
+			properties := tool.Schema["properties"].(map[string]any)
+			if _, hasDeadline := properties["timeout_seconds"]; hasDeadline {
+				t.Fatal("the question tool exposes the ordinary tool deadline")
+			}
+		}
+	}
+
+	if !found || requests.Load() != 0 {
+		t.Fatalf("inspection omitted ask_user or called the model: found=%v, calls=%d", found, requests.Load())
+	}
+
+	subscription, err := app.Subscribe(ctx, opened.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer subscription.Close()
+
+	id, err := app.Execute(ctx, opened.ID, kit.NewTextContent("Prepare a report"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var question interaction.Request
+	for question.ID == "" {
+		select {
+		case value := <-subscription.Events():
+			if value.Type == interaction.RequestedEntryType {
+				if err := json.Unmarshal(value.Payload, &question); err != nil {
+					t.Fatal(err)
+				}
+			}
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+	}
+
+	subscription.Close()
+	<-time.After(3 * toolConfig.Timeout)
+
+	if pending, err := app.PendingPrompts(ctx, opened.ID); err != nil || len(pending) != 1 {
+		t.Fatalf("question expired at the tool deadline: %+v, %v", pending, err)
+	}
+
+	if err := app.Respond(ctx, opened.ID, question.ID, interaction.Answer{Text: "Friday"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if status, err := app.WaitExecution(ctx, opened.ID, id); err != nil || status != execution.Completed {
+		t.Fatalf("answered execution = %s, %v", status, err)
+	}
+
+	id, err = app.Execute(ctx, opened.ID, kit.NewTextContent("A straightforward request"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if status, err := app.WaitExecution(ctx, opened.ID, id); err != nil || status != execution.Completed || requests.Load() != 3 {
+		t.Fatalf("ordinary execution = %s, %v; model calls=%d", status, err, requests.Load())
+	}
+}
 
 func TestRuntimeLoadsMemoryAcrossFreshSessionsAndRestarts(t *testing.T) {
 	t.Parallel()

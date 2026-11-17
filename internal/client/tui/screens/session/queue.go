@@ -22,6 +22,14 @@ import (
 const queueHeadingHeight = 2
 
 func (m *Model) applyExecution(record execution.Record) {
+	if record.Status.Terminal() || record.Status == execution.Interrupted {
+		m.prompt.Interrupt(record.ID)
+
+		if !m.prompt.Active() {
+			m.composer.Focus()
+		}
+	}
+
 	selectedID := ""
 	if entries := m.queueEntries(); m.queueSelected < len(entries) {
 		selectedID = entries[m.queueSelected].ID
