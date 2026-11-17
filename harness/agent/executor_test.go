@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"slices"
 	"sync"
 	"testing"
@@ -17,9 +18,90 @@ import (
 	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
+	"github.com/vitaliipsl/crappy/harness/interaction"
 	"github.com/vitaliipsl/crappy/harness/session"
 	"github.com/vitaliipsl/crappy/harness/session/state"
 )
+
+func TestExecutorUsesSessionInteractions(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	call := kit.NewToolCall("question", "ask", map[string]any{"text": "Which deadline?"})
+	model := kittest.NewModel(t,
+		kittest.ModelResult{Response: kit.ModelResponse{
+			Message: kit.NewModelMessage(kit.NewToolCallContent(call)), FinishReason: kit.FinishReasonToolCall,
+		}},
+		kittest.ModelResult{Response: kit.ModelResponse{
+			Message: kit.NewModelMessage(kit.NewTextContent("done")), FinishReason: kit.FinishReasonStop,
+		}},
+	)
+	contributor := ContributorFunc(func(_ context.Context, build BuildContext) (Contribution, error) {
+		return Contribution{Tools: []kit.Tool{
+			adktool.MustNew("ask", "Ask a question", func(run *kit.RunContext, question interaction.Question) (interaction.Answer, error) {
+				return build.Request.Interactions.Ask(run.Context, build.Request.ExecutionID, question)
+			}),
+		}}, nil
+	})
+	opened, _ := newSteeringAgentSession(ctx, t, model, contributor)
+
+	subscription, err := opened.Subscribe(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer subscription.Close()
+
+	current, err := opened.Execute(ctx, execution.NewRequest(ExecutorName, kit.NewUserMessage(kit.NewTextContent("prepare a report"))))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var request interaction.Request
+	for request.ID == "" {
+		select {
+		case value, open := <-subscription.Events():
+			if !open {
+				t.Fatalf("subscription closed while waiting for a request: %v", subscription.Err())
+			}
+
+			if value.Type == interaction.RequestedEntryType {
+				if err := json.Unmarshal(value.Payload, &request); err != nil {
+					t.Fatal(err)
+				}
+			}
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+	}
+
+	if request.ExecutionID != current.ID() || request.SessionID != opened.ID() {
+		t.Fatalf("request = %+v", request)
+	}
+
+	if err := opened.Respond(ctx, request.ID, interaction.Answer{Text: "Friday"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if status, err := current.Wait(ctx); err != nil || status != execution.Completed {
+		t.Fatalf("execution = %s, %v", status, err)
+	}
+
+	if model.CallCount() != 2 {
+		t.Fatalf("model calls = %d, want a follow-up after answering", model.CallCount())
+	}
+
+	for _, message := range model.CallAt(1).Messages {
+		for _, result := range message.ToolResults() {
+			if result.Call.ID == call.ID && result.Error == "" && reflect.DeepEqual(result.Output.Structured, map[string]any{"text": "Friday"}) {
+				return
+			}
+		}
+	}
+
+	t.Fatal("the next model call did not receive the user's answer")
+}
 
 func TestExecutorConsumesSteeringBeforeNextModelCall(t *testing.T) {
 	t.Parallel()
@@ -234,7 +316,10 @@ func newSteeringAgentSession(ctx context.Context, t *testing.T, model kit.Model,
 	registry := execution.NewRegistry()
 	registry.Register(ExecutorName, NewExecutor(New(kit.AgentConfig{}, staticModelResolver{model}, WithContributors(contributors...))))
 
-	opened, err := session.New(ctx, "session", state.New(states, "session"), store, event.NewBroker("session", store), registry)
+	events := event.NewBroker("session", store)
+	interactions := interaction.NewBroker(ctx, "session", events)
+
+	opened, err := session.New(ctx, "session", state.New(states, "session"), store, events, interactions, registry)
 	if err != nil {
 		t.Fatal(err)
 	}

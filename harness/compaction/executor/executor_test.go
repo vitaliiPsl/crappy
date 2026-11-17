@@ -16,6 +16,7 @@ import (
 	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
+	"github.com/vitaliipsl/crappy/harness/interaction"
 	"github.com/vitaliipsl/crappy/harness/session"
 	"github.com/vitaliipsl/crappy/harness/session/state"
 )
@@ -69,7 +70,10 @@ func TestExecutorPersistsCompaction(t *testing.T) {
 		t.Fatalf("compaction = %+v", generated)
 	}
 
-	reopened, err := session.New(context.Background(), opened.ID(), opened.State(), store, event.NewBroker(opened.ID(), store), execution.NewRegistry())
+	events := event.NewBroker(opened.ID(), store)
+	interactions := interaction.NewBroker(context.Background(), opened.ID(), events)
+
+	reopened, err := session.New(context.Background(), opened.ID(), opened.State(), store, events, interactions, execution.NewRegistry())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +227,10 @@ func newTestSession(t *testing.T, store entry.Store, executors execution.Resolve
 		t.Fatal(err)
 	}
 
-	opened, err := session.New(context.Background(), "session", state.New(sessions, "session"), store, event.NewBroker("session", store), executors)
+	events := event.NewBroker("session", store)
+	interactions := interaction.NewBroker(context.Background(), "session", events)
+
+	opened, err := session.New(context.Background(), "session", state.New(sessions, "session"), store, events, interactions, executors)
 	if err != nil {
 		t.Fatal(err)
 	}

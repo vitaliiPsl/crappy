@@ -6,6 +6,7 @@ import (
 
 	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/event"
+	"github.com/vitaliipsl/crappy/harness/interaction"
 	"github.com/vitaliipsl/crappy/harness/session/state"
 )
 
@@ -15,9 +16,10 @@ type ExecuteParams struct {
 
 	Input json.RawMessage
 
-	State   state.State
-	Entries entry.Store
-	Events  event.Publisher
+	State        state.State
+	Entries      entry.Store
+	Events       event.Publisher
+	Interactions interaction.Prompter
 
 	// Steer removes inputs after accept succeeds. Call it synchronously
 	// from Execute, with a single consumer, to keep delivery ordered with execution.

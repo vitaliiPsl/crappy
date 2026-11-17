@@ -67,10 +67,11 @@ func (e *Executor) Execute(ctx context.Context, params execution.ExecuteParams) 
 	}
 
 	built, err := e.factory.Build(ctx, BuildRequest{
-		SessionID:   params.SessionID,
-		ExecutionID: params.ExecutionID,
-		State:       params.State,
-		History:     history,
+		SessionID:    params.SessionID,
+		ExecutionID:  params.ExecutionID,
+		State:        params.State,
+		History:      history,
+		Interactions: params.Interactions,
 	}, options...)
 	if err != nil {
 		return fmt.Errorf("build agent: %w", err)

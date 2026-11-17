@@ -14,7 +14,94 @@ import (
 	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
+	"github.com/vitaliipsl/crappy/harness/interaction"
 )
+
+func TestSessionOwnsExecutionInteractions(t *testing.T) {
+	t.Parallel()
+
+	for _, action := range []string{"answer", "cancel", "close"} {
+		t.Run(action, func(t *testing.T) {
+			t.Parallel()
+
+			executor := execution.Func(func(ctx context.Context, params execution.ExecuteParams) error {
+				if string(params.Input) == `"next"` {
+					return nil
+				}
+
+				answer, err := params.Interactions.Ask(ctx, params.ExecutionID, interaction.Question{Text: "Which deadline?"})
+				if err == nil && answer.Text != "Friday" {
+					return fmt.Errorf("unexpected answer: %+v", answer)
+				}
+
+				return err
+			})
+			opened := newExecutorSession(t.Context(), t, "session", entry.NewMemoryStore(), "work", executor)
+
+			subscription, err := opened.Subscribe(t.Context(), 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer subscription.Close()
+
+			current, err := opened.Execute(t.Context(), execution.NewRequest("work", "question"))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var request interaction.Request
+			for request.ID == "" {
+				value := receiveEvent(t, subscription)
+				if value.Type == interaction.RequestedEntryType {
+					if err := json.Unmarshal(value.Payload, &request); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+
+			if request.SessionID != opened.ID() || request.ExecutionID != current.ID() {
+				t.Fatalf("incorrect interaction scope: %+v", request)
+			}
+
+			next, err := opened.Execute(t.Context(), execution.NewRequest("work", "next"))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			want := execution.Completed
+			switch action {
+			case "answer":
+				if err := opened.Respond(t.Context(), request.ID, interaction.Answer{Text: "Friday"}); err != nil {
+					t.Fatal(err)
+				}
+			case "cancel":
+				want = execution.Cancelled
+
+				if err := opened.Cancel(t.Context(), current.ID()); err != nil {
+					t.Fatal(err)
+				}
+			case "close":
+				want = execution.Interrupted
+
+				opened.Close()
+			}
+
+			waitExecution(t, current)
+
+			if status, err := current.Status(); err != nil || status != want {
+				t.Fatalf("status = %s, %v; want %s", status, err, want)
+			}
+
+			if action != "close" {
+				waitExecution(t, next)
+
+				if requests, err := opened.PendingPrompts(t.Context()); err != nil || len(requests) != 0 {
+					t.Fatalf("pending interactions = %+v, %v", requests, err)
+				}
+			}
+		})
+	}
+}
 
 func TestExecuteRecordsEachExecutionSeparately(t *testing.T) {
 	t.Parallel()

@@ -7,6 +7,7 @@ import (
 	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
+	"github.com/vitaliipsl/crappy/harness/interaction"
 	"github.com/vitaliipsl/crappy/harness/session/state"
 )
 
@@ -16,10 +17,11 @@ type Session struct {
 
 	id string
 
-	state     state.State
-	entries   entry.Store
-	events    event.Broker
-	executors execution.Resolver
+	state        state.State
+	entries      entry.Store
+	events       event.Broker
+	interactions interaction.Broker
+	executors    execution.Resolver
 
 	current  *Execution
 	queue    []*Execution
@@ -34,9 +36,11 @@ func New(
 	state state.State,
 	entries entry.Store,
 	events event.Broker,
+	interactions interaction.Broker,
 	executors execution.Resolver,
 ) (*Session, error) {
 	if err := ctx.Err(); err != nil {
+		interactions.Close()
 		events.Close()
 
 		return nil, err
@@ -44,18 +48,18 @@ func New(
 
 	ctx, cancel := context.WithCancel(ctx)
 	s := &Session{
-		ctx:       ctx,
-		cancel:    cancel,
-		id:        id,
-		state:     state,
-		entries:   entries,
-		events:    events,
-		executors: executors,
+		ctx:          ctx,
+		cancel:       cancel,
+		id:           id,
+		state:        state,
+		entries:      entries,
+		events:       events,
+		interactions: interactions,
+		executors:    executors,
 	}
 
 	if err := s.restore(ctx); err != nil {
-		s.cancel()
-		s.events.Close()
+		s.halt(err)
 
 		return nil, err
 	}
@@ -118,6 +122,7 @@ func (s *Session) Close() {
 
 func (s *Session) halt(err error) {
 	s.cancel()
+	s.interactions.Close()
 
 	if s.current != nil {
 		s.current.stop(err)

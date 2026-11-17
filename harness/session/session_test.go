@@ -10,6 +10,7 @@ import (
 	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
+	"github.com/vitaliipsl/crappy/harness/interaction"
 	"github.com/vitaliipsl/crappy/harness/session/state"
 )
 
@@ -200,7 +201,7 @@ func TestNewUsesContextForConstructionAndLifetime(t *testing.T) {
 			entries := entry.NewMemoryStore()
 			events := event.NewBroker("session-1", entries)
 
-			opened, err := New(ctx, "session-1", newSessionState(t, "session-1"), entries, events, execution.NewRegistry())
+			opened, err := New(ctx, "session-1", newSessionState(t, "session-1"), entries, events, interaction.NewBroker(ctx, "session-1", events), execution.NewRegistry())
 			if test.cancelled {
 				if opened != nil || !errors.Is(err, context.Canceled) {
 					t.Fatalf("cancelled construction = %v, error = %v", opened, err)
@@ -228,7 +229,7 @@ func TestNewUsesContextForConstructionAndLifetime(t *testing.T) {
 	}
 }
 
-func TestNewUsesInjectedEventBroker(t *testing.T) {
+func TestNewUsesInjectedBrokers(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -236,10 +237,15 @@ func TestNewUsesInjectedEventBroker(t *testing.T) {
 
 	entries := entry.NewMemoryStore()
 	events := newWrappedEventBroker("session", entries)
+	interactions := interaction.NewBroker(ctx, "session", events)
 	executors := execution.NewRegistry()
 	executors.Register("work", execution.Func(func(ctx context.Context, params execution.ExecuteParams) error {
 		if params.Events != events {
 			return errors.New("executor received a different publisher")
+		}
+
+		if params.Interactions != interactions {
+			return errors.New("executor received a different interaction broker")
 		}
 
 		if err := params.Events.Emit(ctx, params.ExecutionID, "work.progress", "working"); err != nil {
@@ -249,7 +255,7 @@ func TestNewUsesInjectedEventBroker(t *testing.T) {
 		return params.Events.Commit(ctx, params.ExecutionID, "work.output", "done")
 	}))
 
-	opened, err := New(ctx, "session", newSessionState(t, "session"), entries, events, executors)
+	opened, err := New(ctx, "session", newSessionState(t, "session"), entries, events, interactions, executors)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -441,7 +447,10 @@ func newExecutorSession(ctx context.Context, t *testing.T, id string, entries en
 func newSession(ctx context.Context, t *testing.T, id string, entries entry.Store, executors execution.Resolver) *Session {
 	t.Helper()
 
-	opened, err := New(ctx, id, newSessionState(t, id), entries, event.NewBroker(id, entries), executors)
+	events := event.NewBroker(id, entries)
+	interactions := interaction.NewBroker(ctx, id, events)
+
+	opened, err := New(ctx, id, newSessionState(t, id), entries, events, interactions, executors)
 	if err != nil {
 		t.Fatal(err)
 	}

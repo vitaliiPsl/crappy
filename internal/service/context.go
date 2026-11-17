@@ -69,9 +69,10 @@ func (s *Local) Context(ctx context.Context, sessionID string) (ContextReport, e
 	}
 
 	built, err := s.agents.Build(ctx, agent.BuildRequest{
-		SessionID: opened.ID(),
-		State:     opened.State(),
-		History:   agent.NewHistory(opened.ID(), "", s.entries, opened),
+		SessionID:    opened.ID(),
+		State:        opened.State(),
+		History:      agent.NewHistory(opened.ID(), "", s.entries, opened),
+		Interactions: opened,
 	})
 	if err != nil {
 		return ContextReport{}, err

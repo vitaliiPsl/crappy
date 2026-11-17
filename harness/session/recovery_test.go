@@ -11,6 +11,7 @@ import (
 	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/event"
 	"github.com/vitaliipsl/crappy/harness/execution"
+	"github.com/vitaliipsl/crappy/harness/interaction"
 )
 
 func TestNewSettlesAbandonedExecutionBeforeReturning(t *testing.T) {
@@ -45,7 +46,10 @@ func TestNewSettlesAbandonedExecutionBeforeReturning(t *testing.T) {
 	store.failing.Store(true)
 
 	for range 2 {
-		opened, err := New(context.Background(), "session-1", newSessionState(t, "session-1"), store, event.NewBroker("session-1", store), execution.NewRegistry())
+		events := event.NewBroker("session-1", store)
+		interactions := interaction.NewBroker(context.Background(), "session-1", events)
+
+		opened, err := New(context.Background(), "session-1", newSessionState(t, "session-1"), store, events, interactions, execution.NewRegistry())
 		if opened != nil || !errors.Is(err, store.err) {
 			t.Fatalf("failed construction = %v, error = %v", opened, err)
 		}
@@ -286,7 +290,7 @@ func TestNewRetriesPartialRecovery(t *testing.T) {
 
 	events := event.NewBroker("session", store)
 
-	opened, err := New(ctx, "session", newSessionState(t, "session"), store, events, execution.NewRegistry())
+	opened, err := New(ctx, "session", newSessionState(t, "session"), store, events, interaction.NewBroker(ctx, "session", events), execution.NewRegistry())
 	if opened != nil || !errors.Is(err, failure) {
 		t.Fatalf("partial recovery = %v, %v", opened, err)
 	}

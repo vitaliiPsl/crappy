@@ -179,13 +179,14 @@ func (s *Session) invokeExecutor(ctx context.Context, record execution.Record) e
 	}
 
 	return executor.Execute(ctx, execution.ExecuteParams{
-		SessionID:   s.id,
-		ExecutionID: record.ID,
-		Input:       record.Input,
-		State:       s.state,
-		Entries:     s.entries,
-		Events:      s.events,
-		Steer:       s.steer,
+		SessionID:    s.id,
+		ExecutionID:  record.ID,
+		Input:        record.Input,
+		State:        s.state,
+		Entries:      s.entries,
+		Events:       s.events,
+		Interactions: s.interactions,
+		Steer:        s.steer,
 	})
 }
 

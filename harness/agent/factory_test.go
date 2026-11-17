@@ -9,6 +9,7 @@ import (
 
 	"github.com/vitaliipsl/crappy/harness/entry"
 	"github.com/vitaliipsl/crappy/harness/event"
+	"github.com/vitaliipsl/crappy/harness/interaction"
 
 	adkagent "github.com/vitaliiPsl/crappy-adk/agent"
 	"github.com/vitaliiPsl/crappy-adk/kit"
@@ -116,6 +117,14 @@ func TestFactoryBuildsAgentThatInspectsWithoutRunning(t *testing.T) {
 	store := entry.NewMemoryStore()
 	build := testBuildRequestOn(store)
 
+	events := event.NewBroker(build.SessionID, store)
+	defer events.Close()
+
+	interactions := interaction.NewBroker(t.Context(), build.SessionID, events)
+	defer interactions.Close()
+
+	build.Interactions = interactions
+
 	prior := kit.NewModelMessage(kit.NewToolCallContent(kit.NewToolCall("call-1", "base", nil)))
 	if err := build.History.Append(ctx, prior); err != nil {
 		t.Fatal(err)
@@ -128,7 +137,11 @@ func TestFactoryBuildsAgentThatInspectsWithoutRunning(t *testing.T) {
 
 	contributions, wraps := 0, 0
 	factory := New(kit.AgentConfig{Instructions: "base instructions"}, staticModelResolver{model},
-		WithToolMiddleware(func(_ BuildContext, tool kit.Tool) (kit.Tool, error) {
+		WithToolMiddleware(func(received BuildContext, tool kit.Tool) (kit.Tool, error) {
+			if received.Request.Interactions != interactions {
+				t.Fatal("middleware received a different interaction capability")
+			}
+
 			wraps++
 
 			return tool, nil

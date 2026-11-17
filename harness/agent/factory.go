@@ -7,14 +7,16 @@ import (
 	adkagent "github.com/vitaliiPsl/crappy-adk/agent"
 	"github.com/vitaliiPsl/crappy-adk/kit"
 
+	"github.com/vitaliipsl/crappy/harness/interaction"
 	"github.com/vitaliipsl/crappy/harness/session/state"
 )
 
 type BuildRequest struct {
-	SessionID   string
-	ExecutionID string
-	State       state.State
-	History     *History
+	SessionID    string
+	ExecutionID  string
+	State        state.State
+	History      *History
+	Interactions interaction.Prompter
 }
 
 type ModelResolver interface {
