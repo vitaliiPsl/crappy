@@ -58,7 +58,7 @@ func TestContextInspectsEffectiveInputsWithoutExecution(t *testing.T) {
 	h := harness.New(storage, harness.WithExecutor(agent.ExecutorName, agent.NewExecutor(agents)))
 	t.Cleanup(func() { _ = h.Shutdown(ctx) })
 
-	app := NewLocal(config.Config{}, h, storage, agents, fixedEstimator(23), nil)
+	app := NewLocal(config.Config{}, h, storage, agents, fixedEstimator(23), nil, nil)
 	if _, err := app.Context(ctx, ""); !errors.Is(err, harness.ErrSessionRequired) {
 		t.Fatalf("Context without a session: %v", err)
 	}

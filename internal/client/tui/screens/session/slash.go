@@ -16,6 +16,7 @@ func (m *Model) newCommands() *commands.Registry {
 		commands.Command{Name: "sessions", Description: "Browse sessions", Run: m.showSessions},
 		commands.Command{Name: "compact", Description: "Compact the conversation", Run: m.compact},
 		commands.Command{Name: "context", Description: "Inspect current agent context", Run: m.showContext},
+		commands.Command{Name: "mcp", Description: "Show MCP server status", Run: m.showMCP},
 		commands.Command{Name: "queue", Description: "Inspect and cancel pending work", Run: m.showQueue},
 		commands.Command{Name: "resume", Description: "Continue restored work", Run: m.resume},
 	)
@@ -54,6 +55,14 @@ func (m *Model) showContext() tea.Cmd {
 		data, err := m.service.Context(m.ctx, sessionID)
 
 		return contextMsg{target: m, sessionID: sessionID, data: data, err: err}
+	}
+}
+
+func (m *Model) showMCP() tea.Cmd {
+	return func() tea.Msg {
+		servers, err := m.service.ListMCPServers(m.ctx)
+
+		return mcpMsg{target: m, servers: servers, err: err}
 	}
 }
 

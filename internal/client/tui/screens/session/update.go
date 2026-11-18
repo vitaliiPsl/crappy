@@ -64,6 +64,21 @@ func (m *Model) handleContext(message contextMsg) {
 	m.transcript.AppendCommand("context", renderContext(message.data))
 }
 
+func (m *Model) handleMCP(message mcpMsg) {
+	if message.target != m || m.ctx.Err() != nil {
+		return
+	}
+
+	if message.err != nil {
+		m.notice = errorNotice(message.err)
+
+		return
+	}
+
+	m.notice = notice{}
+	m.transcript.AppendCommand("mcp", renderMCP(message.servers))
+}
+
 func (m *Model) submit(text string) tea.Cmd {
 	command, handled, err := m.commands.Execute(text)
 	if handled {

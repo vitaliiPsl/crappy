@@ -118,6 +118,7 @@ func Open(ctx context.Context, settings settings.Settings) (*Runtime, error) {
 			storage,
 			agents,
 			estimator,
+			mcpManager,
 			schedulesManager,
 		),
 		harness:   runtime,

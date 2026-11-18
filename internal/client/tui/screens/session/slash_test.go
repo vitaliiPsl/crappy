@@ -122,7 +122,7 @@ func TestContextCommandShowsLocalSnapshotsWhileExecutionIsActive(t *testing.T) {
 	h := harness.New(storage, harness.WithExecutor(agent.ExecutorName, agent.NewExecutor(agents)))
 	t.Cleanup(func() { _ = h.Shutdown(ctx) })
 
-	app := service.NewLocal(config.Config{}, h, storage, agents, token.NewCharacterEstimator(), nil)
+	app := service.NewLocal(config.Config{}, h, storage, agents, token.NewCharacterEstimator(), nil, nil)
 
 	created, err := app.CreateSession(ctx, "")
 	if err != nil {
@@ -209,7 +209,7 @@ func TestContextCommandRequiresExistingSession(t *testing.T) {
 	h := harness.New(storage)
 	t.Cleanup(func() { _ = h.Shutdown(ctx) })
 
-	app := service.NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator(), nil)
+	app := service.NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator(), nil, nil)
 
 	screen := New(ctx, app, "")
 	defer screen.Close()
@@ -258,7 +258,7 @@ func TestCompactCommandUsesNormalExecutionLifecycle(t *testing.T) {
 	))
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 
-	app := service.NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator(), nil)
+	app := service.NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator(), nil, nil)
 
 	screen := New(ctx, app, "")
 	defer screen.Close()

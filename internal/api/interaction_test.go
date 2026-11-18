@@ -44,7 +44,7 @@ func TestInteractionClientRoutesAnswersToWaitingExecution(t *testing.T) {
 	h := harness.New(store, harness.WithExecutor(agent.ExecutorName, executor))
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 
-	app := service.NewLocal(config.Config{}, h, store, nil, token.NewCharacterEstimator(), nil)
+	app := service.NewLocal(config.Config{}, h, store, nil, token.NewCharacterEstimator(), nil, nil)
 
 	handler := NewHandler(app, func() {})
 	defer handler.Close()

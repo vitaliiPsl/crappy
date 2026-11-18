@@ -38,6 +38,7 @@ type Service interface {
 	GetModel(context.Context) (ModelSelection, error)
 	Context(context.Context, string) (ContextReport, error)
 	Usage(context.Context, string) (kit.Usage, error)
+	ListMCPServers(context.Context) ([]MCPServer, error)
 
 	Subscribe(context.Context, string, uint64) (event.Subscription, error)
 }

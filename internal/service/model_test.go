@@ -29,7 +29,7 @@ func TestGetModelReturnsSerializableSelectionWithoutASession(t *testing.T) {
 		ModelID:      "model",
 		Generation:   config.Generation{Thinking: "high"},
 		Instructions: "Internal instructions",
-	}, h, storage, nil, token.NewCharacterEstimator(), nil)
+	}, h, storage, nil, token.NewCharacterEstimator(), nil, nil)
 
 	selection, err := app.GetModel(ctx)
 	if err != nil {

@@ -19,6 +19,7 @@ require (
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/vitaliiPsl/crappy-adk v0.11.1-0.20261025093118-09a43e85846d
 	github.com/vitaliipsl/crappy-memory v0.0.0
+	golang.org/x/oauth2 v0.35.0
 	golang.org/x/sys v0.47.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -61,7 +62,6 @@ require (
 	go.opencensus.io v0.24.0 // indirect
 	golang.org/x/crypto v0.40.0 // indirect
 	golang.org/x/net v0.41.0 // indirect
-	golang.org/x/oauth2 v0.35.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/text v0.27.0 // indirect
 	golang.org/x/time v0.15.0 // indirect

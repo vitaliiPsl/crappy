@@ -187,7 +187,7 @@ func testModel(t *testing.T, currentID string, sessions []state.Record) *Model {
 	h := harness.New(testStorage{store})
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 
-	return New(context.Background(), service.NewLocal(config.Config{}, h, testStorage{store}, nil, token.NewCharacterEstimator(), nil), currentID)
+	return New(context.Background(), service.NewLocal(config.Config{}, h, testStorage{store}, nil, token.NewCharacterEstimator(), nil, nil), currentID)
 }
 
 type testStorage struct{ state.Store }

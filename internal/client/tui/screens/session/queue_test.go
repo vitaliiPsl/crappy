@@ -255,7 +255,7 @@ func TestQueueRestoresResumesAndCancelsThroughAssistant(t *testing.T) {
 	)))
 	t.Cleanup(func() { _ = h.Shutdown(context.Background()) })
 
-	app := service.NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator(), nil)
+	app := service.NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator(), nil, nil)
 
 	screen := New(ctx, app, opened.ID())
 	defer screen.Close()

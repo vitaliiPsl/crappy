@@ -69,7 +69,7 @@ func TestUsageRebuildsFromJournal(t *testing.T) {
 	}
 
 	for range 2 {
-		screen := New(ctx, service.NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator(), nil), opened.ID())
+		screen := New(ctx, service.NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator(), nil, nil), opened.ID())
 		_, next := screen.Update(screen.subscribe()())
 
 		for range records {

@@ -29,4 +29,5 @@ var (
 	contextValueStyle   = lipgloss.NewStyle().Foreground(theme.Default.Text).Bold(true)
 	contextDetailStyle  = lipgloss.NewStyle().Foreground(theme.Default.Subtle)
 	contextCountStyle   = lipgloss.NewStyle().Foreground(theme.Default.Muted)
+	mcpConnectedStyle   = lipgloss.NewStyle().Foreground(theme.Default.Success)
 )

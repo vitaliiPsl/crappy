@@ -90,6 +90,10 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.handleContext(message)
 
 		return m, nil
+	case mcpMsg:
+		m.handleMCP(message)
+
+		return m, nil
 	case subscribedMsg:
 		return m, m.handleSubscribed(message)
 	case eventMsg:

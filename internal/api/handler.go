@@ -73,11 +73,13 @@ func (h *Handler) registerRoutes() *http.ServeMux {
 	mux.HandleFunc("GET /sessions/{session}/schedules", h.listSchedules)
 	mux.HandleFunc("POST /sessions/{session}/schedules/{schedule}/cancel", h.cancelSchedule)
 
-	mux.HandleFunc("GET /model", h.model)
 	mux.HandleFunc("GET /sessions/{session}/context", h.context)
 	mux.HandleFunc("GET /sessions/{session}/usage", h.usage)
 
 	mux.HandleFunc("GET /sessions/{session}/events", h.events)
+
+	mux.HandleFunc("GET /model", h.model)
+	mux.HandleFunc("GET /mcp/servers", h.listMCPServers)
 
 	return mux
 }

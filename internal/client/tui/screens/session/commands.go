@@ -42,6 +42,14 @@ type contextMsg struct {
 
 func (contextMsg) Broadcast() {}
 
+type mcpMsg struct {
+	target  *Model
+	servers []service.MCPServer
+	err     error
+}
+
+func (mcpMsg) Broadcast() {}
+
 type subscribedMsg struct {
 	target       *Model
 	subscription event.Subscription

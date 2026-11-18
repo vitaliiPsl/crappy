@@ -38,7 +38,7 @@ func TestUsageReadsPersistedFactsWithoutChangingHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	app := NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator(), nil)
+	app := NewLocal(config.Config{}, h, storage, nil, token.NewCharacterEstimator(), nil, nil)
 
 	events := event.NewBroker(sessionID, storage.EntryStore())
 	defer events.Close()
