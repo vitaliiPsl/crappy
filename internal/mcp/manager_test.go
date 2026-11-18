@@ -8,10 +8,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/auth"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"golang.org/x/oauth2"
 
 	"github.com/vitaliiPsl/crappy-adk/kit"
 )
@@ -22,7 +25,7 @@ func TestManagerConnectsServersIndependently(t *testing.T) {
 	manager := NewManager(Config{ConnectTimeout: 5 * time.Second, Servers: []ServerConfig{
 		{Name: "healthy", URL: serveHTTP(t, newTestServer()).URL},
 		{Name: "broken", Command: "/does-not-exist/crappy-mcp-server"},
-	}})
+	}}, &testAuthorizer{})
 	t.Cleanup(func() { _ = manager.Shutdown(context.Background()) })
 
 	for _, server := range manager.Servers() {
@@ -105,11 +108,33 @@ func TestManagerReconnectsDroppedServer(t *testing.T) {
 	}
 }
 
+func TestManagerConnectsThroughAuthorizer(t *testing.T) {
+	t.Parallel()
+
+	authorizer := &testAuthorizer{}
+	manager := NewManager(Config{ConnectTimeout: 5 * time.Second, Servers: []ServerConfig{{Name: "work", URL: serveProtected(t).URL}}}, authorizer)
+	t.Cleanup(func() { _ = manager.Shutdown(context.Background()) })
+
+	if err := manager.Refresh(t.Context()); !errors.Is(err, ErrAuthorizationRequired) {
+		t.Fatalf("refresh before login = %v", err)
+	}
+
+	authorizer.token.Store(&oauth2.Token{AccessToken: "access"})
+
+	if err := manager.Refresh(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	if server := manager.Servers()[0]; server.Error != nil || len(server.Tools) != 3 {
+		t.Fatalf("authorized server = %+v", server)
+	}
+}
+
 func TestManagerBoundsConnection(t *testing.T) {
 	t.Parallel()
 
 	endpoint, _ := serveBlocking(t)
-	manager := NewManager(Config{ConnectTimeout: 100 * time.Millisecond, Servers: []ServerConfig{{Name: "slow", URL: endpoint.URL}}})
+	manager := NewManager(Config{ConnectTimeout: 100 * time.Millisecond, Servers: []ServerConfig{{Name: "slow", URL: endpoint.URL}}}, &testAuthorizer{})
 	t.Cleanup(func() { _ = manager.Shutdown(context.Background()) })
 
 	started := time.Now()
@@ -176,6 +201,24 @@ func serveHTTP(t *testing.T, server *mcpsdk.Server) *httptest.Server {
 	return httpServer
 }
 
+func serveProtected(t *testing.T) *httptest.Server {
+	t.Helper()
+
+	handler := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return newTestServer() }, nil)
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer access" {
+			w.WriteHeader(http.StatusUnauthorized)
+
+			return
+		}
+
+		handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(httpServer.Close)
+
+	return httpServer
+}
+
 func serveBlocking(t *testing.T) (*httptest.Server, <-chan struct{}) {
 	t.Helper()
 
@@ -210,7 +253,7 @@ func serveBlocking(t *testing.T) (*httptest.Server, <-chan struct{}) {
 func connected(t *testing.T, servers ...ServerConfig) *Manager {
 	t.Helper()
 
-	manager := NewManager(Config{ConnectTimeout: 5 * time.Second, Servers: servers})
+	manager := NewManager(Config{ConnectTimeout: 5 * time.Second, Servers: servers}, &testAuthorizer{})
 	t.Cleanup(func() { _ = manager.Shutdown(context.Background()) })
 
 	if err := manager.Refresh(t.Context()); err != nil {
@@ -218,6 +261,29 @@ func connected(t *testing.T, servers ...ServerConfig) *Manager {
 	}
 
 	return manager
+}
+
+type testAuthorizer struct {
+	token atomic.Pointer[oauth2.Token]
+}
+
+func (a *testAuthorizer) Handler(ServerConfig) (auth.OAuthHandler, error) {
+	return a, nil
+}
+
+func (a *testAuthorizer) TokenSource(context.Context) (oauth2.TokenSource, error) {
+	token := a.token.Load()
+	if token == nil {
+		return nil, nil
+	}
+
+	return oauth2.StaticTokenSource(token), nil
+}
+
+func (a *testAuthorizer) Authorize(_ context.Context, _ *http.Request, response *http.Response) error {
+	_ = response.Body.Close()
+
+	return ErrAuthorizationRequired
 }
 
 func findTool(t *testing.T, tools []kit.Tool, name string) kit.Tool {

@@ -5,10 +5,11 @@ import (
 	"os"
 	"os/exec"
 
+	"github.com/modelcontextprotocol/go-sdk/auth"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func NewTransport(config ServerConfig) mcpsdk.Transport {
+func NewTransport(config ServerConfig, handler auth.OAuthHandler) mcpsdk.Transport {
 	if config.Command != "" {
 		command := exec.Command(config.Command, config.Args...)
 		command.Stderr = os.Stderr
@@ -29,10 +30,11 @@ func NewTransport(config ServerConfig) mcpsdk.Transport {
 	}
 
 	return &mcpsdk.StreamableClientTransport{
-		Endpoint:   config.URL,
+		Endpoint: config.URL,
 		HTTPClient: &http.Client{
 			Transport: NewHeaderTransport(headers),
 		},
+		OAuthHandler: handler,
 	}
 }
 

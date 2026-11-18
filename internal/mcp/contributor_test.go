@@ -14,6 +14,7 @@ func TestContributorReadsServersAndReportsFailures(t *testing.T) {
 	connections := connected(t,
 		ServerConfig{Name: "work", Tools: []string{"echo"}, URL: serveHTTP(t, newTestServer()).URL},
 		ServerConfig{Name: "offline", Command: "/does-not-exist/crappy-mcp-server"},
+		ServerConfig{Name: "locked", URL: serveProtected(t).URL},
 	)
 
 	contributor := NewContributor(connections)
@@ -28,7 +29,8 @@ func TestContributorReadsServersAndReportsFailures(t *testing.T) {
 		}
 
 		instructions := strings.Join(contribution.Instructions, "\n")
-		if !strings.Contains(instructions, "Use these tools for testing.") || !strings.Contains(instructions, `MCP server "offline" is unavailable`) {
+		if !strings.Contains(instructions, "Use these tools for testing.") || !strings.Contains(instructions, `MCP server "offline" is unavailable`) ||
+			!strings.Contains(instructions, "`crappy mcp login locked`") {
 			t.Fatalf("missing instructions or availability: %s", instructions)
 		}
 

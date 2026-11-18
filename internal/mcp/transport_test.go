@@ -28,7 +28,7 @@ func TestHTTPTransportSendsConfiguredHeaders(t *testing.T) {
 
 	transport := NewTransport(ServerConfig{URL: httpServer.URL, Headers: map[string]string{
 		"Authorization": "Bearer ${CRAPPY_MCP_TEST_TOKEN}", "X-Workspace": "work",
-	}})
+	}}, nil)
 
 	session, err := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "test", Version: "1"}, nil).Connect(t.Context(), transport, nil)
 	if err != nil {
@@ -44,7 +44,7 @@ func TestStdioTransportInheritsAndOverridesEnvironment(t *testing.T) {
 
 	transport, ok := NewTransport(ServerConfig{
 		Command: "server", Args: []string{"--stdio"}, Env: map[string]string{"CRAPPY_MCP_TEST_ENV": "overridden"},
-	}).(*mcpsdk.CommandTransport)
+	}, nil).(*mcpsdk.CommandTransport)
 	if !ok {
 		t.Fatal("command server did not use a stdio transport")
 	}

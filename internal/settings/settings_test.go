@@ -298,6 +298,8 @@ config_path: config/config.yaml
 sessions_path: data/sessions
 memory:
   path: data/memory.json
+mcp:
+  credentials_path: data/mcp
 providers:
   - id: provider
     api: openai
@@ -321,6 +323,11 @@ providers:
 	want = filepath.Join(directory, "data", "memory.json")
 	if loaded.Memory.Path != want {
 		t.Fatalf("Memory.Path = %q, want %q", loaded.Memory.Path, want)
+	}
+
+	want = filepath.Join(directory, "data", "mcp")
+	if loaded.MCP.CredentialsPath != want {
+		t.Fatalf("MCP.CredentialsPath = %q, want %q", loaded.MCP.CredentialsPath, want)
 	}
 }
 

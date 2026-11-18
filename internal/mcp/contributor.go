@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/vitaliipsl/crappy/harness/agent"
@@ -19,6 +20,13 @@ func (c *Contributor) Contribute(_ context.Context, _ agent.BuildContext) (agent
 	contribution := agent.Contribution{Source: "MCP"}
 
 	for _, server := range c.manager.Servers() {
+		if errors.Is(server.Error, ErrAuthorizationRequired) {
+			contribution.Instructions = append(contribution.Instructions,
+				fmt.Sprintf("MCP server %q needs authorization. Its tools are unavailable until the user runs `crappy mcp login %s`.", server.Name, server.Name))
+
+			continue
+		}
+
 		if server.Error != nil {
 			contribution.Instructions = append(contribution.Instructions,
 				fmt.Sprintf("MCP server %q is unavailable (%v). Its tools are unavailable; do not claim to have used them.", server.Name, server.Error))

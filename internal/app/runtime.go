@@ -16,6 +16,7 @@ import (
 	"github.com/vitaliipsl/crappy/internal/config"
 	"github.com/vitaliipsl/crappy/internal/instructions"
 	"github.com/vitaliipsl/crappy/internal/mcp"
+	"github.com/vitaliipsl/crappy/internal/mcp/oauth"
 	"github.com/vitaliipsl/crappy/internal/memory"
 	"github.com/vitaliipsl/crappy/internal/model"
 	"github.com/vitaliipsl/crappy/internal/prompt"
@@ -77,7 +78,7 @@ func Open(ctx context.Context, settings settings.Settings) (*Runtime, error) {
 	}
 
 	jobsManager := background.NewManager(settings.Tools.MaxBackgroundTimeout)
-	mcpManager := mcp.NewManager(settings.MCP)
+	mcpManager := mcp.NewManager(settings.MCP, oauth.NewAuthorizer(oauth.NewStore(settings.MCP.CredentialsPath)))
 
 	agents := agent.New(configuration.AgentConfig(), resolver,
 		agent.WithToolMiddleware(

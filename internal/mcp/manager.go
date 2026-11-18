@@ -29,12 +29,17 @@ type connection struct {
 
 type Manager struct {
 	connectTimeout time.Duration
+	authorizer     Authorizer
 	connections    []*connection
 	mu             sync.RWMutex
 }
 
-func NewManager(config Config) *Manager {
-	manager := &Manager{connectTimeout: config.ConnectTimeout}
+func NewManager(config Config, authorizer Authorizer) *Manager {
+	manager := &Manager{
+		connectTimeout: config.ConnectTimeout,
+		authorizer:     authorizer,
+	}
+
 	for _, server := range config.Servers {
 		manager.connections = append(manager.connections, &connection{
 			config: server,
@@ -127,7 +132,7 @@ func (m *Manager) refresh(ctx context.Context, current *connection) error {
 		_ = session.Close()
 	}
 
-	session, tools, err := connect(ctx, current.config)
+	session, tools, err := m.connect(ctx, current.config)
 
 	server := Server{
 		Name:  current.config.Name,
@@ -150,10 +155,15 @@ func (m *Manager) refresh(ctx context.Context, current *connection) error {
 	return fmt.Errorf("server %s: %w", current.config.Name, err)
 }
 
-func connect(ctx context.Context, config ServerConfig) (*mcpsdk.ClientSession, []kit.Tool, error) {
+func (m *Manager) connect(ctx context.Context, config ServerConfig) (*mcpsdk.ClientSession, []kit.Tool, error) {
+	handler, err := m.authorizer.Handler(config)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "crappy", Version: "0.1.0"}, nil)
 
-	session, err := client.Connect(ctx, NewTransport(config), nil)
+	session, err := client.Connect(ctx, NewTransport(config, handler), nil)
 	if err != nil {
 		return nil, nil, err
 	}

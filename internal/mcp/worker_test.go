@@ -10,7 +10,7 @@ import (
 func TestWorkerConnectsInBackgroundAndClosesOnShutdown(t *testing.T) {
 	t.Parallel()
 
-	manager := NewManager(Config{ConnectTimeout: 5 * time.Second, Servers: []ServerConfig{{Name: "work", URL: serveHTTP(t, newTestServer()).URL}}})
+	manager := NewManager(Config{ConnectTimeout: 5 * time.Second, Servers: []ServerConfig{{Name: "work", URL: serveHTTP(t, newTestServer()).URL}}}, &testAuthorizer{})
 	worker := NewWorker(manager, time.Hour)
 	worker.Start()
 
@@ -41,7 +41,7 @@ func TestWorkerShutdownInterruptsConnection(t *testing.T) {
 	t.Parallel()
 
 	endpoint, requested := serveBlocking(t)
-	worker := NewWorker(NewManager(Config{ConnectTimeout: time.Hour, Servers: []ServerConfig{{Name: "slow", URL: endpoint.URL}}}), time.Hour)
+	worker := NewWorker(NewManager(Config{ConnectTimeout: time.Hour, Servers: []ServerConfig{{Name: "slow", URL: endpoint.URL}}}, &testAuthorizer{}), time.Hour)
 	worker.Start()
 
 	select {

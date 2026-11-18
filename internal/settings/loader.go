@@ -86,6 +86,11 @@ func loadFile(path string) (Settings, error) {
 		return Settings{}, fmt.Errorf("resolve memory path: %w", err)
 	}
 
+	value.MCP.CredentialsPath, err = utils.ResolvePathFromFile(path, value.MCP.CredentialsPath)
+	if err != nil {
+		return Settings{}, fmt.Errorf("resolve MCP credentials path: %w", err)
+	}
+
 	return value, nil
 }
 

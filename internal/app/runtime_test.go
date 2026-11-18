@@ -95,6 +95,7 @@ func TestRuntimeUsesMCPToolsAndClosesConnections(t *testing.T) {
 	defer modelServer.Close()
 
 	config := mcp.DefaultConfig()
+	config.CredentialsPath = t.TempDir()
 	config.Servers = []mcp.ServerConfig{{Name: "work", URL: endpoint.URL}}
 
 	runtime, err := Open(ctx, settings.Settings{

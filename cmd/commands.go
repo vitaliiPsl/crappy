@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
+	"strings"
 
 	"github.com/vitaliipsl/crappy/internal/api"
 	"github.com/vitaliipsl/crappy/internal/client/tui"
@@ -14,11 +16,12 @@ import (
 )
 
 const (
-	commandStatus = "status"
-	commandStop   = "stop"
-	commandServe  = "--serve"
+	commandStatus   = "status"
+	commandStop     = "stop"
+	commandServe    = "--serve"
+	commandMCPLogin = "mcp login"
 
-	usage = "usage: crappy [status|stop]"
+	usage = "usage: crappy [status|stop|mcp login <server>]"
 )
 
 func run(ctx context.Context, args []string) error {
@@ -35,6 +38,10 @@ func run(ctx context.Context, args []string) error {
 	settings, err := settings.LoadFile(settingsPath)
 	if err != nil {
 		return fmt.Errorf("load settings: %w", err)
+	}
+
+	if command == commandMCPLogin {
+		return loginServer(ctx, settings.MCP, args[2], os.Stdout)
 	}
 
 	directory := daemonDirectory(settingsPath)
@@ -58,17 +65,13 @@ func run(ctx context.Context, args []string) error {
 }
 
 func parseCommand(args []string) (string, error) {
-	if len(args) == 0 {
+	switch {
+	case len(args) == 0:
 		return "", nil
-	}
-
-	if len(args) != 1 {
-		return "", errors.New(usage)
-	}
-
-	switch args[0] {
-	case commandStatus, commandStop, commandServe:
+	case len(args) == 1 && slices.Contains([]string{commandStatus, commandStop, commandServe}, args[0]):
 		return args[0], nil
+	case len(args) == 3 && strings.Join(args[:2], " ") == commandMCPLogin:
+		return commandMCPLogin, nil
 	default:
 		return "", errors.New(usage)
 	}

@@ -3,9 +3,10 @@ package mcp
 import "time"
 
 type Config struct {
-	PollInterval   time.Duration  `yaml:"poll_interval" validate:"gt=0"`
-	ConnectTimeout time.Duration  `yaml:"connect_timeout" validate:"gt=0"`
-	Servers        []ServerConfig `yaml:"servers,omitempty" validate:"unique=Name,dive"`
+	CredentialsPath string         `yaml:"credentials_path,omitempty" validate:"required"`
+	PollInterval    time.Duration  `yaml:"poll_interval" validate:"gt=0"`
+	ConnectTimeout  time.Duration  `yaml:"connect_timeout" validate:"gt=0"`
+	Servers         []ServerConfig `yaml:"servers,omitempty" validate:"unique=Name,dive"`
 }
 
 type ServerConfig struct {
@@ -22,7 +23,8 @@ type ServerConfig struct {
 
 func DefaultConfig() Config {
 	return Config{
-		PollInterval: 30 * time.Second,
-		ConnectTimeout: 10 * time.Second,
+		CredentialsPath: "~/.crappy/mcp",
+		PollInterval:    30 * time.Second,
+		ConnectTimeout:  10 * time.Second,
 	}
 }
