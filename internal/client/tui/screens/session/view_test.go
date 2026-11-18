@@ -125,6 +125,30 @@ func TestContextOutputShowsTokenBreakdown(t *testing.T) {
 	}
 }
 
+func TestContextOutputGroupsMCPToolsByServer(t *testing.T) {
+	report := service.ContextReport{
+		Tools: []service.ContextTool{
+			{ToolDefinition: kit.ToolDefinition{Name: "read"}, Tokens: 5},
+			{ToolDefinition: kit.ToolDefinition{Name: "mcp__github__search"}, Tokens: 50},
+			{ToolDefinition: kit.ToolDefinition{Name: "mcp__linear__list_issues"}, Tokens: 900},
+			{ToolDefinition: kit.ToolDefinition{Name: "mcp__linear__get_issue"}, Tokens: 400},
+		},
+	}
+
+	output := ansi.Strip(renderContext(report))
+
+	text := strings.Join(strings.Fields(output), " ")
+	for _, want := range []string{"Tools 1.4k 4 tools", "MCP linear 1.3k 2 tools", "MCP github 50 1 tool", "read 5"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("context output omitted %q: %s", want, output)
+		}
+	}
+
+	if strings.Contains(output, "list_issues") || strings.Index(output, "MCP linear") >= strings.Index(output, "MCP github") {
+		t.Fatalf("MCP tools were not grouped by server and sorted by cost: %s", output)
+	}
+}
+
 func TestContextOutputStripsTerminalEscapesFromLabels(t *testing.T) {
 	report := service.ContextReport{
 		Instructions: []service.ContextInstruction{{Source: "before\x1b[2Jafter", Tokens: 10}},

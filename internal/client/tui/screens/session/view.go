@@ -229,9 +229,10 @@ func renderContext(report service.ContextReport) string {
 		tokenWidth = max(tokenWidth, len(formatTokens(int64(instruction.Tokens))))
 	}
 
-	for _, tool := range report.Tools {
-		labelWidth = max(labelWidth, 2+ansi.StringWidth(ansi.Strip(tool.Name)))
-		tokenWidth = max(tokenWidth, len(formatTokens(int64(tool.Tokens))))
+	tools := groupTools(report.Tools)
+	for _, tool := range tools {
+		labelWidth = max(labelWidth, 2+ansi.StringWidth(ansi.Strip(tool.label)))
+		tokenWidth = max(tokenWidth, len(formatTokens(int64(tool.tokens))))
 	}
 
 	row := func(label string, tokens int, count string, style lipgloss.Style) string {
@@ -261,19 +262,67 @@ func renderContext(report service.ContextReport) string {
 		}
 	}
 
-	if len(report.Tools) > 0 {
-		tools := slices.Clone(report.Tools)
-		slices.SortStableFunc(tools, func(a, b service.ContextTool) int {
-			return cmp.Compare(b.Tokens, a.Tokens)
-		})
-
+	if len(tools) > 0 {
 		lines = append(lines, "", contextHeadingStyle.Render("Tool definitions"))
 		for _, tool := range tools {
-			lines = append(lines, row("  "+tool.Name, tool.Tokens, "", contextDetailStyle))
+			count := ""
+			if tool.count > 0 {
+				count = countLabel(tool.count, "tool")
+			}
+
+			lines = append(lines, row("  "+tool.label, tool.tokens, count, contextDetailStyle))
 		}
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+type toolGroup struct {
+	label  string
+	tokens int
+	count  int
+}
+
+func groupTools(tools []service.ContextTool) []toolGroup {
+	var groups []toolGroup
+
+	servers := make(map[string]int)
+
+	for _, tool := range tools {
+		server, ok := mcpServer(tool.Name)
+		if !ok {
+			groups = append(groups, toolGroup{label: tool.Name, tokens: tool.Tokens})
+
+			continue
+		}
+
+		index, seen := servers[server]
+		if !seen {
+			index = len(groups)
+			servers[server] = index
+			groups = append(groups, toolGroup{label: "MCP " + server})
+		}
+
+		groups[index].tokens += tool.Tokens
+		groups[index].count++
+	}
+
+	slices.SortStableFunc(groups, func(a, b toolGroup) int {
+		return cmp.Compare(b.tokens, a.tokens)
+	})
+
+	return groups
+}
+
+func mcpServer(tool string) (string, bool) {
+	name, found := strings.CutPrefix(tool, "mcp__")
+	if !found {
+		return "", false
+	}
+
+	server, _, found := strings.Cut(name, "__")
+
+	return server, found
 }
 
 func countLabel(count int, noun string) string {
