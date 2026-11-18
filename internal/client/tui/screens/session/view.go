@@ -3,7 +3,6 @@ package session
 import (
 	"cmp"
 	"fmt"
-	"slices"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -11,7 +10,7 @@ import (
 
 	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/internal/client/tui/components/hints"
-	"github.com/vitaliipsl/crappy/internal/service"
+	"github.com/vitaliipsl/crappy/internal/client/tui/components/report"
 )
 
 const (
@@ -26,6 +25,7 @@ const (
 func (m *Model) render() string {
 	m.composer.SetWidth(m.contentWidth())
 	m.prompt.SetSize(m.contentWidth(), max(5, m.height/2))
+	m.queue.SetSize(m.contentWidth(), m.height)
 
 	header := m.headerView()
 	status := m.statusView()
@@ -37,10 +37,11 @@ func (m *Model) render() string {
 
 	height := m.transcriptHeight(header, status, shortcuts)
 	m.transcript.SetSize(m.contentWidth(), height)
+	m.queue.SetSize(m.contentWidth(), height)
 
 	body := m.transcript.View()
-	if m.queueOpen {
-		body = m.queueView(height)
+	if m.queue.Opened() {
+		body = m.queue.View()
 	}
 
 	parts := []string{header, transcriptAreaStyle.Render(body)}
@@ -115,12 +116,12 @@ func (m *Model) headerView() string {
 }
 
 func (m *Model) usageLabel() string {
-	return fmt.Sprintf("%s in / %s out", formatTokens(m.sessionUsage.InputTokens), formatTokens(m.sessionUsage.OutputTokens))
+	return fmt.Sprintf("%s in / %s out", report.Tokens(m.sessionUsage.InputTokens), report.Tokens(m.sessionUsage.OutputTokens))
 }
 
 func (m *Model) shortcutsView() string {
-	if m.queueOpen {
-		return m.queueHints()
+	if m.queue.Opened() {
+		return m.queue.Shortcuts(m.terminalErr == nil)
 	}
 
 	if m.prompt.Active() {
@@ -202,175 +203,4 @@ func (m *Model) statusView() string {
 
 func (m *Model) contentWidth() int {
 	return max(m.width-pageStyle.GetHorizontalFrameSize(), minimumContentSize)
-}
-
-func formatTokens(tokens int64) string {
-	switch {
-	case tokens >= 1_000_000:
-		return fmt.Sprintf("%.1fm", float64(tokens)/1_000_000)
-	case tokens >= 1_000:
-		return fmt.Sprintf("%.1fk", float64(tokens)/1_000)
-	default:
-		return fmt.Sprintf("%d", tokens)
-	}
-}
-
-func renderContext(report service.ContextReport) string {
-	labelWidth := len("Instructions")
-
-	tokenWidth := max(
-		len(formatTokens(int64(report.Tokens()))),
-		len(formatTokens(int64(report.MessageTokens()))),
-		len(formatTokens(int64(report.ToolTokens()))),
-		len(formatTokens(int64(report.InstructionTokens()))),
-	)
-	for _, instruction := range report.Instructions {
-		labelWidth = max(labelWidth, 2+ansi.StringWidth(ansi.Strip(cmp.Or(instruction.Source, "Core"))))
-		tokenWidth = max(tokenWidth, len(formatTokens(int64(instruction.Tokens))))
-	}
-
-	tools := groupTools(report.Tools)
-	for _, tool := range tools {
-		labelWidth = max(labelWidth, 2+ansi.StringWidth(ansi.Strip(tool.label)))
-		tokenWidth = max(tokenWidth, len(formatTokens(int64(tool.tokens))))
-	}
-
-	row := func(label string, tokens int, count string, style lipgloss.Style) string {
-		label = ansi.Strip(label)
-		padding := strings.Repeat(" ", max(labelWidth-ansi.StringWidth(label), 0))
-		value := fmt.Sprintf("%*s", tokenWidth, formatTokens(int64(tokens)))
-
-		line := style.Render(label+padding) + "  " + contextValueStyle.Render(value)
-		if count != "" {
-			line += "  " + contextCountStyle.Render(count)
-		}
-
-		return line
-	}
-
-	lines := []string{
-		contextHeadingStyle.Render(formatTokens(int64(report.Tokens()))) + " " + contextCountStyle.Render("tokens"),
-		"",
-		row("Conversation", report.MessageTokens(), countLabel(len(report.Messages), "message"), contextValueStyle),
-		row("Tools", report.ToolTokens(), countLabel(len(report.Tools), "tool"), contextValueStyle),
-		row("Instructions", report.InstructionTokens(), countLabel(len(report.Instructions), "source"), contextValueStyle),
-	}
-	if len(report.Instructions) > 0 {
-		lines = append(lines, "", contextHeadingStyle.Render("Instruction sources"))
-		for _, instruction := range report.Instructions {
-			lines = append(lines, row("  "+cmp.Or(instruction.Source, "Core"), instruction.Tokens, "", contextDetailStyle))
-		}
-	}
-
-	if len(tools) > 0 {
-		lines = append(lines, "", contextHeadingStyle.Render("Tool definitions"))
-		for _, tool := range tools {
-			count := ""
-			if tool.count > 0 {
-				count = countLabel(tool.count, "tool")
-			}
-
-			lines = append(lines, row("  "+tool.label, tool.tokens, count, contextDetailStyle))
-		}
-	}
-
-	return strings.Join(lines, "\n")
-}
-
-type toolGroup struct {
-	label  string
-	tokens int
-	count  int
-}
-
-func groupTools(tools []service.ContextTool) []toolGroup {
-	var groups []toolGroup
-
-	servers := make(map[string]int)
-
-	for _, tool := range tools {
-		server, ok := mcpServer(tool.Name)
-		if !ok {
-			groups = append(groups, toolGroup{label: tool.Name, tokens: tool.Tokens})
-
-			continue
-		}
-
-		index, seen := servers[server]
-		if !seen {
-			index = len(groups)
-			servers[server] = index
-			groups = append(groups, toolGroup{label: "MCP " + server})
-		}
-
-		groups[index].tokens += tool.Tokens
-		groups[index].count++
-	}
-
-	slices.SortStableFunc(groups, func(a, b toolGroup) int {
-		return cmp.Compare(b.tokens, a.tokens)
-	})
-
-	return groups
-}
-
-func mcpServer(tool string) (string, bool) {
-	name, found := strings.CutPrefix(tool, "mcp__")
-	if !found {
-		return "", false
-	}
-
-	server, _, found := strings.Cut(name, "__")
-
-	return server, found
-}
-
-func renderMCP(servers []service.MCPServer) string {
-	if len(servers) == 0 {
-		return contextDetailStyle.Render("No MCP servers configured. Add them under mcp.servers in settings.")
-	}
-
-	nameWidth, statusWidth := 0, 0
-	for _, server := range servers {
-		status, _, _ := mcpStatus(server)
-		nameWidth = max(nameWidth, ansi.StringWidth(ansi.Strip(server.Name)))
-		statusWidth = max(statusWidth, len(status))
-	}
-
-	lines := []string{contextHeadingStyle.Render("MCP servers"), ""}
-	for _, server := range servers {
-		name := ansi.Strip(server.Name)
-		status, detail, style := mcpStatus(server)
-
-		line := contextValueStyle.Render(name+strings.Repeat(" ", nameWidth-ansi.StringWidth(name))) + "  " +
-			style.Render(fmt.Sprintf("%-*s", statusWidth, status))
-		if detail != "" {
-			line += "  " + contextCountStyle.Render(detail)
-		}
-
-		lines = append(lines, line)
-	}
-
-	return strings.Join(lines, "\n")
-}
-
-func mcpStatus(server service.MCPServer) (string, string, lipgloss.Style) {
-	switch server.Status {
-	case service.MCPServerConnected:
-		return "connected", countLabel(server.Tools, "tool"), mcpConnectedStyle
-	case service.MCPServerAuthorizationRequired:
-		return "needs login", "run: crappy mcp login " + ansi.Strip(server.Name), noticeStyle
-	case service.MCPServerUnavailable:
-		return "unavailable", strings.Join(strings.Fields(ansi.Strip(server.Error)), " "), errorStyle
-	default:
-		return "connecting", "", contextCountStyle
-	}
-}
-
-func countLabel(count int, noun string) string {
-	if count == 1 {
-		return "1 " + noun
-	}
-
-	return fmt.Sprintf("%d %ss", count, noun)
 }

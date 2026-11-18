@@ -44,12 +44,13 @@ func (m *Model) handleWorkdir(message workdirMsg) {
 	m.workdir = message.directory
 }
 
-func (m *Model) handleContext(message contextMsg) {
+func (m *Model) handleOutput(message outputMsg) {
 	if message.target != m || m.ctx.Err() != nil {
 		return
 	}
 
-	m.contextLoading = false
+	delete(m.loading, message.command)
+
 	if message.sessionID != m.sessionID {
 		return
 	}
@@ -61,22 +62,7 @@ func (m *Model) handleContext(message contextMsg) {
 	}
 
 	m.notice = notice{}
-	m.transcript.AppendCommand("context", renderContext(message.data))
-}
-
-func (m *Model) handleMCP(message mcpMsg) {
-	if message.target != m || m.ctx.Err() != nil {
-		return
-	}
-
-	if message.err != nil {
-		m.notice = errorNotice(message.err)
-
-		return
-	}
-
-	m.notice = notice{}
-	m.transcript.AppendCommand("mcp", renderMCP(message.servers))
+	m.transcript.AppendCommand(message.command, message.output)
 }
 
 func (m *Model) submit(text string) tea.Cmd {

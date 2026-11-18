@@ -1,10 +1,13 @@
 package session
 
 import (
+	"context"
+
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/vitaliipsl/crappy/internal/client/tui/commands"
+	"github.com/vitaliipsl/crappy/internal/client/tui/components/report"
 	"github.com/vitaliipsl/crappy/internal/client/tui/navigation"
 	"github.com/vitaliipsl/crappy/internal/client/tui/routes"
 )
@@ -44,25 +47,39 @@ func (m *Model) showSessions() tea.Cmd {
 }
 
 func (m *Model) showContext() tea.Cmd {
-	if m.contextLoading {
-		return nil
-	}
+	return m.showOutput("context", func(ctx context.Context, sessionID string) (string, error) {
+		data, err := m.service.Context(ctx, sessionID)
+		if err != nil {
+			return "", err
+		}
 
-	m.contextLoading = true
-	sessionID := m.sessionID
-
-	return func() tea.Msg {
-		data, err := m.service.Context(m.ctx, sessionID)
-
-		return contextMsg{target: m, sessionID: sessionID, data: data, err: err}
-	}
+		return report.Context(data), nil
+	})
 }
 
 func (m *Model) showMCP() tea.Cmd {
-	return func() tea.Msg {
-		servers, err := m.service.ListMCPServers(m.ctx)
+	return m.showOutput("mcp", func(ctx context.Context, _ string) (string, error) {
+		servers, err := m.service.ListMCPServers(ctx)
+		if err != nil {
+			return "", err
+		}
 
-		return mcpMsg{target: m, servers: servers, err: err}
+		return report.MCP(servers), nil
+	})
+}
+
+func (m *Model) showOutput(command string, load func(ctx context.Context, sessionID string) (string, error)) tea.Cmd {
+	if m.loading[command] {
+		return nil
+	}
+
+	m.loading[command] = true
+	sessionID := m.sessionID
+
+	return func() tea.Msg {
+		output, err := load(m.ctx, sessionID)
+
+		return outputMsg{target: m, sessionID: sessionID, command: command, output: output, err: err}
 	}
 }
 

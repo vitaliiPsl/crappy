@@ -46,20 +46,20 @@ func TestClosedEventBrokerClearsActiveExecution(t *testing.T) {
 	}
 }
 
-func TestContextResultIgnoresOtherAndClosedScreens(t *testing.T) {
+func TestOutputResultIgnoresOtherAndClosedScreens(t *testing.T) {
 	screen := New(context.Background(), nil, "session-1")
-	screen.contextLoading = true
-	screen.Update(contextMsg{sessionID: "session-1"})
+	screen.loading["context"] = true
+	screen.Update(outputMsg{sessionID: "session-1", command: "context"})
 
-	if !screen.contextLoading {
-		t.Fatal("another screen's context result was accepted")
+	if !screen.loading["context"] {
+		t.Fatal("another screen's output was accepted")
 	}
 
 	screen.Close()
-	screen.Update(contextMsg{target: screen, sessionID: "session-1"})
+	screen.Update(outputMsg{target: screen, sessionID: "session-1", command: "context"})
 
-	if !screen.contextLoading {
-		t.Fatal("a closed screen accepted a context result")
+	if !screen.loading["context"] {
+		t.Fatal("a closed screen accepted output")
 	}
 }
 

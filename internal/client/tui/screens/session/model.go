@@ -12,6 +12,7 @@ import (
 	"github.com/vitaliipsl/crappy/internal/client/tui/commands"
 	"github.com/vitaliipsl/crappy/internal/client/tui/components/composer"
 	promptview "github.com/vitaliipsl/crappy/internal/client/tui/components/prompt"
+	queueview "github.com/vitaliipsl/crappy/internal/client/tui/components/queue"
 	"github.com/vitaliipsl/crappy/internal/client/tui/components/transcript"
 	"github.com/vitaliipsl/crappy/internal/service"
 )
@@ -24,13 +25,13 @@ type Model struct {
 	subscription event.Subscription
 	commands     *commands.Registry
 
-	sessionID      string
-	workdir        string
-	pending        []execution.Record
-	submission     string
-	contextLoading bool
-	notice         notice
-	terminalErr    error
+	sessionID   string
+	workdir     string
+	pending     []execution.Record
+	submission  string
+	loading     map[string]bool
+	notice      notice
+	terminalErr error
 
 	sessionUsage kit.Usage
 	model        service.ModelSelection
@@ -38,12 +39,9 @@ type Model struct {
 	transcript transcript.Model
 	composer   composer.Model
 	prompt     promptview.Model
+	queue      queueview.Model
 	width      int
 	height     int
-
-	queueOpen     bool
-	queueSelected int
-	queueOffset   int
 }
 
 func New(ctx context.Context, app service.Service, sessionID string) *Model {
@@ -54,9 +52,11 @@ func New(ctx context.Context, app service.Service, sessionID string) *Model {
 		cancel:     cancel,
 		service:    app,
 		sessionID:  sessionID,
+		loading:    make(map[string]bool),
 		transcript: transcript.New(),
 		composer:   composer.New(),
 		prompt:     promptview.New(),
+		queue:      queueview.New(),
 	}
 	model.commands = model.newCommands()
 
@@ -86,12 +86,8 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.handleWorkdir(message)
 
 		return m, nil
-	case contextMsg:
-		m.handleContext(message)
-
-		return m, nil
-	case mcpMsg:
-		m.handleMCP(message)
+	case outputMsg:
+		m.handleOutput(message)
 
 		return m, nil
 	case subscribedMsg:
@@ -120,22 +116,21 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		return m, nil
+	case queueview.Cancel:
+		if m.terminalErr != nil {
+			return m, nil
+		}
+
+		return m, m.cancelExecution(message.ExecutionID)
 	case composer.Submit:
-		if m.queueOpen || m.prompt.Active() {
+		if m.queue.Opened() || m.prompt.Active() {
 			return m, nil
 		}
 
 		return m, m.submit(message.Text)
 	case tea.MouseWheelMsg:
-		if m.queueOpen {
-			switch message.Button {
-			case tea.MouseWheelUp:
-				m.moveQueue(-1)
-			case tea.MouseWheelDown:
-				m.moveQueue(1)
-			}
-
-			return m, nil
+		if m.queue.Opened() {
+			return m, m.queue.Update(message)
 		}
 
 		if m.prompt.Expanded() {
@@ -144,8 +139,13 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 		return m, m.transcript.Update(message)
 	case tea.KeyPressMsg:
-		if m.queueOpen {
-			return m, m.handleQueueKey(message.String())
+		if m.queue.Opened() {
+			command := m.queue.Update(message)
+			if !m.queue.Opened() {
+				return m, m.composer.Focus()
+			}
+
+			return m, command
 		}
 
 		if m.prompt.Active() {

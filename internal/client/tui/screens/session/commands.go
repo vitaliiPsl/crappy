@@ -33,22 +33,15 @@ type workdirMsg struct {
 
 func (workdirMsg) Broadcast() {}
 
-type contextMsg struct {
+type outputMsg struct {
 	target    *Model
 	sessionID string
-	data      service.ContextReport
+	command   string
+	output    string
 	err       error
 }
 
-func (contextMsg) Broadcast() {}
-
-type mcpMsg struct {
-	target  *Model
-	servers []service.MCPServer
-	err     error
-}
-
-func (mcpMsg) Broadcast() {}
+func (outputMsg) Broadcast() {}
 
 type subscribedMsg struct {
 	target       *Model

@@ -214,14 +214,14 @@ func TestContextCommandRequiresExistingSession(t *testing.T) {
 	screen := New(ctx, app, "")
 	defer screen.Close()
 
-	result := screen.submit("/context")().(contextMsg)
+	result := screen.submit("/context")().(outputMsg)
 	if !errors.Is(result.err, harness.ErrSessionRequired) {
 		t.Fatalf("context without a session returned %v", result.err)
 	}
 
 	screen.Update(result)
 
-	if screen.contextLoading || screen.notice.kind != noticeError || screen.sessionID != "" {
+	if screen.loading["context"] || screen.notice.kind != noticeError || screen.sessionID != "" {
 		t.Fatal("context failure did not remain local to the current screen")
 	}
 

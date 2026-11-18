@@ -43,7 +43,7 @@ func TestQueueTracksSelectionAndKeepsCancelledRequestsOutOfTranscript(t *testing
 	before := screen.transcript.View()
 	screen.applyExecution(execution.Record{ID: "second", Status: execution.Cancelled})
 
-	if !screen.running() || screen.queueEntries()[screen.queueSelected].ID != "third" {
+	if !screen.running() || screen.queue.Selected().ID != "third" {
 		t.Fatal("queue cancellation changed the active execution or lost selection")
 	}
 
@@ -57,7 +57,7 @@ func TestQueueTracksSelectionAndKeepsCancelledRequestsOutOfTranscript(t *testing
 
 	screen.applyExecution(execution.Record{ID: "first", Status: execution.Interrupted})
 
-	if screen.queueEntries()[screen.queueSelected].ID != "third" {
+	if screen.queue.Selected().ID != "third" {
 		t.Fatal("interruption moved selection to another request")
 	}
 
@@ -79,8 +79,8 @@ func TestQueuePreservesDraftAndEscapeReturnsToComposer(t *testing.T) {
 	screen.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
 	screen.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 
-	if screen.queueOpen || !screen.running() || screen.composer.Value() != "draft" {
-		t.Fatalf("queue navigation changed work or draft: open=%v, running=%v, draft=%q", screen.queueOpen, screen.running(), screen.composer.Value())
+	if screen.queue.Opened() || !screen.running() || screen.composer.Value() != "draft" {
+		t.Fatalf("queue navigation changed work or draft: open=%v, running=%v, draft=%q", screen.queue.Opened(), screen.running(), screen.composer.Value())
 	}
 }
 
@@ -167,7 +167,10 @@ func TestQueueViewFitsWindowAndKeepsSelectedRequestVisible(t *testing.T) {
 			}
 
 			screen.showQueue()
-			screen.moveQueue(29)
+
+			for range 29 {
+				screen.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
+			}
 
 			view := screen.View().Content
 			t.Logf("Queue view:\n%s", ansi.Strip(view))
@@ -294,7 +297,8 @@ func TestQueueRestoresResumesAndCancelsThroughAssistant(t *testing.T) {
 		t.Fatal("queue is missing the restored request preview")
 	}
 
-	command := screen.handleQueueKey("d")
+	_, command := screen.Update(tea.KeyPressMsg{Code: 'd', Text: "d"})
+	_, command = screen.Update(command())
 	screen.Update(command())
 
 	_, next = screen.Update(next())
