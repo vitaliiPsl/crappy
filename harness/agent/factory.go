@@ -28,6 +28,7 @@ type Factory struct {
 	models         ModelResolver
 	toolMiddleware []ToolMiddleware
 	contributors   []Contributor
+	toolSetFactory func(kit.ToolSet) (kit.ToolSet, error)
 }
 
 func New(config kit.AgentConfig, models ModelResolver, options ...Option) *Factory {
@@ -55,7 +56,15 @@ func (f *Factory) Build(ctx context.Context, request BuildRequest, extraOptions 
 	}
 	options := agentOptions(f.config)
 
-	var tools []kit.Tool
+	var registered kit.ToolSet = NewToolSet(build, f.toolMiddleware...)
+	if f.toolSetFactory != nil {
+		registered, err = f.toolSetFactory(registered)
+		if err != nil {
+			return nil, fmt.Errorf("create tool set: %w", err)
+		}
+	}
+
+	options = append(options, adkagent.WithToolSet(registered))
 
 	for i, contributor := range f.contributors {
 		contribution, err := contributor.Contribute(ctx, build)
@@ -63,17 +72,13 @@ func (f *Factory) Build(ctx context.Context, request BuildRequest, extraOptions 
 			return nil, fmt.Errorf("contributor %d: %w", i, err)
 		}
 
-		tools = append(tools, contribution.Tools...)
-		options = append(options, adkagent.WithInstructionsSource(contribution.Source, contribution.Instructions...))
+		options = append(options,
+			adkagent.WithInstructionsSource(contribution.Source, contribution.Instructions...),
+			adkagent.WithTools(contribution.Tools...),
+		)
 		options = append(options, contribution.Options...)
 	}
 
-	tools, err = wrapTools(build, tools, f.toolMiddleware)
-	if err != nil {
-		return nil, err
-	}
-
-	options = append(options, adkagent.WithTools(tools...))
 	options = append(options, extraOptions...)
 
 	built, err := adkagent.New(model, request.History, options...)

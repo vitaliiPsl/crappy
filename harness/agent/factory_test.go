@@ -411,6 +411,43 @@ func TestFactoryUsesPreparedTools(t *testing.T) {
 	selected.AssertNeverCalled(t)
 }
 
+func TestFactoryPreparesToolsRegisteredByOptions(t *testing.T) {
+	model := kittest.NewModel(t, kittest.ModelResult{Response: kit.ModelResponse{
+		Message:      kit.NewModelMessage(kit.NewToolCallContent(kit.NewToolCall("call", "plugin_tool", nil))),
+		FinishReason: kit.FinishReasonToolCall,
+	}}, kittest.ModelResult{Response: kit.ModelResponse{
+		Message: kit.NewModelMessage(kit.NewTextContent("done")), FinishReason: kit.FinishReasonStop,
+	}})
+	original := kittest.NewTool(t, "plugin_tool", "original")
+	prepared := kittest.NewTool(t, "plugin_tool", "prepared", kittest.ToolResult{Result: "ready"})
+	factory := New(kit.AgentConfig{}, staticModelResolver{model},
+		WithContributors(contribute(Contribution{Options: []adkagent.Option{adkagent.WithTools(original)}})),
+		WithToolMiddleware(func(_ BuildContext, tool kit.Tool) (kit.Tool, error) {
+			if tool != original {
+				t.Fatal("unexpected tool registered")
+			}
+
+			return prepared, nil
+		}),
+	)
+
+	built, err := factory.Build(t.Context(), testBuildRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := built.Run(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	if tools := model.CallAt(0).Tools; len(tools) != 1 || tools[0] != prepared {
+		t.Fatal("option-registered tools bypassed preparation")
+	}
+
+	prepared.AssertCallCount(t, 1)
+	original.AssertNeverCalled(t)
+}
+
 func TestFactoryToolMiddlewareFailureStopsBuild(t *testing.T) {
 	t.Parallel()
 

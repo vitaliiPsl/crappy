@@ -35,6 +35,9 @@ func (c *Contributor) Contribute(_ context.Context, _ agent.BuildContext) (agent
 		}
 
 		contribution.Tools = append(contribution.Tools, server.Tools...)
+
+		contribution.Instructions = append(contribution.Instructions,
+			fmt.Sprintf("MCP server %q is connected. Its tool names start with %s%s__.", server.Name, ToolPrefix, server.Name))
 		if server.Instructions != "" {
 			contribution.Instructions = append(contribution.Instructions,
 				fmt.Sprintf("MCP server %q instructions:\n%s", server.Name, server.Instructions))

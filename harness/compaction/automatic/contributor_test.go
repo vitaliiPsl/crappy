@@ -316,6 +316,49 @@ func TestContributorMeasuresFromLastModelUsage(t *testing.T) {
 	}
 }
 
+func TestContributorAccountsForToolSelectionChanges(t *testing.T) {
+	var estimates []int64
+
+	contributor := New(nil, WithEstimator(fixedEstimator(7)), WithTrigger(TriggerFunc(func(request TriggerRequest) bool {
+		estimates = append(estimates, request.InputTokens)
+
+		return false
+	})))
+	hook := contributor.beforeModelRequest(nil, 1000)
+	run := kit.NewRunContext(t.Context())
+	first := kittest.NewTool(t, "first", "")
+	second := kittest.NewTool(t, "second", "")
+
+	request := kit.ModelRequest{
+		Messages: []kit.Message{kit.NewUserMessage(kit.NewTextContent("work"))},
+		Tools:    []kit.Tool{first},
+	}
+	if _, err := hook(run, request); err != nil {
+		t.Fatal(err)
+	}
+
+	measured := kit.NewModelMessage(kit.NewTextContent("load another tool"))
+	measured.Usage = kit.Usage{InputTokens: 100, OutputTokens: 20}
+	request.Messages = append(request.Messages, measured, kit.NewToolMessage(kit.NewTextContent("loaded")))
+
+	request.Tools = append(request.Tools, second)
+	if _, err := hook(run, request); err != nil {
+		t.Fatal(err)
+	}
+
+	response := kit.NewModelMessage(kit.NewTextContent("continue"))
+	response.Usage = kit.Usage{InputTokens: 120, OutputTokens: 20}
+
+	request.Messages = append(request.Messages, response)
+	if _, err := hook(run, request); err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(estimates, []int64{21, 134, 140}) {
+		t.Fatalf("request estimates = %v", estimates)
+	}
+}
+
 func TestContributorMeasuresPreviousExecutionBeforeFirstRequest(t *testing.T) {
 	t.Parallel()
 

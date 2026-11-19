@@ -18,6 +18,7 @@ import (
 
 	corememory "github.com/vitaliipsl/crappy-memory/memory"
 	jsonstore "github.com/vitaliipsl/crappy-memory/storage/json"
+	"github.com/vitaliipsl/crappy/harness/discovery"
 	"github.com/vitaliipsl/crappy/harness/execution"
 	"github.com/vitaliipsl/crappy/harness/interaction"
 	"github.com/vitaliipsl/crappy/internal/background"
@@ -65,6 +66,10 @@ func TestRuntimeUsesMCPToolsAndClosesConnections(t *testing.T) {
 				Type   string          `json:"type"`
 				Output json.RawMessage `json:"output"`
 			} `json:"input"`
+			Tools []struct {
+				Name       string         `json:"name"`
+				Parameters map[string]any `json:"parameters"`
+			} `json:"tools"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Error(err)
@@ -74,9 +79,30 @@ func TestRuntimeUsesMCPToolsAndClosesConnections(t *testing.T) {
 		}
 
 		output := "[]"
-		if modelCalls.Add(1) == 1 {
+		switch modelCalls.Add(1) {
+		case 1:
+			for _, tool := range body.Tools {
+				if strings.HasPrefix(tool.Name, "mcp__") {
+					t.Error("MCP schema was exposed before discovery")
+				}
+			}
+
+			output = `[{"type":"function_call","id":"discover","call_id":"discover","name":"tool_search","arguments":"{\"query\":\"work records search\"}"}]`
+		case 2:
+			found := false
+			for _, tool := range body.Tools {
+				if tool.Name == "mcp__work__search" {
+					properties := tool.Parameters["properties"].(map[string]any)
+					_, found = properties["timeout_seconds"]
+				}
+			}
+
+			if !found {
+				t.Error("discovery did not expose the prepared MCP schema")
+			}
+
 			output = `[{"type":"function_call","id":"search","call_id":"search","name":"mcp__work__search","arguments":"{\"query\":\"latest\",\"timeout_seconds\":1}"}]`
-		} else {
+		case 3:
 			found := false
 			for _, item := range body.Input {
 				if item.Type == "function_call_output" && strings.Contains(string(item.Output), "latest record is ready") {
@@ -87,6 +113,8 @@ func TestRuntimeUsesMCPToolsAndClosesConnections(t *testing.T) {
 			if !found {
 				t.Error("model did not receive the MCP tool result")
 			}
+		default:
+			t.Error("unexpected model request")
 		}
 
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -122,19 +150,24 @@ func TestRuntimeUsesMCPToolsAndClosesConnections(t *testing.T) {
 			t.Fatal(err)
 		}
 
+		connected := false
+		for _, instruction := range report.Instructions {
+			connected = connected || strings.Contains(instruction.Text, `MCP server "work" is connected`)
+		}
+
 		for _, tool := range report.Tools {
-			if tool.Name == "mcp__work__search" {
+			if connected && tool.Name == discovery.SearchToolName {
 				found = true
 
 				if _, exists := tool.Schema["properties"].(map[string]any)["timeout_seconds"]; !exists {
-					t.Fatal("MCP tool omitted the existing timeout wrapper")
+					t.Fatal("discovery tool omitted the existing timeout wrapper")
 				}
 			}
 		}
 
 		select {
 		case <-ctx.Done():
-			t.Fatal("MCP tool was never contributed")
+			t.Fatal("MCP discovery was never contributed")
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
@@ -148,7 +181,7 @@ func TestRuntimeUsesMCPToolsAndClosesConnections(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if status, err := app.WaitExecution(ctx, opened.ID, id); err != nil || status != execution.Completed || toolCalls.Load() != 1 || modelCalls.Load() != 2 {
+	if status, err := app.WaitExecution(ctx, opened.ID, id); err != nil || status != execution.Completed || toolCalls.Load() != 1 || modelCalls.Load() != 3 {
 		t.Fatalf("MCP execution = %s, %v; tool calls=%d, model calls=%d", status, err, toolCalls.Load(), modelCalls.Load())
 	}
 

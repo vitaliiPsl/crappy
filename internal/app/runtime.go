@@ -81,6 +81,7 @@ func Open(ctx context.Context, settings settings.Settings) (*Runtime, error) {
 	mcpManager := mcp.NewManager(settings.MCP, oauth.NewAuthorizer(oauth.NewStore(settings.MCP.CredentialsPath)))
 
 	agents := agent.New(configuration.AgentConfig(), resolver,
+		agent.WithToolSetFactory(discoverMCPTools),
 		agent.WithToolMiddleware(
 			tools.OutputCap(settings.Tools, storage.PutBlob),
 			toolTimeout(settings.Tools),

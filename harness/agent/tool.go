@@ -7,8 +7,8 @@ import (
 	"github.com/vitaliiPsl/crappy-adk/kit"
 )
 
-// ToolMiddleware also runs when an agent is built for inspection, so side
-// effects belong in the wrapped tool's invocation.
+// ToolMiddleware also runs during inspection. Preserve names and defer side
+// effects until invocation.
 type ToolMiddleware func(BuildContext, kit.Tool) (kit.Tool, error)
 
 func wrapTools(

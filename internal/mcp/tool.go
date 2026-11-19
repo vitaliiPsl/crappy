@@ -15,6 +15,8 @@ import (
 
 var toolNamePattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
+const ToolPrefix = "mcp__"
+
 type Tool struct {
 	remoteName string
 	definition kit.ToolDefinition
@@ -22,7 +24,7 @@ type Tool struct {
 }
 
 func NewTool(server string, session *mcpsdk.ClientSession, definition *mcpsdk.Tool) (*Tool, error) {
-	name := "mcp__" + server + "__" + definition.Name
+	name := ToolPrefix + server + "__" + definition.Name
 	if len(name) > 64 || !toolNamePattern.MatchString(name) {
 		return nil, fmt.Errorf("MCP tool name %q must contain only letters, digits, underscores, or hyphens and fit in 64 characters", name)
 	}

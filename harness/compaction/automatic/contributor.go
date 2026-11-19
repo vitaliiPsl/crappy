@@ -70,12 +70,28 @@ func (c *Contributor) beforeModelRequest(
 	history *agent.History,
 	inputLimit int,
 ) kit.OnModelRequestReady {
+	previousToolTokens := 0
+	hasPreviousRequest := false
+
 	return func(
 		run *kit.RunContext,
 		request kit.ModelRequest,
 	) (bool, error) {
+		toolTokens := 0
+		for _, tool := range request.Tools {
+			toolTokens += token.EstimateTool(c.estimator, tool.Definition())
+		}
+
+		inputTokens := c.inputTokens(request)
+		if hasPreviousRequest && lastMeasuredResponse(request.Messages) >= 0 {
+			inputTokens += int64(toolTokens - previousToolTokens)
+		}
+
+		previousToolTokens = toolTokens
+		hasPreviousRequest = true
+
 		if !c.trigger.ShouldTrigger(TriggerRequest{
-			InputTokens: c.inputTokens(request),
+			InputTokens: inputTokens,
 			InputLimit:  inputLimit,
 		}) {
 			return false, nil

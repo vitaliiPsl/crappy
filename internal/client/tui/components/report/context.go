@@ -47,6 +47,7 @@ func Context(report service.ContextReport) string {
 
 	lines := []string{
 		headingStyle.Render(Tokens(int64(report.Tokens()))) + " " + countStyle.Render("tokens"),
+		countStyle.Render("Tools reflect the initial selection; running work may load more."),
 		"",
 		row("Conversation", report.MessageTokens(), Count(len(report.Messages), "message"), valueStyle),
 		row("Tools", report.ToolTokens(), Count(len(report.Tools), "tool"), valueStyle),

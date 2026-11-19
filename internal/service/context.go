@@ -62,6 +62,7 @@ type ContextTool struct {
 	Tokens int `json:"tokens"`
 }
 
+// Context inspects a fresh agent with its initial tool selection.
 func (s *Local) Context(ctx context.Context, sessionID string) (ContextReport, error) {
 	opened, err := s.harness.Session(ctx, sessionID)
 	if err != nil {
